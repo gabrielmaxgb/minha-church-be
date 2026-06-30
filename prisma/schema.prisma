@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  owner
+  admin
+  pastor
+  secretary
+  treasurer
+  leader
+  member
+}
+
+enum MemberStatus {
+  visitor
+  active
+  inactive
+}
+
+enum Gender {
+  male
+  female
+  other
+  prefer_not_to_say
+}
+
+enum MaritalStatus {
+  single
+  married
+  divorced
+  widowed
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  avatarUrl    String?  @map("avatar_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships      ChurchMembership[]
+  memberProfile    Member?
+  ministryEvents   MinistryEvent[]    @relation("EventCreatedBy")
+
+  @@map("users")
+}
+
+model Church {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  memberCount Int      @default(0) @map("member_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  memberships ChurchMembership[]
+  members     Member[]
+  ministries  Ministry[]
+
+  @@map("churches")
+}
+
+model ChurchMembership {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  churchId  String   @map("church_id")
+  role      UserRole
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, churchId])
+  @@map("church_memberships")
+}
+
+model Member {
+  id                 String         @id @default(cuid())
+  churchId           String         @map("church_id")
+  name               String
+  email              String?
+  phone              String?
+  phoneSecondary     String?        @map("phone_secondary")
+  birthDate          DateTime?      @map("birth_date") @db.Date
+  gender             Gender?
+  maritalStatus      MaritalStatus? @map("marital_status")
+  weddingAnniversary DateTime?      @map("wedding_anniversary") @db.Date
+  street             String?
+  number             String?
+  complement         String?
+  neighborhood       String?
+  city               String?
+  state              String?
+  zipCode            String?        @map("zip_code")
+  status             MemberStatus   @default(visitor)
+  visitorSince       DateTime?      @map("visitor_since") @db.Date
+  baptismDate        DateTime?      @map("baptism_date") @db.Date
+  membershipDate     DateTime?      @map("membership_date") @db.Date
+  userId             String?        @unique @map("user_id")
+  deletedAt          DateTime?      @map("deleted_at")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+
+  church         Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  ministryLinks  MemberMinistry[]
+
+  @@unique([churchId, email])
+  @@index([churchId, status])
+  @@map("members")
+}
+
+model Ministry {
+  id          String   @id @default(cuid())
+  churchId    String   @map("church_id")
+  name        String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  church      Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  roles       MinistryRole[]
+  members     MemberMinistry[]
+  events      MinistryEvent[]
+
+  @@unique([churchId, name])
+  @@map("ministries")
+}
+
+model MinistryRole {
+  id              String   @id @default(cuid())
+  ministryId      String   @map("ministry_id")
+  name            String
+  sortOrder       Int      @default(0) @map("sort_order")
+  canManageEvents Boolean  @default(false) @map("can_manage_events")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  ministry    Ministry         @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+  assignments MemberMinistry[]
+
+  @@unique([ministryId, name])
+  @@map("ministry_roles")
+}
+
+model MemberMinistry {
+  id             String    @id @default(cuid())
+  memberId       String    @map("member_id")
+  ministryId     String    @map("ministry_id")
+  ministryRoleId String?   @map("ministry_role_id")
+  startedAt      DateTime? @map("started_at") @db.Date
+  endedAt        DateTime? @map("ended_at") @db.Date
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  member       Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  ministry     Ministry      @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+  ministryRole MinistryRole? @relation(fields: [ministryRoleId], references: [id], onDelete: SetNull)
+
+  @@unique([memberId, ministryId])
+  @@map("member_ministries")
+}
+
+model MinistryEvent {
+  id              String    @id @default(cuid())
+  churchId        String    @map("church_id")
+  ministryId      String?   @map("ministry_id")
+  name            String
+  description     String?
+  location        String?
+  startsAt        DateTime  @map("starts_at")
+  endsAt          DateTime? @map("ends_at")
+  createdByUserId String?   @map("created_by_user_id")
+  deletedAt       DateTime? @map("deleted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  ministry  Ministry? @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("EventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, ministryId, startsAt])
+  @@index([churchId, startsAt])
+  @@map("ministry_events")
+}
