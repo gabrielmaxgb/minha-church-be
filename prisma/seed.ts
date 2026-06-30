@@ -1,4 +1,9 @@
-import { PrismaClient, UserRole, MemberStatus, MaritalStatus } from '@prisma/client';
+import {
+  PrismaClient,
+  UserRole,
+  MemberStatus,
+  MaritalStatus,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const DEMO_CHURCH_ID = 'church_demo';
