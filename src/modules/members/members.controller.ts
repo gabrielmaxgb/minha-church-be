@@ -10,12 +10,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { ChurchPermission } from '@prisma/client';
 
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import {
-  CHURCH_MEMBER_MANAGER_ROLES,
   ChurchAccessGuard,
-  RolesGuard,
+  PermissionsGuard,
 } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
@@ -48,15 +48,15 @@ export class MembersController {
   }
 
   @Post()
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MEMBER_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
   create(@Param('churchId') churchId: string, @Body() dto: CreateMemberDto) {
     return this.membersService.create(churchId, dto);
   }
 
   @Patch(':memberId')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MEMBER_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
   update(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
@@ -67,8 +67,8 @@ export class MembersController {
 
   @Delete(':memberId')
   @HttpCode(204)
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MEMBER_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
   async remove(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
@@ -77,8 +77,8 @@ export class MembersController {
   }
 
   @Post(':memberId/receive')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MEMBER_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
   receive(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
@@ -87,8 +87,8 @@ export class MembersController {
   }
 
   @Post(':memberId/ministries')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MEMBER_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
   assignMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
@@ -98,8 +98,8 @@ export class MembersController {
   }
 
   @Delete(':memberId/ministries/:ministryId')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MEMBER_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
   removeMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,

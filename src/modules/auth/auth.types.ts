@@ -1,18 +1,23 @@
 import type { UserPermissions } from '../../common/types/user-permissions';
-import type { UserRole } from '../../common/types/user-role';
 
 export interface JwtPayload {
   sub: string;
   email: string;
   churchId: string;
-  role: UserRole;
+}
+
+export interface AuthUserRoleResponse {
+  id: string;
+  name: string;
+  color?: string;
 }
 
 export interface AuthUserResponse {
   id: string;
   name: string;
   email: string;
-  role: UserRole;
+  isOwner: boolean;
+  roles: AuthUserRoleResponse[];
   avatarUrl?: string;
 }
 

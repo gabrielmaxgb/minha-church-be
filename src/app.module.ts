@@ -10,6 +10,8 @@ import { MembersModule } from './modules/members/members.module';
 import { MinistriesModule } from './modules/ministries/ministries.module';
 import { EventsModule } from './modules/events/events.module';
 import { ChurchMembershipsModule } from './modules/church-memberships/church-memberships.module';
+import { ChurchRolesModule } from './modules/church-roles/church-roles.module';
+import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { ChurchMembershipsModule } from './modules/church-memberships/church-mem
     MinistriesModule,
     EventsModule,
     ChurchMembershipsModule,
+    ChurchRolesModule,
+    AuditLogsModule,
   ],
 })
 export class AppModule {}

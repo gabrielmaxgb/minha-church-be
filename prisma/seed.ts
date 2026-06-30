@@ -1,60 +1,54 @@
 import {
   PrismaClient,
-  UserRole,
   MemberStatus,
   MaritalStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
+
 const DEMO_CHURCH_ID = 'church_demo';
 
 const DEMO_USERS: Array<{
-  id: string;
   email: string;
   name: string;
-  role: UserRole;
+  isOwner?: boolean;
+  systemKey?: string;
 }> = [
   {
-    id: 'user_demo_owner',
     email: 'owner@igreja.com.br',
     name: 'Proprietário Demo',
-    role: UserRole.owner,
+    isOwner: true,
   },
   {
-    id: 'user_demo_admin',
     email: 'admin@igreja.com.br',
     name: 'Administrador Demo',
-    role: UserRole.admin,
+    systemKey: 'admin',
   },
   {
-    id: 'user_demo_pastor',
     email: 'pastor@igreja.com.br',
     name: 'Pastor Demo',
-    role: UserRole.pastor,
+    systemKey: 'pastor',
   },
   {
-    id: 'user_demo_secretary',
     email: 'secretary@igreja.com.br',
     name: 'Secretário Demo',
-    role: UserRole.secretary,
+    systemKey: 'secretary',
   },
   {
-    id: 'user_demo_treasurer',
     email: 'treasurer@igreja.com.br',
     name: 'Tesoureiro Demo',
-    role: UserRole.treasurer,
+    systemKey: 'treasurer',
   },
   {
-    id: 'user_demo_leader',
     email: 'leader@igreja.com.br',
     name: 'Líder Demo',
-    role: UserRole.leader,
+    systemKey: 'leader',
   },
   {
-    id: 'user_demo_member',
     email: 'member@igreja.com.br',
     name: 'Membro Demo',
-    role: UserRole.member,
+    systemKey: 'member',
   },
 ];
 
@@ -74,6 +68,8 @@ export async function seedDatabase(prisma = new PrismaClient()) {
       memberCount: 0,
     },
   });
+
+  await seedDefaultChurchRoles(prisma, DEMO_CHURCH_ID);
 
   const legacyDemo = await prisma.user.findUnique({
     where: { email: 'demo@igreja.com.br' },
@@ -103,7 +99,7 @@ export async function seedDatabase(prisma = new PrismaClient()) {
       },
     });
 
-    await prisma.churchMembership.upsert({
+    const membership = await prisma.churchMembership.upsert({
       where: {
         userId_churchId: {
           userId: user.id,
@@ -111,14 +107,36 @@ export async function seedDatabase(prisma = new PrismaClient()) {
         },
       },
       update: {
-        role: demoUser.role,
+        isOwner: demoUser.isOwner ?? false,
       },
       create: {
         userId: user.id,
         churchId: DEMO_CHURCH_ID,
-        role: demoUser.role,
+        isOwner: demoUser.isOwner ?? false,
       },
     });
+
+    await prisma.churchMembershipRole.deleteMany({
+      where: { membershipId: membership.id },
+    });
+
+    if (demoUser.systemKey) {
+      const role = await prisma.churchRole.findFirst({
+        where: {
+          churchId: DEMO_CHURCH_ID,
+          systemKey: demoUser.systemKey,
+        },
+      });
+
+      if (role) {
+        await prisma.churchMembershipRole.create({
+          data: {
+            membershipId: membership.id,
+            roleId: role.id,
+          },
+        });
+      }
+    }
   }
 
   const pastorUser = await prisma.user.findUniqueOrThrow({

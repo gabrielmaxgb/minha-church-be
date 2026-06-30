@@ -7,14 +7,24 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole {
-  owner
-  admin
-  pastor
-  secretary
-  treasurer
-  leader
-  member
+enum ChurchPermission {
+  members_manage
+  ministries_manage
+  events_create_church_wide
+  finances_access
+  communication_access
+  reports_access
+  settings_access
+  roles_manage
+  memberships_manage
+}
+
+enum ChurchPlanTier {
+  starter
+  small
+  growth
+  consolidated
+  enterprise
 }
 
 enum MemberStatus {
@@ -46,40 +56,87 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  memberships      ChurchMembership[]
-  memberProfile    Member?
-  ministryEvents   MinistryEvent[]    @relation("EventCreatedBy")
+  memberships    ChurchMembership[]
+  memberProfile  Member?
+  ministryEvents MinistryEvent[]    @relation("EventCreatedBy")
+  auditLogs      AuditLog[]
 
   @@map("users")
 }
 
 model Church {
-  id          String   @id @default(cuid())
+  id          String         @id @default(cuid())
   name        String
-  slug        String   @unique
-  memberCount Int      @default(0) @map("member_count")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  slug        String         @unique
+  memberCount Int            @default(0) @map("member_count")
+  planTier    ChurchPlanTier @default(starter) @map("plan_tier")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
 
   memberships ChurchMembership[]
   members     Member[]
   ministries  Ministry[]
+  roles       ChurchRole[]
+  auditLogs   AuditLog[]
 
   @@map("churches")
+}
+
+model ChurchRole {
+  id        String   @id @default(cuid())
+  churchId  String   @map("church_id")
+  name      String
+  color     String?
+  sortOrder Int      @default(0) @map("sort_order")
+  isSystem  Boolean  @default(false) @map("is_system")
+  systemKey String?  @map("system_key")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  church      Church                 @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  permissions ChurchRolePermission[]
+  assignments ChurchMembershipRole[]
+
+  @@unique([churchId, name])
+  @@unique([churchId, systemKey])
+  @@map("church_roles")
+}
+
+model ChurchRolePermission {
+  roleId     String           @map("role_id")
+  permission ChurchPermission
+
+  role ChurchRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permission])
+  @@map("church_role_permissions")
 }
 
 model ChurchMembership {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")
   churchId  String   @map("church_id")
-  role      UserRole
+  isOwner   Boolean  @default(false) @map("is_owner")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  church          Church                 @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  roleAssignments ChurchMembershipRole[]
 
   @@unique([userId, churchId])
   @@map("church_memberships")
+}
+
+model ChurchMembershipRole {
+  membershipId String   @map("membership_id")
+  roleId       String   @map("role_id")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+
+  membership ChurchMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  role       ChurchRole       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([membershipId, roleId])
+  @@map("church_membership_roles")
 }
 
 model Member {
@@ -109,9 +166,9 @@ model Member {
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
 
-  church         Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  user           User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
-  ministryLinks  MemberMinistry[]
+  church        Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  user          User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  ministryLinks MemberMinistry[]
 
   @@unique([churchId, email])
   @@index([churchId, status])
@@ -127,10 +184,10 @@ model Ministry {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  church      Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  roles       MinistryRole[]
-  members     MemberMinistry[]
-  events      MinistryEvent[]
+  church  Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  roles   MinistryRole[]
+  members MemberMinistry[]
+  events  MinistryEvent[]
 
   @@unique([churchId, name])
   @@map("ministries")
@@ -190,4 +247,23 @@ model MinistryEvent {
   @@index([churchId, ministryId, startsAt])
   @@index([churchId, startsAt])
   @@map("ministry_events")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  churchId    String   @map("church_id")
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  targetType  String?  @map("target_type")
+  targetId    String?  @map("target_id")
+  summary     String
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  actor  User?  @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([churchId, action])
+  @@map("audit_logs")
 }

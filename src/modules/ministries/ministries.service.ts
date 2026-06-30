@@ -298,12 +298,10 @@ export class MinistriesService {
     churchId: string,
     ministryId: string,
   ) {
-    const churchRole = await this.usersService.getRoleInChurch(userId, churchId);
     const allowed = await this.churchPermissions.canManageMinistryEvents(
       userId,
       churchId,
       ministryId,
-      churchRole,
     );
 
     if (!allowed) {

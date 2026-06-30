@@ -5,15 +5,15 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import type { ChurchPermission } from '@prisma/client';
 
 import type { JwtPayload } from '../../modules/auth/auth.types';
-import { UsersService } from '../../modules/users/users.service';
-import { ROLES_KEY } from '../decorators/roles.decorator';
-import type { UserRole } from '../types/user-role';
+import { PERMISSIONS_KEY } from '../decorators/require-permission.decorator';
+import { ChurchPermissionsService } from '../services/church-permissions.service';
 
 @Injectable()
 export class ChurchAccessGuard implements CanActivate {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly churchPermissions: ChurchPermissionsService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{
@@ -27,9 +27,12 @@ export class ChurchAccessGuard implements CanActivate {
       throw new ForbiddenException('Acesso negado.');
     }
 
-    const hasAccess = await this.usersService.hasAccessToChurch(user.sub, churchId);
+    const access = await this.churchPermissions.getMembershipAccess(
+      user.sub,
+      churchId,
+    );
 
-    if (!hasAccess) {
+    if (!access) {
       throw new ForbiddenException('Sem acesso a esta igreja.');
     }
 
@@ -38,19 +41,18 @@ export class ChurchAccessGuard implements CanActivate {
 }
 
 @Injectable()
-export class RolesGuard implements CanActivate {
+export class PermissionsGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly usersService: UsersService,
+    private readonly churchPermissions: ChurchPermissionsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
-      ROLES_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const requiredPermissions = this.reflector.getAllAndOverride<
+      ChurchPermission[]
+    >(PERMISSIONS_KEY, [context.getHandler(), context.getClass()]);
 
-    if (!requiredRoles || requiredRoles.length === 0) {
+    if (!requiredPermissions || requiredPermissions.length === 0) {
       return true;
     }
 
@@ -65,9 +67,13 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Acesso negado.');
     }
 
-    const role = await this.usersService.getRoleInChurch(user.sub, churchId);
+    const allowed = await this.churchPermissions.hasAnyPermission(
+      user.sub,
+      churchId,
+      requiredPermissions,
+    );
 
-    if (!role || !requiredRoles.includes(role)) {
+    if (!allowed) {
       throw new ForbiddenException('Permissão insuficiente.');
     }
 

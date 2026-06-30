@@ -16,6 +16,7 @@ import type { AuthResponse } from './auth.types';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
+import { SwitchChurchDto } from './dto/switch-church.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { JwtPayload } from './auth.types';
 
@@ -53,6 +54,24 @@ export class AuthController {
   ): Promise<AuthResponse> {
     const refreshToken = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     const { session, tokens } = await this.authService.refresh(refreshToken ?? '');
+
+    this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
+
+    return session;
+  }
+
+  @Post('switch-church')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async switchChurch(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: SwitchChurchDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
+    const { session, tokens } = await this.authService.switchChurch(
+      user.sub,
+      dto.churchId,
+    );
 
     this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
 

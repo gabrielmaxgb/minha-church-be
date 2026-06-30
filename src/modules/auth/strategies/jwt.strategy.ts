@@ -27,7 +27,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   validate(payload: JwtPayload): JwtPayload {
-    if (!payload.sub || !payload.churchId || !payload.role) {
+    if (!payload.sub || !payload.churchId) {
       throw new UnauthorizedException('Token inválido.');
     }
 

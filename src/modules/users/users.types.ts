@@ -1,5 +1,3 @@
-import type { UserRole } from '../../common/types/user-role';
-
 export interface UserRecord {
   id: string;
   name: string;
@@ -11,5 +9,5 @@ export interface UserRecord {
 export interface ChurchMembershipRecord {
   userId: string;
   churchId: string;
-  role: UserRole;
+  isOwner: boolean;
 }

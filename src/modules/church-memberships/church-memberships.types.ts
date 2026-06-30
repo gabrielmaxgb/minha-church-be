@@ -1,19 +1,23 @@
-import type { UserRole } from '../../common/types/user-role';
-
-export interface ChurchMembershipUserResponse {
+export interface ChurchMembershipRoleResponse {
   id: string;
   name: string;
-  email: string;
-  avatarUrl?: string;
+  color?: string;
+  isSystem: boolean;
 }
 
 export interface ChurchMembershipResponse {
   id: string;
   userId: string;
   churchId: string;
-  role: UserRole;
+  isOwner: boolean;
+  roles: ChurchMembershipRoleResponse[];
   createdAt: string;
-  user: ChurchMembershipUserResponse;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  };
   memberId?: string;
   memberName?: string;
 }

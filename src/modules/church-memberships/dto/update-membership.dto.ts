@@ -1,7 +1,19 @@
-import { IsEnum } from 'class-validator';
-import { UserRole } from '@prisma/client';
+import {
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class UpdateMembershipDto {
-  @IsEnum(UserRole)
-  role: UserRole;
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  roleIds?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isOwner?: boolean;
 }

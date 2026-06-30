@@ -10,12 +10,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { ChurchPermission } from '@prisma/client';
 
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import {
-  CHURCH_MINISTRY_MANAGER_ROLES,
   ChurchAccessGuard,
-  RolesGuard,
+  PermissionsGuard,
 } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
@@ -50,15 +50,15 @@ export class MinistriesController {
   }
 
   @Post()
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MINISTRY_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.ministries_manage)
   create(@Param('churchId') churchId: string, @Body() dto: CreateMinistryDto) {
     return this.ministriesService.create(churchId, dto);
   }
 
   @Patch(':ministryId')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MINISTRY_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.ministries_manage)
   update(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
@@ -69,8 +69,8 @@ export class MinistriesController {
 
   @Delete(':ministryId')
   @HttpCode(204)
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MINISTRY_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.ministries_manage)
   async remove(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
@@ -87,8 +87,8 @@ export class MinistriesController {
   }
 
   @Post(':ministryId/roles')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MINISTRY_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.ministries_manage)
   createRole(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
@@ -98,8 +98,8 @@ export class MinistriesController {
   }
 
   @Patch(':ministryId/roles/:roleId')
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MINISTRY_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.ministries_manage)
   updateRole(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
@@ -111,8 +111,8 @@ export class MinistriesController {
 
   @Delete(':ministryId/roles/:roleId')
   @HttpCode(204)
-  @UseGuards(RolesGuard)
-  @Roles(...CHURCH_MINISTRY_MANAGER_ROLES)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.ministries_manage)
   async removeRole(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,

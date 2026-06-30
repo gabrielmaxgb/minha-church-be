@@ -1,33 +1,30 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   Param,
   Patch,
   UseGuards,
 } from '@nestjs/common';
+import { ChurchPermission } from '@prisma/client';
 
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import {
-  CHURCH_MEMBERSHIP_MANAGER_ROLES,
   ChurchAccessGuard,
-  RolesGuard,
+  PermissionsGuard,
 } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
-import { UsersService } from '../users/users.service';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
 import { ChurchMembershipsService } from './church-memberships.service';
 
 @Controller('churches/:churchId/memberships')
-@UseGuards(JwtAuthGuard, ChurchAccessGuard, RolesGuard)
-@Roles(...CHURCH_MEMBERSHIP_MANAGER_ROLES)
+@UseGuards(JwtAuthGuard, ChurchAccessGuard, PermissionsGuard)
+@RequirePermission(ChurchPermission.memberships_manage)
 export class ChurchMembershipsController {
   constructor(
     private readonly churchMembershipsService: ChurchMembershipsService,
-    private readonly usersService: UsersService,
   ) {}
 
   @Get()
@@ -35,27 +32,28 @@ export class ChurchMembershipsController {
     return this.churchMembershipsService.findAll(churchId);
   }
 
+  @Get('assignable-roles')
+  findAssignableRoles(
+    @Param('churchId') churchId: string,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.churchMembershipsService.findAssignableRoles(
+      churchId,
+      actor.sub,
+    );
+  }
+
   @Patch(':userId')
-  async updateRole(
+  updateMembership(
     @Param('churchId') churchId: string,
     @Param('userId') userId: string,
     @CurrentUser() actor: JwtPayload,
     @Body() dto: UpdateMembershipDto,
   ) {
-    const actorRole = await this.usersService.getRoleInChurch(
-      actor.sub,
-      churchId,
-    );
-
-    if (!actorRole) {
-      throw new ForbiddenException('Sem acesso a esta igreja.');
-    }
-
-    return this.churchMembershipsService.updateRole(
+    return this.churchMembershipsService.updateMembership(
       churchId,
       userId,
       actor.sub,
-      actorRole,
       dto,
     );
   }

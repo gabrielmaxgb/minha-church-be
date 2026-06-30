@@ -54,7 +54,6 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       churchId: primaryMembership.churchId,
-      role: primaryMembership.role,
     });
 
     return { session, tokens };
@@ -93,9 +92,7 @@ export class AuthService {
       throw new UnauthorizedException('Usuário não encontrado.');
     }
 
-    const role = await this.usersService.getRoleInChurch(user.id, payload.churchId);
-
-    if (!role) {
+    if (!(await this.usersService.hasAccessToChurch(user.id, payload.churchId))) {
       throw new UnauthorizedException('Sem acesso a esta igreja.');
     }
 
@@ -106,7 +103,6 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       churchId: payload.churchId,
-      role,
     });
 
     return { session, tokens };
@@ -118,6 +114,30 @@ export class AuthService {
     }
   }
 
+  async switchChurch(
+    userId: string,
+    churchId: string,
+  ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
+    if (!(await this.usersService.hasAccessToChurch(userId, churchId))) {
+      throw new UnauthorizedException('Sem acesso a esta igreja.');
+    }
+
+    const user = await this.usersService.findById(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const session = await this.buildSession(userId, churchId);
+    const tokens = this.issueTokens({
+      sub: userId,
+      email: user.email,
+      churchId,
+    });
+
+    return { session, tokens };
+  }
+
   private async buildSession(userId: string, churchId: string): Promise<AuthResponse> {
     const user = await this.usersService.findById(userId);
 
@@ -125,9 +145,12 @@ export class AuthService {
       throw new UnauthorizedException('Usuário não encontrado.');
     }
 
-    const role = await this.usersService.getRoleInChurch(userId, churchId);
+    const access = await this.churchPermissionsService.getMembershipAccess(
+      userId,
+      churchId,
+    );
 
-    if (!role) {
+    if (!access) {
       throw new UnauthorizedException('Sem acesso a esta igreja.');
     }
 
@@ -144,7 +167,6 @@ export class AuthService {
     const permissions = await this.churchPermissionsService.getUserPermissions(
       userId,
       churchId,
-      role,
     );
 
     return {
@@ -152,7 +174,12 @@ export class AuthService {
         id: user.id,
         name: user.name,
         email: user.email,
-        role,
+        isOwner: access.isOwner,
+        roles: access.roles.map((role) => ({
+          id: role.id,
+          name: role.name,
+          color: role.color ?? undefined,
+        })),
         avatarUrl: user.avatarUrl,
       },
       church: {
@@ -191,7 +218,6 @@ export class AuthService {
         sub: payload.sub,
         email: payload.email,
         churchId: payload.churchId,
-        role: payload.role,
         type: 'refresh',
         jti: randomUUID(),
       },

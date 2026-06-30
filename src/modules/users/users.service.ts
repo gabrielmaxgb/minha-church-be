@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import type { UserRole } from '../../common/types/user-role';
 
 import { PrismaService } from '../../database/prisma.service';
 import type { ChurchMembershipRecord, UserRecord } from './users.types';
@@ -40,14 +39,11 @@ export class UsersService {
     return memberships.map((membership) => ({
       userId: membership.userId,
       churchId: membership.churchId,
-      role: membership.role as UserRole,
+      isOwner: membership.isOwner,
     }));
   }
 
-  async getRoleInChurch(
-    userId: string,
-    churchId: string,
-  ): Promise<UserRole | null> {
+  async hasAccessToChurch(userId: string, churchId: string): Promise<boolean> {
     const membership = await this.prisma.churchMembership.findUnique({
       where: {
         userId_churchId: {
@@ -57,13 +53,7 @@ export class UsersService {
       },
     });
 
-    return membership?.role ?? null;
-  }
-
-  async hasAccessToChurch(userId: string, churchId: string): Promise<boolean> {
-    const role = await this.getRoleInChurch(userId, churchId);
-
-    return role !== null;
+    return membership !== null;
   }
 
   private toUserRecord(user: {

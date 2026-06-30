@@ -64,57 +64,71 @@ describe('Church memberships (e2e)', () => {
     ).toBe(true);
   });
 
-  it('pastor can change treasurer role to member and back', async () => {
+  it('pastor can change treasurer roles to member and back', async () => {
     const pastorAgent = await loginAs('pastor@igreja.com.br');
 
-    await pastorAgent
-      .patch('/api/v1/churches/church_demo/memberships')
-      .send({ role: 'member' })
-      .expect(404);
-
-    const treasurerMembership = (
+    const memberships = (
       await pastorAgent
         .get('/api/v1/churches/church_demo/memberships')
         .expect(200)
-    ).body.find(
+    ).body;
+
+    const treasurerMembership = memberships.find(
       (item: { user: { email: string } }) =>
         item.user.email === 'treasurer@igreja.com.br',
     );
+    const memberMembership = memberships.find(
+      (item: { user: { email: string } }) =>
+        item.user.email === 'member@igreja.com.br',
+    );
 
     expect(treasurerMembership).toBeDefined();
+    expect(memberMembership).toBeDefined();
+
+    const memberRoleId = memberMembership.roles[0]?.id;
+    const treasurerRoleId = treasurerMembership.roles[0]?.id;
+
+    expect(memberRoleId).toBeDefined();
+    expect(treasurerRoleId).toBeDefined();
 
     await pastorAgent
       .patch(
         `/api/v1/churches/church_demo/memberships/${treasurerMembership.userId}`,
       )
-      .send({ role: 'member' })
+      .send({ roleIds: [memberRoleId] })
       .expect(200);
 
     await pastorAgent
       .patch(
         `/api/v1/churches/church_demo/memberships/${treasurerMembership.userId}`,
       )
-      .send({ role: 'treasurer' })
+      .send({ roleIds: [treasurerRoleId] })
       .expect(200);
   });
 
-  it('pastor cannot change admin role', async () => {
+  it('pastor cannot change admin roles', async () => {
     const pastorAgent = await loginAs('pastor@igreja.com.br');
 
-    const adminMembership = (
+    const memberships = (
       await pastorAgent
         .get('/api/v1/churches/church_demo/memberships')
         .expect(200)
-    ).body.find(
+    ).body;
+
+    const adminMembership = memberships.find(
       (item: { user: { email: string } }) =>
         item.user.email === 'admin@igreja.com.br',
+    );
+    const memberMembership = memberships.find(
+      (item: { user: { email: string } }) =>
+        item.user.email === 'member@igreja.com.br',
     );
 
     await pastorAgent
       .patch(
         `/api/v1/churches/church_demo/memberships/${adminMembership.userId}`,
       )
-      .send({ role: 'member' })
+      .send({ roleIds: [memberMembership.roles[0].id] })
       .expect(403);
   });
 

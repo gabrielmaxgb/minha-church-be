@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 
-import { UsersModule } from '../users/users.module';
+import { ChurchRolesModule } from '../church-roles/church-roles.module';
 import { ChurchMembershipsController } from './church-memberships.controller';
 import { ChurchMembershipsService } from './church-memberships.service';
 
 @Module({
-  imports: [UsersModule],
+  imports: [ChurchRolesModule],
   controllers: [ChurchMembershipsController],
   providers: [ChurchMembershipsService],
 })

@@ -9,4 +9,6 @@ export interface UserPermissions {
   communication: { access: boolean };
   reports: { access: boolean };
   settings: { access: boolean };
+  roles: { manage: boolean };
+  memberships: { manage: boolean };
 }

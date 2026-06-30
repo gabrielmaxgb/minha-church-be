@@ -3,13 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ChurchPermission } from '@prisma/client';
 
-import {
-  CHURCH_EVENT_MANAGER_ROLES,
-} from '../../common/guards';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
-import { UsersService } from '../users/users.service';
 import {
   toMinistryEventResponse,
   type MinistryEventResponse,
@@ -23,7 +20,6 @@ import {
 export class EventsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly usersService: UsersService,
     private readonly churchPermissions: ChurchPermissionsService,
   ) {}
 
@@ -82,9 +78,13 @@ export class EventsService {
   }
 
   private async assertCanManageChurchEvents(userId: string, churchId: string) {
-    const churchRole = await this.usersService.getRoleInChurch(userId, churchId);
+    const allowed = await this.churchPermissions.hasPermission(
+      userId,
+      churchId,
+      ChurchPermission.events_create_church_wide,
+    );
 
-    if (!this.churchPermissions.isChurchRole(churchRole, CHURCH_EVENT_MANAGER_ROLES)) {
+    if (!allowed) {
       throw new ForbiddenException(
         'Sem permissão para criar atividades da igreja.',
       );
@@ -104,12 +104,10 @@ export class EventsService {
       throw new NotFoundException('Ministério não encontrado.');
     }
 
-    const churchRole = await this.usersService.getRoleInChurch(userId, churchId);
     const allowed = await this.churchPermissions.canManageMinistryEvents(
       userId,
       churchId,
       ministryId,
-      churchRole,
     );
 
     if (!allowed) {
