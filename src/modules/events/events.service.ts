@@ -14,6 +14,7 @@ import {
 import {
   CreateChurchEventDto,
   ListChurchEventsQueryDto,
+  UpdateChurchEventDto,
 } from './dto/event.dto';
 
 @Injectable()
@@ -77,6 +78,67 @@ export class EventsService {
     return toMinistryEventResponse(event);
   }
 
+  async update(
+    churchId: string,
+    eventId: string,
+    userId: string,
+    dto: UpdateChurchEventDto,
+  ): Promise<MinistryEventResponse> {
+    const existing = await this.getEventOrThrow(churchId, eventId);
+    await this.assertCanManageEvent(userId, churchId, existing);
+
+    const event = await this.prisma.ministryEvent.update({
+      where: { id: eventId },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(dto.location !== undefined ? { location: dto.location } : {}),
+        ...(dto.startsAt !== undefined ? { startsAt: new Date(dto.startsAt) } : {}),
+        ...(dto.endsAt !== undefined
+          ? { endsAt: dto.endsAt ? new Date(dto.endsAt) : null }
+          : {}),
+      },
+      include: { ministry: true },
+    });
+
+    return toMinistryEventResponse(event);
+  }
+
+  async remove(churchId: string, eventId: string, userId: string): Promise<void> {
+    const existing = await this.getEventOrThrow(churchId, eventId);
+    await this.assertCanManageEvent(userId, churchId, existing);
+
+    await this.prisma.ministryEvent.update({
+      where: { id: eventId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  private async getEventOrThrow(churchId: string, eventId: string) {
+    const event = await this.prisma.ministryEvent.findFirst({
+      where: { id: eventId, churchId, deletedAt: null },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Evento não encontrado.');
+    }
+
+    return event;
+  }
+
+  private async assertCanManageEvent(
+    userId: string,
+    churchId: string,
+    event: { ministryId: string | null },
+  ) {
+    if (event.ministryId) {
+      await this.assertCanManageMinistryEvent(userId, churchId, event.ministryId);
+      return;
+    }
+
+    await this.assertCanManageChurchEvents(userId, churchId);
+  }
+
   private async assertCanManageChurchEvents(userId: string, churchId: string) {
     const allowed = await this.churchPermissions.hasPermission(
       userId,
@@ -86,7 +148,7 @@ export class EventsService {
 
     if (!allowed) {
       throw new ForbiddenException(
-        'Sem permissão para criar atividades da igreja.',
+        'Sem permissão para gerenciar atividades da igreja.',
       );
     }
   }
@@ -112,7 +174,7 @@ export class EventsService {
 
     if (!allowed) {
       throw new ForbiddenException(
-        'Sem permissão para criar atividades deste ministério.',
+        'Sem permissão para gerenciar atividades deste ministério.',
       );
     }
   }

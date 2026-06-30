@@ -31,6 +31,29 @@ export class CreateChurchEventDto {
   endsAt?: string;
 }
 
+export class UpdateChurchEventDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
+  @IsOptional()
+  @IsString()
+  location?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string | null;
+}
+
 export class ListChurchEventsQueryDto {
   @IsOptional()
   @IsString()

@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 
 import { ChurchAccessGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -7,6 +18,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   CreateChurchEventDto,
   ListChurchEventsQueryDto,
+  UpdateChurchEventDto,
 } from './dto/event.dto';
 import { EventsService } from './events.service';
 
@@ -30,5 +42,25 @@ export class EventsController {
     @Body() dto: CreateChurchEventDto,
   ) {
     return this.eventsService.create(churchId, user.sub, dto);
+  }
+
+  @Patch(':eventId')
+  update(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateChurchEventDto,
+  ) {
+    return this.eventsService.update(churchId, eventId, user.sub, dto);
+  }
+
+  @Delete(':eventId')
+  @HttpCode(204)
+  async remove(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.eventsService.remove(churchId, eventId, user.sub);
   }
 }
