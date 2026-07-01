@@ -16,6 +16,8 @@ import type {
   JwtPayload,
 } from './auth.types';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class AuthService {
@@ -30,16 +32,16 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
-    const user = await this.usersService.findByEmail(dto.email);
+    const user = await this.usersService.findByLoginIdentifier(dto.identifier);
 
     if (!user) {
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
+      throw new UnauthorizedException('E-mail, CPF ou senha inválidos.');
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, user.passwordHash);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
+      throw new UnauthorizedException('E-mail, CPF ou senha inválidos.');
     }
 
     const memberships = await this.usersService.getMemberships(user.id);
@@ -114,6 +116,46 @@ export class AuthService {
     }
   }
 
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+  ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
+    const user = await this.usersService.findById(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      dto.currentPassword,
+      user.passwordHash,
+    );
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Senha atual incorreta.');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+
+    await this.usersService.updatePassword(userId, passwordHash, false);
+
+    const memberships = await this.usersService.getMemberships(userId);
+
+    if (memberships.length === 0) {
+      throw new UnauthorizedException('Usuário sem igreja vinculada.');
+    }
+
+    const churchId = memberships[0].churchId;
+    const session = await this.buildSession(userId, churchId);
+    const tokens = this.issueTokens({
+      sub: userId,
+      email: user.email,
+      churchId,
+    });
+
+    return { session, tokens };
+  }
+
   async switchChurch(
     userId: string,
     churchId: string,
@@ -128,6 +170,26 @@ export class AuthService {
       throw new UnauthorizedException('Usuário não encontrado.');
     }
 
+    const session = await this.buildSession(userId, churchId);
+    const tokens = this.issueTokens({
+      sub: userId,
+      email: user.email,
+      churchId,
+    });
+
+    return { session, tokens };
+  }
+
+  async updateProfile(
+    userId: string,
+    churchId: string,
+    dto: UpdateProfileDto,
+  ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
+    if (!(await this.usersService.hasAccessToChurch(userId, churchId))) {
+      throw new UnauthorizedException('Sem acesso a esta igreja.');
+    }
+
+    const user = await this.usersService.updateProfile(userId, churchId, dto);
     const session = await this.buildSession(userId, churchId);
     const tokens = this.issueTokens({
       sub: userId,
@@ -168,12 +230,15 @@ export class AuthService {
       userId,
       churchId,
     );
+    const phone = await this.usersService.getMemberPhone(userId, churchId);
 
     return {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
+        cpf: user.cpf,
+        phone,
         isOwner: access.isOwner,
         roles: access.roles.map((role) => ({
           id: role.id,
@@ -181,6 +246,7 @@ export class AuthService {
           color: role.color ?? undefined,
         })),
         avatarUrl: user.avatarUrl,
+        mustChangePassword: user.mustChangePassword,
       },
       church: {
         id: church.id,

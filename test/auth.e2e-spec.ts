@@ -41,7 +41,7 @@ describe('Auth (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({
-        email: 'pastor@igreja.com.br',
+        identifier: 'pastor@igreja.com.br',
         password: 'senha123',
       })
       .expect(200);
@@ -68,7 +68,7 @@ describe('Auth (e2e)', () => {
     await agent
       .post('/api/v1/auth/login')
       .send({
-        email: 'pastor@igreja.com.br',
+        identifier: 'pastor@igreja.com.br',
         password: 'senha123',
       })
       .expect(200);
@@ -97,7 +97,7 @@ describe('Auth (e2e)', () => {
     await agent
       .post('/api/v1/auth/login')
       .send({
-        email: 'pastor@igreja.com.br',
+        identifier: 'pastor@igreja.com.br',
         password: 'senha123',
       })
       .expect(200);

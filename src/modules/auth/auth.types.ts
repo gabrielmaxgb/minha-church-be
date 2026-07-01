@@ -16,9 +16,12 @@ export interface AuthUserResponse {
   id: string;
   name: string;
   email: string;
+  cpf?: string;
+  phone?: string | null;
   isOwner: boolean;
   roles: AuthUserRoleResponse[];
   avatarUrl?: string;
+  mustChangePassword: boolean;
 }
 
 export interface AuthChurchResponse {

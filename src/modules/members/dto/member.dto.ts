@@ -21,6 +21,10 @@ export class CreateMemberDto {
 
   @IsOptional()
   @IsString()
+  cpf?: string;
+
+  @IsOptional()
+  @IsString()
   phone?: string;
 
   @IsOptional()
@@ -98,6 +102,10 @@ export class UpdateMemberDto {
   @IsOptional()
   @IsEmail()
   email?: string | null;
+
+  @IsOptional()
+  @IsString()
+  cpf?: string | null;
 
   @IsOptional()
   @IsString()

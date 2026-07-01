@@ -48,13 +48,15 @@ enum MaritalStatus {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  name         String
-  avatarUrl    String?  @map("avatar_url")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  cpf                String?  @unique
+  passwordHash       String   @map("password_hash")
+  name               String
+  avatarUrl          String?  @map("avatar_url")
+  mustChangePassword Boolean  @default(false) @map("must_change_password")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   memberships    ChurchMembership[]
   memberProfile  Member?
@@ -144,6 +146,7 @@ model Member {
   churchId           String         @map("church_id")
   name               String
   email              String?
+  cpf                String?
   phone              String?
   phoneSecondary     String?        @map("phone_secondary")
   birthDate          DateTime?      @map("birth_date") @db.Date
@@ -171,6 +174,7 @@ model Member {
   ministryLinks MemberMinistry[]
 
   @@unique([churchId, email])
+  @@unique([churchId, cpf])
   @@index([churchId, status])
   @@map("members")
 }

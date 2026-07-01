@@ -1,10 +1,19 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { MemberStatus, Prisma } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
+import { generateTemporaryPassword } from '../../common/utils/credentials';
+import {
+  cpfToInternalEmail,
+  formatCpf,
+  isValidCpf,
+  normalizeCpf,
+} from '../../common/utils/cpf';
 import { PrismaService } from '../../database/prisma.service';
 import {
   AssignMemberMinistryDto,
@@ -16,6 +25,7 @@ import {
   MemberWithMinistries,
   parseOptionalDate,
   toMemberResponse,
+  type CreateMemberResponse,
   type MemberResponse,
 } from './members.types';
 
@@ -50,6 +60,7 @@ export class MembersService {
             OR: [
               { name: { contains: query.search, mode: 'insensitive' } },
               { email: { contains: query.search, mode: 'insensitive' } },
+              { cpf: { contains: normalizeCpf(query.search) } },
               { phone: { contains: query.search, mode: 'insensitive' } },
             ],
           }
@@ -79,7 +90,28 @@ export class MembersService {
     return toMemberResponse(member);
   }
 
-  async create(churchId: string, dto: CreateMemberDto): Promise<MemberResponse> {
+  async create(churchId: string, dto: CreateMemberDto): Promise<CreateMemberResponse> {
+    const email = dto.email?.trim().toLowerCase() || null;
+    const cpf = dto.cpf ? normalizeCpf(dto.cpf) : null;
+
+    if (!email && !cpf) {
+      throw new BadRequestException('Informe e-mail ou CPF para criar o login.');
+    }
+
+    if (cpf && !isValidCpf(cpf)) {
+      throw new BadRequestException('CPF inválido.');
+    }
+
+    if (email) {
+      await this.ensureEmailAvailable(churchId, email);
+    }
+
+    if (cpf) {
+      await this.ensureCpfAvailable(churchId, cpf);
+    }
+
+    await this.ensureUserCredentialsAvailable(email, cpf);
+
     const status = dto.status ?? MemberStatus.visitor;
     const visitorSince =
       parseOptionalDate(dto.visitorSince) ??
@@ -88,42 +120,83 @@ export class MembersService {
       parseOptionalDate(dto.membershipDate) ??
       (status === MemberStatus.active ? new Date() : null);
 
-    if (dto.email) {
-      await this.ensureEmailAvailable(churchId, dto.email);
-    }
+    const userEmail = email ?? cpfToInternalEmail(cpf!);
+    const loginIdentifier = email ?? formatCpf(cpf!);
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
-    const member = await this.prisma.member.create({
-      data: {
-        churchId,
-        name: dto.name.trim(),
-        email: dto.email?.toLowerCase(),
-        phone: dto.phone,
-        phoneSecondary: dto.phoneSecondary,
-        birthDate: parseOptionalDate(dto.birthDate),
-        gender: dto.gender,
-        maritalStatus: dto.maritalStatus,
-        weddingAnniversary:
-          dto.maritalStatus === 'married'
-            ? parseOptionalDate(dto.weddingAnniversary)
-            : null,
-        street: dto.street,
-        number: dto.number,
-        complement: dto.complement,
-        neighborhood: dto.neighborhood,
-        city: dto.city,
-        state: dto.state,
-        zipCode: dto.zipCode,
-        status,
-        visitorSince,
-        baptismDate: parseOptionalDate(dto.baptismDate),
-        membershipDate,
-      },
-      include: memberInclude,
+    const memberRole = await this.prisma.churchRole.findFirst({
+      where: { churchId, systemKey: 'member' },
+    });
+
+    const member = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email: userEmail,
+          cpf,
+          name: dto.name.trim(),
+          passwordHash,
+          mustChangePassword: true,
+        },
+      });
+
+      await tx.churchMembership.create({
+        data: {
+          userId: user.id,
+          churchId,
+          isOwner: false,
+          ...(memberRole
+            ? {
+                roleAssignments: {
+                  create: [{ roleId: memberRole.id }],
+                },
+              }
+            : {}),
+        },
+      });
+
+      return tx.member.create({
+        data: {
+          churchId,
+          name: dto.name.trim(),
+          email,
+          cpf,
+          phone: dto.phone,
+          phoneSecondary: dto.phoneSecondary,
+          birthDate: parseOptionalDate(dto.birthDate),
+          gender: dto.gender,
+          maritalStatus: dto.maritalStatus,
+          weddingAnniversary:
+            dto.maritalStatus === 'married'
+              ? parseOptionalDate(dto.weddingAnniversary)
+              : null,
+          street: dto.street,
+          number: dto.number,
+          complement: dto.complement,
+          neighborhood: dto.neighborhood,
+          city: dto.city,
+          state: dto.state,
+          zipCode: dto.zipCode,
+          status,
+          visitorSince,
+          baptismDate: parseOptionalDate(dto.baptismDate),
+          membershipDate,
+          userId: user.id,
+        },
+        include: memberInclude,
+      });
     });
 
     await this.syncMemberCount(churchId);
 
-    return toMemberResponse(member as MemberWithMinistries);
+    return {
+      ...toMemberResponse(member as MemberWithMinistries),
+      account: {
+        login: loginIdentifier,
+        temporaryPassword,
+        mustChangePassword: true,
+      },
+    };
   }
 
   async update(
@@ -137,13 +210,32 @@ export class MembersService {
       await this.ensureEmailAvailable(churchId, dto.email, memberId);
     }
 
+    if (dto.cpf !== undefined) {
+      const normalizedCpf = dto.cpf ? normalizeCpf(dto.cpf) : null;
+
+      if (normalizedCpf && !isValidCpf(normalizedCpf)) {
+        throw new BadRequestException('CPF inválido.');
+      }
+
+      if (normalizedCpf && normalizedCpf !== existing.cpf) {
+        await this.ensureCpfAvailable(churchId, normalizedCpf, memberId);
+      }
+    }
+
     const maritalStatus = dto.maritalStatus ?? existing.maritalStatus;
+    const nextCpf =
+      dto.cpf !== undefined
+        ? dto.cpf
+          ? normalizeCpf(dto.cpf)
+          : null
+        : existing.cpf;
 
     const member = await this.prisma.member.update({
       where: { id: memberId },
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.email !== undefined ? { email: dto.email?.toLowerCase() ?? null } : {}),
+        ...(dto.cpf !== undefined ? { cpf: nextCpf } : {}),
         ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
         ...(dto.phoneSecondary !== undefined ? { phoneSecondary: dto.phoneSecondary } : {}),
         ...(dto.birthDate !== undefined
@@ -317,6 +409,50 @@ export class MembersService {
 
     if (existing) {
       throw new ConflictException('E-mail já cadastrado nesta igreja.');
+    }
+  }
+
+  private async ensureCpfAvailable(
+    churchId: string,
+    cpf: string,
+    excludeMemberId?: string,
+  ) {
+    const existing = await this.prisma.member.findFirst({
+      where: {
+        churchId,
+        cpf,
+        deletedAt: null,
+        ...(excludeMemberId ? { NOT: { id: excludeMemberId } } : {}),
+      },
+    });
+
+    if (existing) {
+      throw new ConflictException('CPF já cadastrado nesta igreja.');
+    }
+  }
+
+  private async ensureUserCredentialsAvailable(
+    email: string | null,
+    cpf: string | null,
+  ) {
+    if (email) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('E-mail já possui login no sistema.');
+      }
+    }
+
+    if (cpf) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { cpf },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('CPF já possui login no sistema.');
+      }
     }
   }
 

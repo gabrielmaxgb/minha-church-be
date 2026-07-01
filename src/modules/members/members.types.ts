@@ -31,6 +31,7 @@ export interface MemberResponse {
   churchId: string;
   name: string;
   email: string | null;
+  cpf: string | null;
   phone: string | null;
   phoneSecondary: string | null;
   birthDate: string | null;
@@ -54,6 +55,16 @@ export interface MemberResponse {
   updatedAt: string;
 }
 
+export interface MemberAccountCredentials {
+  login: string;
+  temporaryPassword: string;
+  mustChangePassword: true;
+}
+
+export interface CreateMemberResponse extends MemberResponse {
+  account: MemberAccountCredentials;
+}
+
 export function formatDate(value: Date | null | undefined): string | null {
   if (!value) {
     return null;
@@ -68,6 +79,7 @@ export function toMemberResponse(member: MemberWithMinistries): MemberResponse {
     churchId: member.churchId,
     name: member.name,
     email: member.email,
+    cpf: member.cpf,
     phone: member.phone,
     phoneSecondary: member.phoneSecondary,
     birthDate: formatDate(member.birthDate),

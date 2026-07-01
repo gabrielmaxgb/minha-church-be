@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Post,
-  Req,
-  Res,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { REFRESH_COOKIE } from '../../common/constants/cookies';
@@ -16,6 +7,8 @@ import type { AuthResponse } from './auth.types';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { SwitchChurchDto } from './dto/switch-church.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { JwtPayload } from './auth.types';
@@ -44,6 +37,24 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   getMe(@CurrentUser() user: JwtPayload): Promise<AuthResponse> {
     return this.authService.getSession(user);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard)
+  async updateMe(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateProfileDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
+    const { session, tokens } = await this.authService.updateProfile(
+      user.sub,
+      user.churchId,
+      dto,
+    );
+
+    this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
+
+    return session;
   }
 
   @Post('refresh')
@@ -89,5 +100,23 @@ export class AuthController {
 
     this.authService.logout(refreshToken);
     this.authCookiesService.clearAuthCookies(res);
+  }
+
+  @Post('change-password')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
+    const { session, tokens } = await this.authService.changePassword(
+      user.sub,
+      dto,
+    );
+
+    this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
+
+    return session;
   }
 }
