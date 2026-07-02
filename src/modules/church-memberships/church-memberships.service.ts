@@ -4,18 +4,28 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ChurchPermission } from '@prisma/client';
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { AuditService } from '../../common/services/audit.service';
+import { PasswordCredentialsService } from '../../common/services/password-credentials.service';
 import {
   AUDIT_ACTIONS,
   AUDIT_TARGET_TYPES,
 } from '../../common/audit/audit.constants';
+import { formatCpf } from '../../common/utils/cpf';
+import { isInternalLoginEmail } from '../../common/utils/login-email';
+import { decryptSecret } from '../../common/utils/secret-encryption';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchRolesService } from '../church-roles/church-roles.service';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
 import type { ChurchMembershipResponse } from './church-memberships.types';
+import type { PendingAccessUserResponse } from './pending-access.types';
+import type {
+  PasswordResetRequestResponse,
+  ResetMemberPasswordResponse,
+} from './password-reset-request.types';
 
 const membershipInclude = {
   user: {
@@ -57,6 +67,8 @@ export class ChurchMembershipsService {
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly churchRolesService: ChurchRolesService,
     private readonly auditService: AuditService,
+    private readonly config: ConfigService,
+    private readonly passwordCredentials: PasswordCredentialsService,
   ) {}
 
   async findAll(churchId: string): Promise<ChurchMembershipResponse[]> {
@@ -67,6 +79,207 @@ export class ChurchMembershipsService {
     });
 
     return memberships.map((membership) => this.toResponse(membership, churchId));
+  }
+
+  async findPendingAccessUsers(
+    churchId: string,
+  ): Promise<PendingAccessUserResponse[]> {
+    const secret = this.config.get<string>('jwt.secret') ?? '';
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        mustChangePassword: true,
+        temporaryPasswordEnc: { not: null },
+        memberships: { some: { churchId } },
+      },
+      include: {
+        memberProfile: {
+          select: {
+            name: true,
+            email: true,
+            phone: true,
+            churchId: true,
+            deletedAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return users.flatMap((user) => {
+      if (!user.temporaryPasswordEnc) {
+        return [];
+      }
+
+      let temporaryPassword: string;
+
+      try {
+        temporaryPassword = decryptSecret(user.temporaryPasswordEnc, secret);
+      } catch {
+        return [];
+      }
+
+      const member =
+        user.memberProfile?.churchId === churchId &&
+        user.memberProfile.deletedAt === null
+          ? user.memberProfile
+          : null;
+
+      const login = user.cpf ? formatCpf(user.cpf) : user.email;
+      const email =
+        member?.email ??
+        (isInternalLoginEmail(user.email) ? null : user.email);
+
+      return [
+        {
+          userId: user.id,
+          name: member?.name ?? user.name,
+          login,
+          email,
+          cpf: user.cpf ? formatCpf(user.cpf) : null,
+          phone: member?.phone ?? null,
+          temporaryPassword,
+          createdAt: user.createdAt.toISOString(),
+        },
+      ];
+    });
+  }
+
+  async findPasswordResetRequests(
+    churchId: string,
+  ): Promise<PasswordResetRequestResponse[]> {
+    const requests = await this.prisma.passwordResetRequest.findMany({
+      where: { churchId, status: 'pending' },
+      include: {
+        user: {
+          include: {
+            memberProfile: {
+              select: {
+                name: true,
+                email: true,
+                phone: true,
+                churchId: true,
+                deletedAt: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return requests.map((request) => {
+      const user = request.user;
+      const member =
+        user.memberProfile?.churchId === churchId &&
+        user.memberProfile.deletedAt === null
+          ? user.memberProfile
+          : null;
+      const login = user.cpf ? formatCpf(user.cpf) : user.email;
+      const email =
+        member?.email ??
+        (isInternalLoginEmail(user.email) ? null : user.email);
+
+      return {
+        id: request.id,
+        userId: user.id,
+        name: member?.name ?? user.name,
+        login,
+        email,
+        cpf: user.cpf ? formatCpf(user.cpf) : null,
+        phone: member?.phone ?? null,
+        createdAt: request.createdAt.toISOString(),
+      };
+    });
+  }
+
+  async resetMemberPassword(
+    churchId: string,
+    userId: string,
+    actorUserId: string,
+  ): Promise<ResetMemberPasswordResponse> {
+    const membership = await this.prisma.churchMembership.findUnique({
+      where: {
+        userId_churchId: {
+          userId,
+          churchId,
+        },
+      },
+    });
+
+    if (!membership) {
+      throw new NotFoundException('Usuário não encontrado nesta igreja.');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        memberProfile: {
+          select: {
+            name: true,
+            email: true,
+            phone: true,
+            churchId: true,
+            deletedAt: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    const { login, temporaryPassword } =
+      await this.passwordCredentials.issueTemporaryPassword(userId);
+
+    await this.prisma.passwordResetRequest.updateMany({
+      where: { userId, churchId, status: 'pending' },
+      data: {
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolvedByUserId: actorUserId,
+      },
+    });
+
+    const member =
+      user.memberProfile?.churchId === churchId &&
+      user.memberProfile.deletedAt === null
+        ? user.memberProfile
+        : null;
+    const email =
+      member?.email ??
+      (isInternalLoginEmail(user.email) ? null : user.email);
+
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { name: true },
+    });
+    const targetName = member?.name ?? user.name;
+
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.membershipPasswordReset,
+      targetType: AUDIT_TARGET_TYPES.user,
+      targetId: userId,
+      summary: `${actor?.name ?? 'Administrador'} gerou nova senha temporária para ${targetName}`,
+      metadata: {
+        targetUserId: userId,
+        targetEmail: user.email,
+      },
+    });
+
+    return {
+      userId,
+      name: targetName,
+      login,
+      email,
+      cpf: user.cpf ? formatCpf(user.cpf) : null,
+      temporaryPassword,
+    };
   }
 
   async findAssignableRoles(

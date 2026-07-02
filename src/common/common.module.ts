@@ -7,6 +7,8 @@ import {
 } from './guards/church-access.guard';
 import { ChurchPermissionsService } from './services/church-permissions.service';
 import { AuditService } from './services/audit.service';
+import { EmailService } from './services/email.service';
+import { PasswordCredentialsService } from './services/password-credentials.service';
 
 @Global()
 @Module({
@@ -16,12 +18,16 @@ import { AuditService } from './services/audit.service';
     PermissionsGuard,
     ChurchPermissionsService,
     AuditService,
+    EmailService,
+    PasswordCredentialsService,
   ],
   exports: [
     ChurchAccessGuard,
     PermissionsGuard,
     ChurchPermissionsService,
     AuditService,
+    EmailService,
+    PasswordCredentialsService,
   ],
 })
 export class CommonModule {}

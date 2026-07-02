@@ -4,10 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { MemberStatus, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { generateTemporaryPassword } from '../../common/utils/credentials';
+import { encryptSecret } from '../../common/utils/secret-encryption';
 import {
   cpfToInternalEmail,
   formatCpf,
@@ -41,7 +43,10 @@ const memberInclude = {
 
 @Injectable()
 export class MembersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async findAll(
     churchId: string,
@@ -124,6 +129,10 @@ export class MembersService {
     const loginIdentifier = email ?? formatCpf(cpf!);
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    const temporaryPasswordEnc = encryptSecret(
+      temporaryPassword,
+      this.config.get<string>('jwt.secret') ?? '',
+    );
 
     const memberRole = await this.prisma.churchRole.findFirst({
       where: { churchId, systemKey: 'member' },
@@ -137,6 +146,7 @@ export class MembersService {
           name: dto.name.trim(),
           passwordHash,
           mustChangePassword: true,
+          temporaryPasswordEnc,
         },
       });
 

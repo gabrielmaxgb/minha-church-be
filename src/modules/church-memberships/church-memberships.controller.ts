@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   UseGuards,
 } from '@nestjs/common';
 import { ChurchPermission } from '@prisma/client';
@@ -39,6 +40,29 @@ export class ChurchMembershipsController {
   ) {
     return this.churchMembershipsService.findAssignableRoles(
       churchId,
+      actor.sub,
+    );
+  }
+
+  @Get('pending-access')
+  findPendingAccess(@Param('churchId') churchId: string) {
+    return this.churchMembershipsService.findPendingAccessUsers(churchId);
+  }
+
+  @Get('password-reset-requests')
+  findPasswordResetRequests(@Param('churchId') churchId: string) {
+    return this.churchMembershipsService.findPasswordResetRequests(churchId);
+  }
+
+  @Post(':userId/reset-password')
+  resetMemberPassword(
+    @Param('churchId') churchId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.churchMembershipsService.resetMemberPassword(
+      churchId,
+      userId,
       actor.sub,
     );
   }

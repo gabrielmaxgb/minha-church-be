@@ -47,6 +47,11 @@ enum MaritalStatus {
   widowed
 }
 
+enum PasswordResetRequestStatus {
+  pending
+  resolved
+}
+
 model User {
   id                 String   @id @default(cuid())
   email              String   @unique
@@ -55,13 +60,17 @@ model User {
   name               String
   avatarUrl          String?  @map("avatar_url")
   mustChangePassword Boolean  @default(false) @map("must_change_password")
+  temporaryPasswordEnc String? @map("temporary_password_enc")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  memberships    ChurchMembership[]
-  memberProfile  Member?
-  ministryEvents MinistryEvent[]    @relation("EventCreatedBy")
-  auditLogs      AuditLog[]
+  memberships                   ChurchMembership[]
+  memberProfile                 Member?
+  ministryEvents                MinistryEvent[]    @relation("EventCreatedBy")
+  auditLogs                     AuditLog[]
+  passwordResetTokens           PasswordResetToken[]
+  passwordResetRequests         PasswordResetRequest[]
+  resolvedPasswordResetRequests PasswordResetRequest[] @relation("ResolvedPasswordResetRequests")
 
   @@map("users")
 }
@@ -75,11 +84,12 @@ model Church {
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
 
-  memberships ChurchMembership[]
-  members     Member[]
-  ministries  Ministry[]
-  roles       ChurchRole[]
-  auditLogs   AuditLog[]
+  memberships           ChurchMembership[]
+  members               Member[]
+  ministries            Ministry[]
+  roles                 ChurchRole[]
+  auditLogs             AuditLog[]
+  passwordResetRequests PasswordResetRequest[]
 
   @@map("churches")
 }
@@ -270,4 +280,36 @@ model AuditLog {
   @@index([churchId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([churchId, action])
   @@map("audit_logs")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model PasswordResetRequest {
+  id               String                     @id @default(cuid())
+  userId           String                     @map("user_id")
+  churchId         String                     @map("church_id")
+  status           PasswordResetRequestStatus @default(pending)
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  resolvedAt       DateTime?                  @map("resolved_at")
+  resolvedByUserId String?                    @map("resolved_by_user_id")
+
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  church     Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  resolvedBy User?  @relation("ResolvedPasswordResetRequests", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, status])
+  @@index([userId, churchId, status])
+  @@map("password_reset_requests")
 }

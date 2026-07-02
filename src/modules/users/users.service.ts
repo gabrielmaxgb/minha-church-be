@@ -103,10 +103,34 @@ export class UsersService {
       data: {
         passwordHash,
         mustChangePassword,
+        temporaryPasswordEnc: null,
       },
     });
 
     return this.toUserRecord(user);
+  }
+
+  async getPasswordResetEmail(userId: string): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        memberProfile: {
+          select: { email: true },
+        },
+      },
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    if (!isInternalLoginEmail(user.email)) {
+      return user.email;
+    }
+
+    const memberEmail = user.memberProfile?.email?.trim();
+
+    return memberEmail || null;
   }
 
   async getMemberPhone(

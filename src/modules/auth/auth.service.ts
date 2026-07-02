@@ -1,13 +1,16 @@
 import {
+  BadRequestException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
+import { EmailService } from '../../common/services/email.service';
+import { PrismaService } from '../../database/prisma.service';
 import { ChurchesService } from '../churches/churches.service';
 import { UsersService } from '../users/users.service';
 import type {
@@ -17,6 +20,8 @@ import type {
 } from './auth.types';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
@@ -29,6 +34,8 @@ export class AuthService {
     private readonly churchPermissionsService: ChurchPermissionsService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
   ) {}
 
   async login(dto: LoginDto): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
@@ -154,6 +161,67 @@ export class AuthService {
     });
 
     return { session, tokens };
+  }
+
+  async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
+    const message =
+      'Se houver uma conta com esses dados, enviaremos instruções por e-mail ou sua igreja será notificada.';
+
+    const user = await this.usersService.findByLoginIdentifier(dto.identifier);
+
+    if (!user) {
+      return { message };
+    }
+
+    const resetEmail = await this.usersService.getPasswordResetEmail(user.id);
+
+    if (resetEmail) {
+      await this.createAndSendResetToken(user.id, user.name, resetEmail);
+      return { message };
+    }
+
+    await this.createAdminResetRequests(user.id);
+
+    return { message };
+  }
+
+  async validateResetToken(token: string): Promise<{ valid: boolean }> {
+    const tokenHash = this.hashResetToken(token);
+    const record = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+    });
+
+    const valid = Boolean(
+      record && !record.usedAt && record.expiresAt >= new Date(),
+    );
+
+    return { valid };
+  }
+
+  async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+    const tokenHash = this.hashResetToken(dto.token);
+    const record = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      throw new BadRequestException(
+        'Link inválido ou expirado. Solicite uma nova recuperação de senha.',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+
+    await this.usersService.updatePassword(record.userId, passwordHash, false);
+
+    await this.prisma.passwordResetToken.update({
+      where: { id: record.id },
+      data: { usedAt: new Date() },
+    });
+
+    return {
+      message: 'Senha redefinida com sucesso. Você já pode fazer login.',
+    };
   }
 
   async switchChurch(
@@ -297,6 +365,63 @@ export class AuthService {
       refreshToken,
       expiresIn,
     };
+  }
+
+  private hashResetToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private async createAndSendResetToken(
+    userId: string,
+    userName: string,
+    email: string,
+  ): Promise<void> {
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = this.hashResetToken(token);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+    await this.prisma.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    await this.prisma.passwordResetToken.create({
+      data: { userId, tokenHash, expiresAt },
+    });
+
+    const appUrl = this.configService.getOrThrow<string>('appUrl');
+    const resetUrl = `${appUrl}/redefinir-senha?token=${token}`;
+
+    await this.emailService.sendPasswordResetEmail(email, resetUrl, userName);
+  }
+
+  private async createAdminResetRequests(userId: string): Promise<void> {
+    const memberships = await this.usersService.getMemberships(userId);
+
+    for (const membership of memberships) {
+      const existing = await this.prisma.passwordResetRequest.findFirst({
+        where: {
+          userId,
+          churchId: membership.churchId,
+          status: 'pending',
+        },
+      });
+
+      if (existing) {
+        await this.prisma.passwordResetRequest.update({
+          where: { id: existing.id },
+          data: { createdAt: new Date() },
+        });
+        continue;
+      }
+
+      await this.prisma.passwordResetRequest.create({
+        data: {
+          userId,
+          churchId: membership.churchId,
+        },
+      });
+    }
   }
 
   private getAccessExpiresInSeconds(): number {
