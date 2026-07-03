@@ -54,7 +54,7 @@ export class AuthService {
     const memberships = await this.usersService.getMemberships(user.id);
 
     if (memberships.length === 0) {
-      throw new UnauthorizedException('Usuário sem igreja vinculada.');
+      throw new UnauthorizedException('E-mail, CPF ou senha inválidos.');
     }
 
     const primaryMembership = memberships[0];

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import configuration from './config/configuration';
 import { CommonModule } from './common/common.module';
@@ -18,6 +19,9 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],
+    }),
+    ThrottlerModule.forRoot({
+      throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
     }),
     DatabaseModule,
     CommonModule,

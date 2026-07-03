@@ -16,11 +16,15 @@ function extractAccessTokenFromCookie(request: Request): string | null {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
+    const isProduction = configService.get<string>('nodeEnv') === 'production';
+    const tokenExtractors = [extractAccessTokenFromCookie];
+
+    if (!isProduction) {
+      tokenExtractors.push(ExtractJwt.fromAuthHeaderAsBearerToken());
+    }
+
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        extractAccessTokenFromCookie,
-        ExtractJwt.fromAuthHeaderAsBearerToken(),
-      ]),
+      jwtFromRequest: ExtractJwt.fromExtractors(tokenExtractors),
       ignoreExpiration: false,
       secretOrKey: configService.getOrThrow<string>('jwt.secret'),
     });
