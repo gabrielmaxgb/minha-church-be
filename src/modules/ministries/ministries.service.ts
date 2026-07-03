@@ -7,6 +7,7 @@ import {
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
+import { EventCreationService } from '../events/event-creation.service';
 import { UsersService } from '../users/users.service';
 import {
   CreateMinistryDto,
@@ -21,6 +22,7 @@ import {
   toMinistryEventResponse,
   toMinistryResponse,
   toMinistryRoleResponse,
+  type CreateMinistryEventResponse,
   type MinistryEventResponse,
   type MinistryMemberResponse,
   type MinistryResponse,
@@ -33,6 +35,7 @@ export class MinistriesService {
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
     private readonly churchPermissions: ChurchPermissionsService,
+    private readonly eventCreation: EventCreationService,
   ) {}
 
   async findAll(churchId: string): Promise<MinistryResponse[]> {
@@ -235,7 +238,7 @@ export class MinistriesService {
         ...(query.from ? { startsAt: { gte: new Date(query.from) } } : {}),
         ...(query.to ? { startsAt: { lte: new Date(`${query.to}T23:59:59.999Z`) } } : {}),
       },
-      include: { ministry: true },
+      include: { ministry: true, recurrenceSeries: true },
       orderBy: { startsAt: 'asc' },
     });
 
@@ -247,25 +250,26 @@ export class MinistriesService {
     ministryId: string,
     userId: string,
     dto: CreateMinistryEventDto,
-  ): Promise<MinistryEventResponse> {
+  ): Promise<CreateMinistryEventResponse> {
     await this.getMinistryOrThrow(churchId, ministryId);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
-    const event = await this.prisma.ministryEvent.create({
-      data: {
-        churchId,
-        ministryId,
-        name: dto.name.trim(),
-        description: dto.description,
-        location: dto.location,
-        startsAt: new Date(dto.startsAt),
-        endsAt: dto.endsAt ? new Date(dto.endsAt) : null,
-        createdByUserId: userId,
-      },
-      include: { ministry: true },
+    const { event, occurrencesCreated } = await this.eventCreation.createEvent({
+      churchId,
+      ministryId,
+      name: dto.name,
+      description: dto.description,
+      location: dto.location,
+      startsAt: new Date(dto.startsAt),
+      endsAt: dto.endsAt ? new Date(dto.endsAt) : null,
+      createdByUserId: userId,
+      recurrence: dto.recurrence,
     });
 
-    return toMinistryEventResponse(event);
+    return {
+      ...toMinistryEventResponse(event),
+      occurrencesCreated,
+    };
   }
 
   async updateEvent(
@@ -290,7 +294,7 @@ export class MinistriesService {
           ? { endsAt: dto.endsAt ? new Date(dto.endsAt) : null }
           : {}),
       },
-      include: { ministry: true },
+      include: { ministry: true, recurrenceSeries: true },
     });
 
     return toMinistryEventResponse(event);

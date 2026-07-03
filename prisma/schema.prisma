@@ -52,6 +52,13 @@ enum PasswordResetRequestStatus {
   resolved
 }
 
+enum EventRecurrenceFrequency {
+  daily
+  weekly
+  monthly
+  yearly
+}
+
 model User {
   id                 String   @id @default(cuid())
   email              String   @unique
@@ -252,6 +259,23 @@ model MemberMinistry {
   @@map("member_ministries")
 }
 
+model EventRecurrenceSeries {
+  id             String                   @id @default(cuid())
+  churchId       String                   @map("church_id")
+  ministryId     String?                  @map("ministry_id")
+  frequency      EventRecurrenceFrequency
+  interval       Int                      @default(1)
+  daysOfWeek     Int[]                    @map("days_of_week")
+  endDate        DateTime?                @map("end_date") @db.Date
+  maxOccurrences Int?                     @map("max_occurrences")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+
+  events MinistryEvent[]
+
+  @@index([churchId])
+  @@map("event_recurrence_series")
+}
+
 model MinistryEvent {
   id              String    @id @default(cuid())
   churchId        String    @map("church_id")
@@ -261,16 +285,19 @@ model MinistryEvent {
   location        String?
   startsAt        DateTime  @map("starts_at")
   endsAt          DateTime? @map("ends_at")
-  createdByUserId String?   @map("created_by_user_id")
-  deletedAt       DateTime? @map("deleted_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdByUserId      String?   @map("created_by_user_id")
+  recurrenceSeriesId   String?   @map("recurrence_series_id")
+  deletedAt            DateTime? @map("deleted_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  ministry  Ministry? @relation(fields: [ministryId], references: [id], onDelete: Cascade)
-  createdBy User?     @relation("EventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  ministry         Ministry?              @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+  createdBy        User?                  @relation("EventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  recurrenceSeries EventRecurrenceSeries? @relation(fields: [recurrenceSeriesId], references: [id], onDelete: SetNull)
 
   @@index([churchId, ministryId, startsAt])
   @@index([churchId, startsAt])
+  @@index([recurrenceSeriesId])
   @@map("ministry_events")
 }
 

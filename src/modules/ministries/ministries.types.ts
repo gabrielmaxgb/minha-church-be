@@ -1,4 +1,11 @@
-import type { Ministry, MinistryEvent, MinistryRole } from '@prisma/client';
+import type {
+  EventRecurrenceSeries,
+  Ministry,
+  MinistryEvent,
+  MinistryRole,
+} from '@prisma/client';
+
+import type { EventRecurrenceResponse } from '../events/event-recurrence.types';
 
 export interface MinistryRoleResponse {
   id: string;
@@ -33,8 +40,14 @@ export interface MinistryEventResponse {
   startsAt: string;
   endsAt: string | null;
   createdByUserId: string | null;
+  recurrenceSeriesId: string | null;
+  recurrence: EventRecurrenceResponse | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CreateMinistryEventResponse extends MinistryEventResponse {
+  occurrencesCreated: number;
 }
 
 export interface MinistryMemberResponse {
@@ -81,8 +94,26 @@ export function toMinistryResponse(
   };
 }
 
+export function toEventRecurrenceResponse(
+  series: EventRecurrenceSeries,
+): EventRecurrenceResponse {
+  return {
+    seriesId: series.id,
+    frequency: series.frequency,
+    interval: series.interval,
+    daysOfWeek: series.daysOfWeek,
+    endDate: series.endDate
+      ? series.endDate.toISOString().slice(0, 10)
+      : null,
+    maxOccurrences: series.maxOccurrences,
+  };
+}
+
 export function toMinistryEventResponse(
-  event: MinistryEvent & { ministry: Ministry | null },
+  event: MinistryEvent & {
+    ministry: Ministry | null;
+    recurrenceSeries?: EventRecurrenceSeries | null;
+  },
 ): MinistryEventResponse {
   return {
     id: event.id,
@@ -96,6 +127,10 @@ export function toMinistryEventResponse(
     startsAt: event.startsAt.toISOString(),
     endsAt: event.endsAt?.toISOString() ?? null,
     createdByUserId: event.createdByUserId,
+    recurrenceSeriesId: event.recurrenceSeriesId,
+    recurrence: event.recurrenceSeries
+      ? toEventRecurrenceResponse(event.recurrenceSeries)
+      : null,
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),
   };

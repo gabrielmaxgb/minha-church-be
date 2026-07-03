@@ -4,7 +4,11 @@ import {
   IsOptional,
   IsString,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+import { EventRecurrenceDto } from '../../events/dto/event-recurrence.dto';
 
 export class CreateMinistryDto {
   @IsString()
@@ -77,6 +81,11 @@ export class CreateMinistryEventDto {
   @IsOptional()
   @IsDateString()
   endsAt?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EventRecurrenceDto)
+  recurrence?: EventRecurrenceDto;
 }
 
 export class UpdateMinistryEventDto {
