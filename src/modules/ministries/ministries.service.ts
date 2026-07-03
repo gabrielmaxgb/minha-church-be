@@ -184,21 +184,40 @@ export class MinistriesService {
       },
       include: {
         member: true,
-        ministryRole: true,
+        roleAssignments: {
+          include: {
+            ministryRole: true,
+          },
+        },
       },
       orderBy: { member: { name: 'asc' } },
     });
 
-    return links.map((link) => ({
-      id: link.id,
-      memberId: link.memberId,
-      memberName: link.member.name,
-      memberEmail: link.member.email,
-      memberPhone: link.member.phone,
-      ministryRoleId: link.ministryRoleId,
-      ministryRoleName: link.ministryRole?.name ?? null,
-      startedAt: link.startedAt?.toISOString() ?? null,
-    }));
+    return links.map((link) => {
+      const roles = link.roleAssignments
+        .map((assignment) => ({
+          id: assignment.ministryRole.id,
+          name: assignment.ministryRole.name,
+          canManageEvents: assignment.ministryRole.canManageEvents,
+          sortOrder: assignment.ministryRole.sortOrder,
+        }))
+        .sort(
+          (a, b) =>
+            a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'pt-BR'),
+        )
+        .map(({ id, name, canManageEvents }) => ({ id, name, canManageEvents }));
+
+      return {
+        id: link.id,
+        memberId: link.memberId,
+        memberName: link.member.name,
+        memberEmail: link.member.email,
+        memberPhone: link.member.phone,
+        roles,
+        canManageEvents: roles.some((role) => role.canManageEvents),
+        startedAt: link.startedAt?.toISOString() ?? null,
+      };
+    });
   }
 
   async listEvents(

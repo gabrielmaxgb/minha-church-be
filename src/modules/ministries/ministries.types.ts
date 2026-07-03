@@ -43,8 +43,12 @@ export interface MinistryMemberResponse {
   memberName: string;
   memberEmail: string | null;
   memberPhone: string | null;
-  ministryRoleId: string | null;
-  ministryRoleName: string | null;
+  roles: Array<{
+    id: string;
+    name: string;
+    canManageEvents: boolean;
+  }>;
+  canManageEvents: boolean;
   startedAt: string | null;
 }
 

@@ -7,6 +7,44 @@ import * as bcrypt from 'bcrypt';
 
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
 
+async function assignMemberToMinistry(
+  prisma: PrismaClient,
+  memberId: string,
+  ministryId: string,
+  roleIds: string[] = [],
+  startedAt = new Date(),
+) {
+  const link = await prisma.memberMinistry.upsert({
+    where: {
+      memberId_ministryId: {
+        memberId,
+        ministryId,
+      },
+    },
+    update: {
+      endedAt: null,
+    },
+    create: {
+      memberId,
+      ministryId,
+      startedAt,
+    },
+  });
+
+  await prisma.memberMinistryRole.deleteMany({
+    where: { memberMinistryId: link.id },
+  });
+
+  if (roleIds.length > 0) {
+    await prisma.memberMinistryRole.createMany({
+      data: roleIds.map((ministryRoleId) => ({
+        memberMinistryId: link.id,
+        ministryRoleId,
+      })),
+    });
+  }
+}
+
 const DEMO_CHURCH_ID = 'church_demo';
 
 const DEMO_CHURCHES = [
@@ -364,39 +402,21 @@ async function seedCentralChurch(prisma: PrismaClient, passwordHash: string) {
     },
   });
 
-  await prisma.memberMinistry.upsert({
-    where: {
-      memberId_ministryId: {
-        memberId: memberAna.id,
-        ministryId: worshipMinistry.id,
-      },
-    },
-    update: {
-      ministryRoleId: worshipLeaderRole.id,
-      endedAt: null,
-    },
-    create: {
-      memberId: memberAna.id,
-      ministryId: worshipMinistry.id,
-      ministryRoleId: worshipLeaderRole.id,
-      startedAt: new Date('2021-04-01'),
-    },
-  });
+  await assignMemberToMinistry(
+    prisma,
+    memberAna.id,
+    worshipMinistry.id,
+    [worshipLeaderRole.id],
+    new Date('2021-04-01'),
+  );
 
-  await prisma.memberMinistry.upsert({
-    where: {
-      memberId_ministryId: {
-        memberId: memberCarlos.id,
-        ministryId: cellsMinistry.id,
-      },
-    },
-    update: { endedAt: null },
-    create: {
-      memberId: memberCarlos.id,
-      ministryId: cellsMinistry.id,
-      startedAt: new Date('2019-02-01'),
-    },
-  });
+  await assignMemberToMinistry(
+    prisma,
+    memberCarlos.id,
+    cellsMinistry.id,
+    [],
+    new Date('2019-02-01'),
+  );
 
   const leaderMember = await prisma.member.upsert({
     where: {
@@ -421,24 +441,13 @@ async function seedCentralChurch(prisma: PrismaClient, passwordHash: string) {
     },
   });
 
-  await prisma.memberMinistry.upsert({
-    where: {
-      memberId_ministryId: {
-        memberId: leaderMember.id,
-        ministryId: worshipMinistry.id,
-      },
-    },
-    update: {
-      ministryRoleId: worshipLeaderRole.id,
-      endedAt: null,
-    },
-    create: {
-      memberId: leaderMember.id,
-      ministryId: worshipMinistry.id,
-      ministryRoleId: worshipLeaderRole.id,
-      startedAt: new Date('2022-02-01'),
-    },
-  });
+  await assignMemberToMinistry(
+    prisma,
+    leaderMember.id,
+    worshipMinistry.id,
+    [worshipLeaderRole.id],
+    new Date('2022-02-01'),
+  );
 
   const nextMonth = new Date();
   nextMonth.setMonth(nextMonth.getMonth() + 1);

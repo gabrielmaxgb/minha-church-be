@@ -36,7 +36,11 @@ const memberInclude = {
     where: { endedAt: null },
     include: {
       ministry: true,
-      ministryRole: true,
+      roleAssignments: {
+        include: {
+          ministryRole: true,
+        },
+      },
     },
   },
 } satisfies Prisma.MemberInclude;
@@ -328,28 +332,50 @@ export class MembersService {
     await this.getMemberOrThrow(churchId, memberId);
     await this.ensureMinistryBelongsToChurch(churchId, dto.ministryId);
 
-    if (dto.ministryRoleId) {
-      await this.ensureRoleBelongsToMinistry(dto.ministryId, dto.ministryRoleId);
+    const uniqueRoleIds =
+      dto.ministryRoleIds !== undefined
+        ? [...new Set(dto.ministryRoleIds)]
+        : undefined;
+
+    if (uniqueRoleIds) {
+      for (const roleId of uniqueRoleIds) {
+        await this.ensureRoleBelongsToMinistry(dto.ministryId, roleId);
+      }
     }
 
-    await this.prisma.memberMinistry.upsert({
-      where: {
-        memberId_ministryId: {
+    await this.prisma.$transaction(async (tx) => {
+      const link = await tx.memberMinistry.upsert({
+        where: {
+          memberId_ministryId: {
+            memberId,
+            ministryId: dto.ministryId,
+          },
+        },
+        update: {
+          startedAt: parseOptionalDate(dto.startedAt) ?? new Date(),
+          endedAt: null,
+        },
+        create: {
           memberId,
           ministryId: dto.ministryId,
+          startedAt: parseOptionalDate(dto.startedAt) ?? new Date(),
         },
-      },
-      update: {
-        ministryRoleId: dto.ministryRoleId ?? null,
-        startedAt: parseOptionalDate(dto.startedAt) ?? new Date(),
-        endedAt: null,
-      },
-      create: {
-        memberId,
-        ministryId: dto.ministryId,
-        ministryRoleId: dto.ministryRoleId,
-        startedAt: parseOptionalDate(dto.startedAt) ?? new Date(),
-      },
+      });
+
+      if (uniqueRoleIds !== undefined) {
+        await tx.memberMinistryRole.deleteMany({
+          where: { memberMinistryId: link.id },
+        });
+
+        if (uniqueRoleIds.length > 0) {
+          await tx.memberMinistryRole.createMany({
+            data: uniqueRoleIds.map((ministryRoleId) => ({
+              memberMinistryId: link.id,
+              ministryRoleId,
+            })),
+          });
+        }
+      }
     });
 
     const member = await this.getMemberOrThrow(churchId, memberId);

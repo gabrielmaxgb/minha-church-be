@@ -129,8 +129,12 @@ export class ChurchPermissionsService {
           ministryLinks: {
             where: {
               endedAt: null,
-              ministryRole: {
-                canManageEvents: true,
+              roleAssignments: {
+                some: {
+                  ministryRole: {
+                    canManageEvents: true,
+                  },
+                },
               },
             },
             select: {
@@ -198,8 +202,12 @@ export class ChurchPermissionsService {
           where: {
             ministryId,
             endedAt: null,
-            ministryRole: {
-              canManageEvents: true,
+            roleAssignments: {
+              some: {
+                ministryRole: {
+                  canManageEvents: true,
+                },
+              },
             },
           },
         },

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -181,8 +182,9 @@ export class AssignMemberMinistryDto {
   ministryId: string;
 
   @IsOptional()
-  @IsString()
-  ministryRoleId?: string;
+  @IsArray()
+  @IsString({ each: true })
+  ministryRoleIds?: string[];
 
   @IsOptional()
   @IsDateString()

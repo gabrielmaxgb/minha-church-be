@@ -217,25 +217,36 @@ model MinistryRole {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   ministry    Ministry         @relation(fields: [ministryId], references: [id], onDelete: Cascade)
-  assignments MemberMinistry[]
+  roleAssignments MemberMinistryRole[]
 
   @@unique([ministryId, name])
   @@map("ministry_roles")
 }
 
-model MemberMinistry {
-  id             String    @id @default(cuid())
-  memberId       String    @map("member_id")
-  ministryId     String    @map("ministry_id")
-  ministryRoleId String?   @map("ministry_role_id")
-  startedAt      DateTime? @map("started_at") @db.Date
-  endedAt        DateTime? @map("ended_at") @db.Date
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+model MemberMinistryRole {
+  memberMinistryId String   @map("member_ministry_id")
+  ministryRoleId   String   @map("ministry_role_id")
+  assignedAt       DateTime @default(now()) @map("assigned_at")
 
-  member       Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  ministry     Ministry      @relation(fields: [ministryId], references: [id], onDelete: Cascade)
-  ministryRole MinistryRole? @relation(fields: [ministryRoleId], references: [id], onDelete: SetNull)
+  memberMinistry MemberMinistry @relation(fields: [memberMinistryId], references: [id], onDelete: Cascade)
+  ministryRole   MinistryRole   @relation(fields: [ministryRoleId], references: [id], onDelete: Cascade)
+
+  @@id([memberMinistryId, ministryRoleId])
+  @@map("member_ministry_roles")
+}
+
+model MemberMinistry {
+  id         String    @id @default(cuid())
+  memberId   String    @map("member_id")
+  ministryId String    @map("ministry_id")
+  startedAt  DateTime? @map("started_at") @db.Date
+  endedAt    DateTime? @map("ended_at") @db.Date
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  member          Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  ministry        Ministry             @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+  roleAssignments MemberMinistryRole[]
 
   @@unique([memberId, ministryId])
   @@map("member_ministries")
