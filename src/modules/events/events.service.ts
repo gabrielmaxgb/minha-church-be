@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ChurchPermission } from '@prisma/client';
+import { ChurchPermission, type MinistryEvent, type Prisma } from '@prisma/client';
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
@@ -13,6 +13,7 @@ import {
   type MinistryEventResponse,
 } from '../ministries/ministries.types';
 import { EventCreationService } from './event-creation.service';
+import type { EventMutationScope } from './dto/event-mutation-scope';
 import {
   CreateChurchEventDto,
   ListChurchEventsQueryDto,
@@ -129,30 +130,131 @@ export class EventsService {
     const existing = await this.getEventOrThrow(churchId, eventId);
     await this.assertCanManageEvent(userId, churchId, existing);
 
-    const event = await this.prisma.ministryEvent.update({
-      where: { id: eventId },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.location !== undefined ? { location: dto.location } : {}),
-        ...(dto.startsAt !== undefined ? { startsAt: new Date(dto.startsAt) } : {}),
-        ...(dto.endsAt !== undefined
-          ? { endsAt: dto.endsAt ? new Date(dto.endsAt) : null }
-          : {}),
-      },
+    const scope = this.resolveScope(existing, dto.scope);
+    const targets = await this.findScopeTargets(churchId, existing, scope);
+
+    const startsDeltaMs =
+      dto.startsAt !== undefined
+        ? new Date(dto.startsAt).getTime() - existing.startsAt.getTime()
+        : 0;
+
+    let newDurationMs: number | null | undefined;
+    if (dto.endsAt !== undefined) {
+      const baseStarts =
+        dto.startsAt !== undefined
+          ? new Date(dto.startsAt)
+          : existing.startsAt;
+      newDurationMs = dto.endsAt
+        ? new Date(dto.endsAt).getTime() - baseStarts.getTime()
+        : null;
+    }
+
+    await this.prisma.$transaction(
+      targets.map((target) => {
+        const data: Prisma.MinistryEventUpdateInput = {};
+
+        if (dto.name !== undefined) {
+          data.name = dto.name.trim();
+        }
+
+        if (dto.description !== undefined) {
+          data.description = dto.description;
+        }
+
+        if (dto.location !== undefined) {
+          data.location = dto.location;
+        }
+
+        if (dto.startsAt !== undefined) {
+          data.startsAt = new Date(target.startsAt.getTime() + startsDeltaMs);
+        }
+
+        if (dto.endsAt !== undefined) {
+          const nextStarts =
+            dto.startsAt !== undefined
+              ? new Date(target.startsAt.getTime() + startsDeltaMs)
+              : target.startsAt;
+
+          data.endsAt =
+            newDurationMs === null
+              ? null
+              : new Date(nextStarts.getTime() + (newDurationMs ?? 0));
+        } else if (dto.startsAt !== undefined && target.endsAt) {
+          data.endsAt = new Date(target.endsAt.getTime() + startsDeltaMs);
+        }
+
+        return this.prisma.ministryEvent.update({
+          where: { id: target.id },
+          data,
+        });
+      }),
+    );
+
+    const event = await this.prisma.ministryEvent.findFirstOrThrow({
+      where: { id: eventId, churchId },
       include: eventInclude,
     });
 
     return toMinistryEventResponse(event);
   }
 
-  async remove(churchId: string, eventId: string, userId: string): Promise<void> {
+  async remove(
+    churchId: string,
+    eventId: string,
+    userId: string,
+    scope?: EventMutationScope,
+  ): Promise<void> {
     const existing = await this.getEventOrThrow(churchId, eventId);
     await this.assertCanManageEvent(userId, churchId, existing);
 
-    await this.prisma.ministryEvent.update({
-      where: { id: eventId },
-      data: { deletedAt: new Date() },
+    const resolvedScope = this.resolveScope(existing, scope);
+    const targets = await this.findScopeTargets(
+      churchId,
+      existing,
+      resolvedScope,
+    );
+    const deletedAt = new Date();
+
+    await this.prisma.ministryEvent.updateMany({
+      where: {
+        id: { in: targets.map((target) => target.id) },
+        churchId,
+        deletedAt: null,
+      },
+      data: { deletedAt },
+    });
+  }
+
+  private resolveScope(
+    event: MinistryEvent,
+    scope?: EventMutationScope,
+  ): EventMutationScope {
+    if (!event.recurrenceSeriesId) {
+      return 'this';
+    }
+
+    return scope ?? 'this';
+  }
+
+  private async findScopeTargets(
+    churchId: string,
+    event: MinistryEvent,
+    scope: EventMutationScope,
+  ): Promise<MinistryEvent[]> {
+    if (!event.recurrenceSeriesId || scope === 'this') {
+      return [event];
+    }
+
+    return this.prisma.ministryEvent.findMany({
+      where: {
+        churchId,
+        recurrenceSeriesId: event.recurrenceSeriesId,
+        deletedAt: null,
+        ...(scope === 'this_and_following'
+          ? { startsAt: { gte: event.startsAt } }
+          : {}),
+      },
+      orderBy: { startsAt: 'asc' },
     });
   }
 

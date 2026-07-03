@@ -8,6 +8,8 @@ import {
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
 import { EventCreationService } from '../events/event-creation.service';
+import { EventsService } from '../events/events.service';
+import type { EventMutationScope } from '../events/dto/event-mutation-scope';
 import { UsersService } from '../users/users.service';
 import {
   CreateMinistryDto,
@@ -36,6 +38,7 @@ export class MinistriesService {
     private readonly usersService: UsersService,
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly eventCreation: EventCreationService,
+    private readonly eventsService: EventsService,
   ) {}
 
   async findAll(churchId: string): Promise<MinistryResponse[]> {
@@ -283,21 +286,7 @@ export class MinistriesService {
     await this.assertCanManageEvents(userId, churchId, ministryId);
     await this.getEventOrThrow(churchId, ministryId, eventId);
 
-    const event = await this.prisma.ministryEvent.update({
-      where: { id: eventId },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.location !== undefined ? { location: dto.location } : {}),
-        ...(dto.startsAt !== undefined ? { startsAt: new Date(dto.startsAt) } : {}),
-        ...(dto.endsAt !== undefined
-          ? { endsAt: dto.endsAt ? new Date(dto.endsAt) : null }
-          : {}),
-      },
-      include: { ministry: true, recurrenceSeries: true },
-    });
-
-    return toMinistryEventResponse(event);
+    return this.eventsService.update(churchId, eventId, userId, dto);
   }
 
   async removeEvent(
@@ -305,15 +294,13 @@ export class MinistriesService {
     ministryId: string,
     eventId: string,
     userId: string,
+    scope?: EventMutationScope,
   ): Promise<void> {
     await this.getMinistryOrThrow(churchId, ministryId);
     await this.assertCanManageEvents(userId, churchId, ministryId);
     await this.getEventOrThrow(churchId, ministryId, eventId);
 
-    await this.prisma.ministryEvent.update({
-      where: { id: eventId },
-      data: { deletedAt: new Date() },
-    });
+    await this.eventsService.remove(churchId, eventId, userId, scope);
   }
 
   private async assertCanManageEvents(

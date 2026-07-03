@@ -1,5 +1,6 @@
 import {
   IsDateString,
+  IsIn,
   IsOptional,
   IsString,
   MinLength,
@@ -8,6 +9,10 @@ import {
 import { Transform, Type } from 'class-transformer';
 
 import { EventRecurrenceDto } from './event-recurrence.dto';
+import {
+  EVENT_MUTATION_SCOPES,
+  type EventMutationScope,
+} from './event-mutation-scope';
 
 export class CreateChurchEventDto {
   @IsString()
@@ -60,6 +65,17 @@ export class UpdateChurchEventDto {
   @IsOptional()
   @IsDateString()
   endsAt?: string | null;
+
+  /** Escopo da edição em eventos recorrentes (padrão: só esta ocorrência). */
+  @IsOptional()
+  @IsIn(EVENT_MUTATION_SCOPES)
+  scope?: EventMutationScope;
+}
+
+export class DeleteChurchEventQueryDto {
+  @IsOptional()
+  @IsIn(EVENT_MUTATION_SCOPES)
+  scope?: EventMutationScope;
 }
 
 export class ListChurchEventsQueryDto {

@@ -24,6 +24,7 @@ import {
   CreateMinistryDto,
   CreateMinistryEventDto,
   CreateMinistryRoleDto,
+  DeleteMinistryEventQueryDto,
   ListMinistryEventsQueryDto,
   UpdateMinistryDto,
   UpdateMinistryEventDto,
@@ -177,12 +178,14 @@ export class MinistriesController {
     @Param('ministryId') ministryId: string,
     @Param('eventId') eventId: string,
     @CurrentUser() user: JwtPayload,
+    @Query() query: DeleteMinistryEventQueryDto,
   ) {
     await this.ministriesService.removeEvent(
       churchId,
       ministryId,
       eventId,
       user.sub,
+      query.scope,
     );
   }
 }

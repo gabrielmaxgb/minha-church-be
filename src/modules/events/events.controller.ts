@@ -17,6 +17,7 @@ import type { JwtPayload } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   CreateChurchEventDto,
+  DeleteChurchEventQueryDto,
   ListChurchEventsQueryDto,
   UpdateChurchEventDto,
 } from './dto/event.dto';
@@ -68,7 +69,8 @@ export class EventsController {
     @Param('churchId') churchId: string,
     @Param('eventId') eventId: string,
     @CurrentUser() user: JwtPayload,
+    @Query() query: DeleteChurchEventQueryDto,
   ) {
-    await this.eventsService.remove(churchId, eventId, user.sub);
+    await this.eventsService.remove(churchId, eventId, user.sub, query.scope);
   }
 }

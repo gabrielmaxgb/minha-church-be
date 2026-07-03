@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsDateString,
+  IsIn,
   IsOptional,
   IsString,
   MinLength,
@@ -109,6 +110,16 @@ export class UpdateMinistryEventDto {
   @IsOptional()
   @IsDateString()
   endsAt?: string | null;
+
+  @IsOptional()
+  @IsIn(['this', 'this_and_following', 'all'])
+  scope?: 'this' | 'this_and_following' | 'all';
+}
+
+export class DeleteMinistryEventQueryDto {
+  @IsOptional()
+  @IsIn(['this', 'this_and_following', 'all'])
+  scope?: 'this' | 'this_and_following' | 'all';
 }
 
 export class ListMinistryEventsQueryDto {
