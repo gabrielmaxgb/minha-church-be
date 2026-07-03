@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 
+import {
+  buildPasswordResetEmailHtml,
+  buildPasswordResetEmailText,
+} from '../templates/password-reset-email.template';
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -26,26 +31,15 @@ export class EmailService {
     }
 
     const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+    const appUrl = this.config.getOrThrow<string>('appUrl');
+    const emailContent = { userName, resetUrl, appUrl };
 
     await this.resend.emails.send({
       from: fromEmail,
       to,
       subject: 'Redefinir sua senha — MinhaChurch',
-      html: `
-        <p>Olá, ${this.escapeHtml(userName)}!</p>
-        <p>Recebemos uma solicitação para redefinir a senha da sua conta no MinhaChurch.</p>
-        <p><a href="${resetUrl}">Clique aqui para criar uma nova senha</a></p>
-        <p>O link expira em 1 hora. Se você não solicitou isso, ignore este e-mail.</p>
-      `,
+      html: buildPasswordResetEmailHtml(emailContent),
+      text: buildPasswordResetEmailText(emailContent),
     });
-  }
-
-  private escapeHtml(value: string): string {
-    return value
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
   }
 }
