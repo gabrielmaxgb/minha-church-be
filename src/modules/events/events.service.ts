@@ -32,6 +32,39 @@ export class EventsService {
     private readonly eventCreation: EventCreationService,
   ) {}
 
+  async findOne(
+    churchId: string,
+    eventId: string,
+  ): Promise<MinistryEventResponse & { seriesOccurrences: MinistryEventResponse[] }> {
+    const event = await this.prisma.ministryEvent.findFirst({
+      where: { id: eventId, churchId, deletedAt: null },
+      include: eventInclude,
+    });
+
+    if (!event) {
+      throw new NotFoundException('Evento não encontrado.');
+    }
+
+    const seriesOccurrences = event.recurrenceSeriesId
+      ? (
+          await this.prisma.ministryEvent.findMany({
+            where: {
+              churchId,
+              recurrenceSeriesId: event.recurrenceSeriesId,
+              deletedAt: null,
+            },
+            include: eventInclude,
+            orderBy: { startsAt: 'asc' },
+          })
+        ).map(toMinistryEventResponse)
+      : [];
+
+    return {
+      ...toMinistryEventResponse(event),
+      seriesOccurrences,
+    };
+  }
+
   async findAll(
     churchId: string,
     query: ListChurchEventsQueryDto,

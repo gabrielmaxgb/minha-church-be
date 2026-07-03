@@ -35,6 +35,14 @@ export class EventsController {
     return this.eventsService.findAll(churchId, query);
   }
 
+  @Get(':eventId')
+  findOne(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.eventsService.findOne(churchId, eventId);
+  }
+
   @Post()
   create(
     @Param('churchId') churchId: string,
