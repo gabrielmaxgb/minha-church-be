@@ -12,7 +12,7 @@ import {
 export interface AuditLogInput {
   churchId: string;
   actorUserId?: string | null;
-  action: AuditAction | string;
+  action: AuditAction;
   targetType?: string;
   targetId?: string;
   summary: string;
@@ -165,9 +165,7 @@ export class AuditService {
           : undefined,
       })),
       nextCursor:
-        hasMore && last
-          ? encodeCursor(last.createdAt, last.id)
-          : null,
+        hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
       retentionDays,
     };
   }

@@ -44,7 +44,9 @@ export class CreateMemberDto {
   @IsEnum(MaritalStatus)
   maritalStatus?: MaritalStatus;
 
-  @ValidateIf((dto: CreateMemberDto) => dto.maritalStatus === MaritalStatus.married)
+  @ValidateIf(
+    (dto: CreateMemberDto) => dto.maritalStatus === MaritalStatus.married,
+  )
   @IsOptional()
   @IsDateString()
   weddingAnniversary?: string;

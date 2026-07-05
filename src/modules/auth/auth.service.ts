@@ -13,11 +13,7 @@ import { EmailService } from '../../common/services/email.service';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchesService } from '../churches/churches.service';
 import { UsersService } from '../users/users.service';
-import type {
-  AuthResponse,
-  IssuedTokens,
-  JwtPayload,
-} from './auth.types';
+import type { AuthResponse, IssuedTokens, JwtPayload } from './auth.types';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -38,14 +34,19 @@ export class AuthService {
     private readonly emailService: EmailService,
   ) {}
 
-  async login(dto: LoginDto): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
+  async login(
+    dto: LoginDto,
+  ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
     const user = await this.usersService.findByLoginIdentifier(dto.identifier);
 
     if (!user) {
       throw new UnauthorizedException('E-mail, CPF ou senha inválidos.');
     }
 
-    const passwordMatches = await bcrypt.compare(dto.password, user.passwordHash);
+    const passwordMatches = await bcrypt.compare(
+      dto.password,
+      user.passwordHash,
+    );
 
     if (!passwordMatches) {
       throw new UnauthorizedException('E-mail, CPF ou senha inválidos.');
@@ -58,7 +59,10 @@ export class AuthService {
     }
 
     const primaryMembership = memberships[0];
-    const session = await this.buildSession(user.id, primaryMembership.churchId);
+    const session = await this.buildSession(
+      user.id,
+      primaryMembership.churchId,
+    );
     const tokens = this.issueTokens({
       sub: user.id,
       email: user.email,
@@ -76,7 +80,9 @@ export class AuthService {
     return this.buildSession(user.sub, user.churchId);
   }
 
-  async refresh(refreshToken: string): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
+  async refresh(
+    refreshToken: string,
+  ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
     if (!refreshToken || this.revokedRefreshTokens.has(refreshToken)) {
       throw new UnauthorizedException('Sessão expirada. Faça login novamente.');
     }
@@ -101,7 +107,9 @@ export class AuthService {
       throw new UnauthorizedException('Usuário não encontrado.');
     }
 
-    if (!(await this.usersService.hasAccessToChurch(user.id, payload.churchId))) {
+    if (
+      !(await this.usersService.hasAccessToChurch(user.id, payload.churchId))
+    ) {
       throw new UnauthorizedException('Sem acesso a esta igreja.');
     }
 
@@ -268,7 +276,10 @@ export class AuthService {
     return { session, tokens };
   }
 
-  private async buildSession(userId: string, churchId: string): Promise<AuthResponse> {
+  private async buildSession(
+    userId: string,
+    churchId: string,
+  ): Promise<AuthResponse> {
     const user = await this.usersService.findById(userId);
 
     if (!user) {

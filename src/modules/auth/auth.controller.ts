@@ -1,4 +1,15 @@
-import { Body, Controller, Get, HttpCode, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Patch,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
@@ -70,7 +81,9 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponse> {
     const refreshToken = req.cookies?.[REFRESH_COOKIE] as string | undefined;
-    const { session, tokens } = await this.authService.refresh(refreshToken ?? '');
+    const { session, tokens } = await this.authService.refresh(
+      refreshToken ?? '',
+    );
 
     this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
 
@@ -97,10 +110,7 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(204)
-  logout(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ): void {
+  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): void {
     const refreshToken = req.cookies?.[REFRESH_COOKIE] as string | undefined;
 
     this.authService.logout(refreshToken);

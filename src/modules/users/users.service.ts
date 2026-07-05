@@ -114,8 +114,10 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        memberProfile: {
+        memberProfiles: {
+          where: { deletedAt: null, email: { not: null } },
           select: { email: true },
+          take: 1,
         },
       },
     });
@@ -128,7 +130,7 @@ export class UsersService {
       return user.email;
     }
 
-    const memberEmail = user.memberProfile?.email?.trim();
+    const memberEmail = user.memberProfiles[0]?.email?.trim();
 
     return memberEmail || null;
   }
@@ -175,10 +177,7 @@ export class UsersService {
         throw new BadRequestException('Informe um e-mail.');
       }
 
-      if (
-        normalizedEmail &&
-        normalizedEmail !== existing.email.toLowerCase()
-      ) {
+      if (normalizedEmail && normalizedEmail !== existing.email.toLowerCase()) {
         const emailTaken = await this.prisma.user.findUnique({
           where: { email: normalizedEmail },
         });
@@ -216,7 +215,9 @@ export class UsersService {
           const normalizedEmail = input.email?.trim().toLowerCase() ?? null;
           memberData.email =
             normalizedEmail ||
-            (isInternalLoginEmail(updatedUser.email) ? null : updatedUser.email);
+            (isInternalLoginEmail(updatedUser.email)
+              ? null
+              : updatedUser.email);
         }
 
         if (input.phone !== undefined) {

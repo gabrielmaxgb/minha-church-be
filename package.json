@@ -28,6 +28,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
+    "db:reset:keep-users": "ts-node --transpile-only prisma/reset-keep-users.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
@@ -38,14 +39,16 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/throttler": "^6.5.0",
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^6.19.3",
-    "prisma": "^6.19.3",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "pg": "^8.22.0",
+    "prisma": "^6.19.3",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.16.0",
     "rxjs": "^7.8.1"
@@ -62,6 +65,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
     "@types/passport-jwt": "^4.0.1",
+    "@types/pg": "^8.20.0",
     "@types/supertest": "^7.0.0",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.18.0",

@@ -71,7 +71,15 @@ export interface MemberAccountCredentials {
 }
 
 export interface CreateMemberResponse extends MemberResponse {
-  account: MemberAccountCredentials;
+  account?: MemberAccountCredentials;
+}
+
+export interface ReceiveMemberResponse extends MemberResponse {
+  account?: MemberAccountCredentials;
+}
+
+export interface UpdateMemberResponse extends MemberResponse {
+  account?: MemberAccountCredentials;
 }
 
 export function formatDate(value: Date | null | undefined): string | null {
@@ -142,7 +150,9 @@ export function toMemberResponse(member: MemberWithMinistries): MemberResponse {
   };
 }
 
-export function parseOptionalDate(value?: string | null): Date | null | undefined {
+export function parseOptionalDate(
+  value?: string | null,
+): Date | null | undefined {
   if (value === undefined) {
     return undefined;
   }

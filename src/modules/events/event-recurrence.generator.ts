@@ -32,12 +32,20 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-function addMonthsClamped(date: Date, months: number, dayOfMonth: number): Date | null {
+function addMonthsClamped(
+  date: Date,
+  months: number,
+  dayOfMonth: number,
+): Date | null {
   const next = new Date(date);
   next.setDate(1);
   next.setMonth(next.getMonth() + months);
 
-  const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  const lastDay = new Date(
+    next.getFullYear(),
+    next.getMonth() + 1,
+    0,
+  ).getDate();
   if (dayOfMonth > lastDay) {
     return null;
   }
@@ -60,7 +68,10 @@ function addYearsClamped(date: Date, years: number): Date | null {
   return next;
 }
 
-function resolveEndLimit(firstStart: Date, recurrence: EventRecurrenceInput): Date {
+function resolveEndLimit(
+  firstStart: Date,
+  recurrence: EventRecurrenceInput,
+): Date {
   if (recurrence.endDate) {
     const end = new Date(`${recurrence.endDate}T23:59:59.999`);
     return end;
@@ -115,10 +126,10 @@ function generateWeekly(
   while (results.length < maxCount && cursor <= endLimit) {
     if (daysOfWeek.includes(cursor.getDay())) {
       const cursorWeek = startOfWeekSunday(cursor);
-      const weeksSince =
-        Math.round(
-          (cursorWeek.getTime() - anchorWeek.getTime()) / (7 * 24 * 60 * 60 * 1000),
-        );
+      const weeksSince = Math.round(
+        (cursorWeek.getTime() - anchorWeek.getTime()) /
+          (7 * 24 * 60 * 60 * 1000),
+      );
 
       if (weeksSince % interval === 0) {
         const occurrence = copyTime(cursor, firstStart);
@@ -187,9 +198,13 @@ function generateYearly(
   return results;
 }
 
-export function validateRecurrenceInput(recurrence: EventRecurrenceInput): void {
+export function validateRecurrenceInput(
+  recurrence: EventRecurrenceInput,
+): void {
   if (recurrence.interval < 1 || recurrence.interval > 99) {
-    throw new BadRequestException('O intervalo de repetição deve ser entre 1 e 99.');
+    throw new BadRequestException(
+      'O intervalo de repetição deve ser entre 1 e 99.',
+    );
   }
 
   if (recurrence.frequency === EventRecurrenceFrequency.weekly) {

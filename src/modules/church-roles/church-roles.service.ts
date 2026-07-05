@@ -14,7 +14,10 @@ import { CHURCH_PERMISSION_LABELS } from '../../common/permissions/church-permis
 import { createCustomChurchRoleId } from '../../common/permissions/seed-default-church-roles';
 import { AuditService } from '../../common/services/audit.service';
 import { PrismaService } from '../../database/prisma.service';
-import type { CreateChurchRoleDto, UpdateChurchRoleDto } from './dto/church-role.dto';
+import type {
+  CreateChurchRoleDto,
+  UpdateChurchRoleDto,
+} from './dto/church-role.dto';
 import {
   toChurchRoleResponse,
   type ChurchRoleResponse,
@@ -128,7 +131,10 @@ export class ChurchRolesService {
     });
 
     const afterPermissions = role.permissions.map((entry) => entry.permission);
-    const permissionDiff = diffStringArrays(beforePermissions, afterPermissions);
+    const permissionDiff = diffStringArrays(
+      beforePermissions,
+      afterPermissions,
+    );
     const nameChanged =
       dto.name !== undefined && dto.name.trim() !== existing.name;
 

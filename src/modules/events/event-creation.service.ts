@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { EventRecurrenceSeries, Ministry, MinistryEvent, Prisma } from '@prisma/client';
+import type {
+  EventRecurrenceSeries,
+  Ministry,
+  MinistryEvent,
+  Prisma,
+} from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 import type { EventRecurrenceDto } from './dto/event-recurrence.dto';
@@ -16,6 +21,7 @@ export interface CreateEventData {
   endsAt: Date | null;
   createdByUserId: string;
   recurrence?: EventRecurrenceDto;
+  rosterOpen?: boolean;
 }
 
 const eventInclude = {
@@ -36,6 +42,8 @@ export class EventCreationService {
     event: MinistryEventWithRelations;
     occurrencesCreated: number;
   }> {
+    const rosterOpen = data.rosterOpen ?? false;
+
     if (!data.recurrence) {
       const event = await this.prisma.ministryEvent.create({
         data: {
@@ -47,6 +55,7 @@ export class EventCreationService {
           startsAt: data.startsAt,
           endsAt: data.endsAt,
           createdByUserId: data.createdByUserId,
+          rosterOpen,
         },
         include: eventInclude,
       });
@@ -54,13 +63,18 @@ export class EventCreationService {
       return { event, occurrencesCreated: 1 };
     }
 
-    const recurrenceInput = this.toRecurrenceInput(data.recurrence, data.startsAt);
+    const recurrenceInput = this.toRecurrenceInput(
+      data.recurrence,
+      data.startsAt,
+    );
     const occurrenceStarts = generateRecurrenceOccurrences(
       data.startsAt,
       recurrenceInput,
     );
     const durationMs =
-      data.endsAt !== null ? data.endsAt.getTime() - data.startsAt.getTime() : null;
+      data.endsAt !== null
+        ? data.endsAt.getTime() - data.startsAt.getTime()
+        : null;
 
     return this.prisma.$transaction(async (tx) => {
       const series = await tx.eventRecurrenceSeries.create({
@@ -91,6 +105,7 @@ export class EventCreationService {
               : null,
           createdByUserId: data.createdByUserId,
           recurrenceSeriesId: series.id,
+          rosterOpen,
         })),
       });
 

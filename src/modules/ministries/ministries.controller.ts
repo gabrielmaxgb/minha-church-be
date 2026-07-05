@@ -7,16 +7,14 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import {
-  ChurchAccessGuard,
-  PermissionsGuard,
-} from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -26,9 +24,12 @@ import {
   CreateMinistryRoleDto,
   DeleteMinistryEventQueryDto,
   ListMinistryEventsQueryDto,
+  UpdateEventAvailabilityDto,
   UpdateMinistryDto,
   UpdateMinistryEventDto,
   UpdateMinistryRoleDto,
+  UpdateRosterProfileDto,
+  OpenAvailabilityWindowDto,
 } from './dto/ministry.dto';
 import { MinistriesService } from './ministries.service';
 
@@ -38,16 +39,30 @@ export class MinistriesController {
   constructor(private readonly ministriesService: MinistriesService) {}
 
   @Get()
-  findAll(@Param('churchId') churchId: string) {
-    return this.ministriesService.findAll(churchId);
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.ministries_access,
+    ChurchPermission.ministries_manage,
+  )
+  findAll(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ministriesService.findAll(churchId, user.sub);
   }
 
   @Get(':ministryId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.ministries_access,
+    ChurchPermission.ministries_manage,
+  )
   findOne(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.ministriesService.findOne(churchId, ministryId);
+    return this.ministriesService.findOne(churchId, ministryId, user.sub);
   }
 
   @Post()
@@ -128,6 +143,80 @@ export class MinistriesController {
     @Param('ministryId') ministryId: string,
   ) {
     return this.ministriesService.listMembers(churchId, ministryId);
+  }
+
+  @Get(':ministryId/roster/me')
+  getRosterProfile(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ministriesService.getRosterProfile(
+      churchId,
+      ministryId,
+      user.sub,
+    );
+  }
+
+  @Patch(':ministryId/roster/me')
+  updateRosterProfile(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateRosterProfileDto,
+  ) {
+    return this.ministriesService.updateRosterProfile(
+      churchId,
+      ministryId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Put(':ministryId/roster/events/:eventId/availability')
+  updateMyEventAvailability(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventAvailabilityDto,
+  ) {
+    return this.ministriesService.updateMyEventAvailability(
+      churchId,
+      ministryId,
+      eventId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Post(':ministryId/roster/availability-window')
+  openAvailabilityWindow(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: OpenAvailabilityWindowDto,
+  ) {
+    return this.ministriesService.openAvailabilityWindow(
+      churchId,
+      ministryId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Delete(':ministryId/roster/availability-window')
+  @HttpCode(200)
+  closeAvailabilityWindow(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ministriesService.closeAvailabilityWindow(
+      churchId,
+      ministryId,
+      user.sub,
+    );
   }
 
   @Get(':ministryId/events')

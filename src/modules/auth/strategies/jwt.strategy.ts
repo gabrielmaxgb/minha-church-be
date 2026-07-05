@@ -8,7 +8,9 @@ import { AUTH_COOKIE } from '../../../common/constants/cookies';
 import type { JwtPayload } from '../auth.types';
 
 function extractAccessTokenFromCookie(request: Request): string | null {
-  const token = request.cookies?.[AUTH_COOKIE];
+  const cookies = request.cookies as
+    Partial<Record<string, string>> | undefined;
+  const token = cookies?.[AUTH_COOKIE];
 
   return typeof token === 'string' && token.length > 0 ? token : null;
 }

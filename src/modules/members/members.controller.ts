@@ -13,10 +13,7 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import {
-  ChurchAccessGuard,
-  PermissionsGuard,
-} from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   AssignMemberMinistryDto,
@@ -32,6 +29,11 @@ export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 
   @Get()
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.members_access,
+    ChurchPermission.members_manage,
+  )
   findAll(
     @Param('churchId') churchId: string,
     @Query() query: ListMembersQueryDto,
@@ -40,6 +42,11 @@ export class MembersController {
   }
 
   @Get(':memberId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.members_access,
+    ChurchPermission.members_manage,
+  )
   findOne(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,

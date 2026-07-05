@@ -10,7 +10,6 @@ import {
   IsOptional,
   Max,
   Min,
-  ValidateNested,
 } from 'class-validator';
 
 export class EventRecurrenceDto {

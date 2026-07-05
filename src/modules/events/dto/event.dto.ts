@@ -95,3 +95,12 @@ export class ListChurchEventsQueryDto {
   @IsDateString()
   to?: string;
 }
+
+export class UpsertEventRosterDto {
+  @IsString()
+  memberId: string;
+
+  @IsString()
+  @MinLength(1)
+  roleLabel: string;
+}

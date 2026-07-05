@@ -12,14 +12,14 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import {
-  ChurchAccessGuard,
-  PermissionsGuard,
-} from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
-import { CreateChurchRoleDto, UpdateChurchRoleDto } from './dto/church-role.dto';
+import {
+  CreateChurchRoleDto,
+  UpdateChurchRoleDto,
+} from './dto/church-role.dto';
 import { ChurchRolesService } from './church-roles.service';
 
 @Controller('churches/:churchId/roles')

@@ -19,6 +19,7 @@ import { isInternalLoginEmail } from '../../common/utils/login-email';
 import { decryptSecret } from '../../common/utils/secret-encryption';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchRolesService } from '../church-roles/church-roles.service';
+import { MembersService } from '../members/members.service';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
 import type { ChurchMembershipResponse } from './church-memberships.types';
 import type { PendingAccessUserResponse } from './pending-access.types';
@@ -34,7 +35,8 @@ const membershipInclude = {
       name: true,
       email: true,
       avatarUrl: true,
-      memberProfile: {
+      memberProfiles: {
+        where: { deletedAt: null },
         select: {
           id: true,
           name: true,
@@ -69,6 +71,7 @@ export class ChurchMembershipsService {
     private readonly auditService: AuditService,
     private readonly config: ConfigService,
     private readonly passwordCredentials: PasswordCredentialsService,
+    private readonly membersService: MembersService,
   ) {}
 
   async findAll(churchId: string): Promise<ChurchMembershipResponse[]> {
@@ -78,7 +81,9 @@ export class ChurchMembershipsService {
       orderBy: { user: { name: 'asc' } },
     });
 
-    return memberships.map((membership) => this.toResponse(membership, churchId));
+    return memberships.map((membership) =>
+      this.toResponse(membership, churchId),
+    );
   }
 
   async findPendingAccessUsers(
@@ -93,7 +98,8 @@ export class ChurchMembershipsService {
         memberships: { some: { churchId } },
       },
       include: {
-        memberProfile: {
+        memberProfiles: {
+          where: { churchId, deletedAt: null },
           select: {
             name: true,
             email: true,
@@ -101,6 +107,7 @@ export class ChurchMembershipsService {
             churchId: true,
             deletedAt: true,
           },
+          take: 1,
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -120,16 +127,11 @@ export class ChurchMembershipsService {
         return [];
       }
 
-      const member =
-        user.memberProfile?.churchId === churchId &&
-        user.memberProfile.deletedAt === null
-          ? user.memberProfile
-          : null;
+      const member = user.memberProfiles[0] ?? null;
 
       const login = user.cpf ? formatCpf(user.cpf) : user.email;
       const email =
-        member?.email ??
-        (isInternalLoginEmail(user.email) ? null : user.email);
+        member?.email ?? (isInternalLoginEmail(user.email) ? null : user.email);
 
       return [
         {
@@ -154,7 +156,8 @@ export class ChurchMembershipsService {
       include: {
         user: {
           include: {
-            memberProfile: {
+            memberProfiles: {
+              where: { churchId, deletedAt: null },
               select: {
                 name: true,
                 email: true,
@@ -162,6 +165,7 @@ export class ChurchMembershipsService {
                 churchId: true,
                 deletedAt: true,
               },
+              take: 1,
             },
           },
         },
@@ -172,15 +176,10 @@ export class ChurchMembershipsService {
 
     return requests.map((request) => {
       const user = request.user;
-      const member =
-        user.memberProfile?.churchId === churchId &&
-        user.memberProfile.deletedAt === null
-          ? user.memberProfile
-          : null;
+      const member = user.memberProfiles[0] ?? null;
       const login = user.cpf ? formatCpf(user.cpf) : user.email;
       const email =
-        member?.email ??
-        (isInternalLoginEmail(user.email) ? null : user.email);
+        member?.email ?? (isInternalLoginEmail(user.email) ? null : user.email);
 
       return {
         id: request.id,
@@ -216,7 +215,8 @@ export class ChurchMembershipsService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        memberProfile: {
+        memberProfiles: {
+          where: { churchId, deletedAt: null },
           select: {
             name: true,
             email: true,
@@ -224,6 +224,7 @@ export class ChurchMembershipsService {
             churchId: true,
             deletedAt: true,
           },
+          take: 1,
         },
       },
     });
@@ -244,14 +245,9 @@ export class ChurchMembershipsService {
       },
     });
 
-    const member =
-      user.memberProfile?.churchId === churchId &&
-      user.memberProfile.deletedAt === null
-        ? user.memberProfile
-        : null;
+    const member = user.memberProfiles[0] ?? null;
     const email =
-      member?.email ??
-      (isInternalLoginEmail(user.email) ? null : user.email);
+      member?.email ?? (isInternalLoginEmail(user.email) ? null : user.email);
 
     const actor = await this.prisma.user.findUnique({
       where: { id: actorUserId },
@@ -322,12 +318,13 @@ export class ChurchMembershipsService {
       : actorAccess.permissions;
 
     return roles
-      .filter((role) =>
-        actorAccess.isOwner ||
-        this.churchPermissions.permissionsAreSubsetOf(
-          role.permissions.map((entry) => entry.permission),
-          actorPermissions,
-        ),
+      .filter(
+        (role) =>
+          actorAccess.isOwner ||
+          this.churchPermissions.permissionsAreSubsetOf(
+            role.permissions.map((entry) => entry.permission),
+            actorPermissions,
+          ),
       )
       .map((role) => ({
         id: role.id,
@@ -421,7 +418,11 @@ export class ChurchMembershipsService {
     if (dto.roleIds !== undefined) {
       const uniqueRoleIds = [...new Set(dto.roleIds)];
 
-      if (uniqueRoleIds.length === 0 && !membership.isOwner && dto.isOwner !== true) {
+      if (
+        uniqueRoleIds.length === 0 &&
+        !membership.isOwner &&
+        dto.isOwner !== true
+      ) {
         throw new BadRequestException(
           'O usuário precisa ter pelo menos um cargo ou ser proprietário.',
         );
@@ -546,6 +547,11 @@ export class ChurchMembershipsService {
       });
     }
 
+    await this.membersService.ensurePastoralRecordForUser(
+      churchId,
+      targetUserId,
+    );
+
     return response;
   }
 
@@ -580,12 +586,12 @@ export class ChurchMembershipsService {
         name: string;
         email: string;
         avatarUrl: string | null;
-        memberProfile: {
+        memberProfiles: Array<{
           id: string;
           name: string;
           churchId: string;
           deletedAt: Date | null;
-        } | null;
+        }>;
       };
       roleAssignments: Array<{
         role: {
@@ -600,15 +606,16 @@ export class ChurchMembershipsService {
     churchId: string,
   ): ChurchMembershipResponse {
     const memberProfile =
-      membership.user.memberProfile &&
-      membership.user.memberProfile.churchId === churchId &&
-      membership.user.memberProfile.deletedAt === null
-        ? membership.user.memberProfile
-        : null;
+      membership.user.memberProfiles.find(
+        (profile) =>
+          profile.churchId === churchId && profile.deletedAt === null,
+      ) ?? null;
 
     const roles = membership.roleAssignments
       .map((assignment) => assignment.role)
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      .sort(
+        (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+      );
 
     return {
       id: membership.id,

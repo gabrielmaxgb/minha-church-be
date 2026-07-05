@@ -1,10 +1,17 @@
 export interface UserPermissions {
-  members: { manage: boolean };
-  ministries: { manage: boolean };
+  dashboard: { access: boolean };
+  members: { access: boolean; manage: boolean };
+  ministries: {
+    access: boolean;
+    manage: boolean;
+    rosterMinistryIds: string[];
+  };
   activities: {
+    access: boolean;
     createChurchWide: boolean;
     ministryIds: string[];
   };
+  schedules: { access: boolean };
   finances: { access: boolean };
   communication: { access: boolean };
   reports: { access: boolean };

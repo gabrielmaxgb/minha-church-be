@@ -7,6 +7,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { AUTH_COOKIE, REFRESH_COOKIE } from '../src/common/constants/cookies';
 import { seedDatabase } from '../prisma/seed';
+import type { E2eLoginResponse } from './e2e.types';
 
 describe('Auth (e2e)', () => {
   let app: INestApplication<App>;
@@ -46,10 +47,12 @@ describe('Auth (e2e)', () => {
       })
       .expect(200);
 
-    expect(response.body.user.email).toBe('pastor@igreja.com.br');
-    expect(response.body.church.id).toBe('church_demo');
-    expect(response.body.tokens.expiresIn).toBeGreaterThan(0);
-    expect(response.body.tokens.accessToken).toBeUndefined();
+    const body = response.body as E2eLoginResponse;
+
+    expect(body.user.email).toBe('pastor@igreja.com.br');
+    expect(body.church.id).toBe('church_demo');
+    expect(body.tokens.expiresIn).toBeGreaterThan(0);
+    expect(body.tokens.accessToken).toBeUndefined();
 
     const cookies = response.headers['set-cookie'] as string[];
 
@@ -75,10 +78,12 @@ describe('Auth (e2e)', () => {
 
     const meResponse = await agent.get('/api/v1/auth/me').expect(200);
 
-    expect(meResponse.body.user.email).toBe('pastor@igreja.com.br');
-    expect(meResponse.body.church.slug).toBe('igreja-batista-central');
-    expect(meResponse.body.permissions.members.manage).toBe(true);
-    expect(meResponse.body.permissions.activities.createChurchWide).toBe(true);
+    const meBody = meResponse.body as E2eLoginResponse;
+
+    expect(meBody.user.email).toBe('pastor@igreja.com.br');
+    expect(meBody.church.slug).toBe('igreja-batista-central');
+    expect(meBody.permissions?.members.manage).toBe(true);
+    expect(meBody.permissions?.activities.createChurchWide).toBe(true);
   });
 
   it('POST /auth/login rejects invalid credentials', async () => {
