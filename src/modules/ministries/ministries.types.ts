@@ -52,6 +52,7 @@ export interface MinistryEventResponse {
   isChurchWide: boolean;
   name: string;
   description: string | null;
+  availabilityMessage: string | null;
   location: string | null;
   startsAt: string;
   endsAt: string | null;
@@ -96,6 +97,7 @@ export interface WorshipAvailabilityEventResponse {
   isRecurring: boolean;
   rosterOpen: boolean;
   rosterRoles: string[];
+  availabilityMessage: string | null;
   myStatus: 'available' | 'unavailable' | null;
   myRoleLabels: string[];
   availableCount: number;
@@ -121,6 +123,8 @@ export interface EventRosterSlotResponse {
   eventId: string;
   label: string;
   sortOrder: number;
+  requiredCount: number;
+  assignedCount: number;
   assignedMemberId: string | null;
   assignedMemberName: string | null;
 }
@@ -187,6 +191,7 @@ export interface MyScheduleEventResponse {
   location: string | null;
   rosterOpen: boolean;
   rosterRoles: string[];
+  availabilityMessage: string | null;
   profileKey: string;
   myProfileRoleLabels: string[];
   myAvailabilityStatus: 'available' | 'unavailable' | null;
@@ -305,6 +310,7 @@ export function toMinistryEventResponse(
     isChurchWide: event.ministryId === null,
     name: event.name,
     description: event.description,
+    availabilityMessage: event.availabilityMessage,
     location: event.location,
     startsAt: event.startsAt.toISOString(),
     endsAt: event.endsAt?.toISOString() ?? null,

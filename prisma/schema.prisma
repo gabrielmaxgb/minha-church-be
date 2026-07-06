@@ -329,6 +329,7 @@ model MinistryEvent {
   ministryId           String?   @map("ministry_id")
   name                 String
   description          String?
+  availabilityMessage  String?   @map("availability_message")
   location             String?
   startsAt             DateTime  @map("starts_at")
   endsAt               DateTime? @map("ends_at")
@@ -372,12 +373,13 @@ model EventAvailability {
 }
 
 model EventRosterSlot {
-  id        String   @id @default(cuid())
-  eventId   String   @map("event_id")
-  label     String
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(cuid())
+  eventId       String   @map("event_id")
+  label         String
+  requiredCount Int      @default(1) @map("required_count")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   event       MinistryEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
   assignments EventRosterAssignment[]
@@ -401,7 +403,7 @@ model EventRosterAssignment {
   rosterSlot EventRosterSlot @relation(fields: [rosterSlotId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, memberId])
-  @@unique([eventId, rosterSlotId])
+  @@index([eventId, rosterSlotId])
   @@index([memberId])
   @@map("event_roster_assignments")
 }

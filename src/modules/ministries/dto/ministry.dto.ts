@@ -6,12 +6,14 @@ import {
   IsIn,
   IsOptional,
   IsString,
+  MaxLength,
   MinLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 import { EventRecurrenceDto } from '../../events/dto/event-recurrence.dto';
+import { RosterSlotPlanItemDto } from '../../events/dto/roster-slot-plan.dto';
 
 export const EVENT_AVAILABILITY_STATUSES = [
   'available',
@@ -120,6 +122,11 @@ export class CreateMinistryEventDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
+  availabilityMessage?: string;
+
+  @IsOptional()
+  @IsString()
   location?: string;
 
   @IsDateString()
@@ -150,6 +157,12 @@ export class CreateMinistryEventDto {
   rosterRoles?: string[];
 
   @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RosterSlotPlanItemDto)
+  rosterSlotPlan?: RosterSlotPlanItemDto[];
+
+  @IsOptional()
   @IsBoolean()
   visibleToChurch?: boolean;
 }
@@ -163,6 +176,11 @@ export class UpdateMinistryEventDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  availabilityMessage?: string | null;
 
   @IsOptional()
   @IsString()
@@ -188,6 +206,12 @@ export class UpdateMinistryEventDto {
   @IsArray()
   @IsString({ each: true })
   rosterRoles?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RosterSlotPlanItemDto)
+  rosterSlotPlan?: RosterSlotPlanItemDto[];
 
   @IsOptional()
   @IsBoolean()

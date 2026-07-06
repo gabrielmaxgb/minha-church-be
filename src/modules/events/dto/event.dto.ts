@@ -5,6 +5,7 @@ import {
   IsIn,
   IsOptional,
   IsString,
+  MaxLength,
   MinLength,
   ValidateNested,
 } from 'class-validator';
@@ -15,6 +16,7 @@ import {
   EVENT_MUTATION_SCOPES,
   type EventMutationScope,
 } from './event-mutation-scope';
+import { RosterSlotPlanItemDto } from './roster-slot-plan.dto';
 
 export class CreateChurchEventDto {
   @IsString()
@@ -28,6 +30,11 @@ export class CreateChurchEventDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  availabilityMessage?: string;
 
   @IsOptional()
   @IsString()
@@ -55,11 +62,18 @@ export class CreateChurchEventDto {
   @IsBoolean()
   rosterOpen?: boolean;
 
-  /** Funções necessárias neste evento (quando usesRoster). */
+  /** Funções necessárias neste evento (quando usesRoster). Legado: quantidade 1 por função. */
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   rosterRoles?: string[];
+
+  /** Funções e quantidades necessárias (preferido em relação a rosterRoles). */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RosterSlotPlanItemDto)
+  rosterSlotPlan?: RosterSlotPlanItemDto[];
 
   /** Exibir na agenda da igreja (apenas eventos de ministério). */
   @IsOptional()
@@ -76,6 +90,11 @@ export class UpdateChurchEventDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  availabilityMessage?: string | null;
 
   @IsOptional()
   @IsString()
@@ -101,6 +120,12 @@ export class UpdateChurchEventDto {
   @IsArray()
   @IsString({ each: true })
   rosterRoles?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RosterSlotPlanItemDto)
+  rosterSlotPlan?: RosterSlotPlanItemDto[];
 
   @IsOptional()
   @IsBoolean()

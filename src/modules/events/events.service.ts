@@ -26,7 +26,7 @@ import {
   isAllowedMemberRosterRole,
 } from '../ministries/roster-roles';
 import { EventCreationService } from './event-creation.service';
-import { syncEventRosterSlots } from './event-roster-slots';
+import { syncEventRosterSlots, RosterSlotSyncError, resolveRosterSlotPlan, syncRosterCollectionState, wasRosterFullyStaffed } from './event-roster-slots';
 import {
   buildVisibleEventsWhere,
   buildEventViewContext,
@@ -347,31 +347,39 @@ export class EventsService {
       );
     }
 
-    const slotTakenByOther = slot.assignments.find(
+    const slotTakenCount = slot.assignments.filter(
       (assignment) => assignment.memberId !== dto.memberId,
-    );
+    ).length;
 
-    if (slotTakenByOther) {
-      throw new BadRequestException('Esta função já está preenchida na escala.');
+    if (slotTakenCount >= slot.requiredCount) {
+      throw new BadRequestException(
+        slot.requiredCount === 1
+          ? 'Esta função já está preenchida na escala.'
+          : `Esta função já atingiu o limite de ${slot.requiredCount} pessoas.`,
+      );
     }
 
-    await this.prisma.eventRosterAssignment.upsert({
-      where: {
-        eventId_memberId: {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.eventRosterAssignment.upsert({
+        where: {
+          eventId_memberId: {
+            eventId,
+            memberId: dto.memberId,
+          },
+        },
+        create: {
           eventId,
           memberId: dto.memberId,
+          rosterSlotId: slot.id,
+          roleLabel: slot.label,
         },
-      },
-      create: {
-        eventId,
-        memberId: dto.memberId,
-        rosterSlotId: slot.id,
-        roleLabel: slot.label,
-      },
-      update: {
-        rosterSlotId: slot.id,
-        roleLabel: slot.label,
-      },
+        update: {
+          rosterSlotId: slot.id,
+          roleLabel: slot.label,
+        },
+      });
+
+      await syncRosterCollectionState(tx, eventId);
     });
 
     const eventWithRoster = await this.prisma.ministryEvent.findFirstOrThrow({
@@ -397,8 +405,24 @@ export class EventsService {
     const event = await this.getEventOrThrow(churchId, eventId);
     await this.assertCanManageRoster(userId, churchId, event);
 
-    await this.prisma.eventRosterAssignment.deleteMany({
-      where: { eventId, memberId },
+    const slotsBefore = await this.prisma.eventRosterSlot.findMany({
+      where: { eventId },
+      select: {
+        requiredCount: true,
+        assignments: { select: { id: true } },
+      },
+    });
+    const wasFullyStaffed = wasRosterFullyStaffed(slotsBefore);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.eventRosterAssignment.deleteMany({
+        where: { eventId, memberId },
+      });
+
+      await syncRosterCollectionState(tx, eventId, {
+        reopenOnVacancy: true,
+        wasFullyStaffed,
+      });
     });
 
     const eventWithRoster = await this.prisma.ministryEvent.findFirstOrThrow({
@@ -462,6 +486,7 @@ export class EventsService {
       ministryId: dto.ministryId ?? null,
       name: dto.name,
       description: dto.description,
+      availabilityMessage: dto.availabilityMessage,
       location: dto.location,
       startsAt: new Date(dto.startsAt),
       endsAt: dto.endsAt ? new Date(dto.endsAt) : null,
@@ -470,6 +495,10 @@ export class EventsService {
       usesRoster: dto.usesRoster ?? false,
       rosterOpen: dto.rosterOpen ?? false,
       rosterRoles: dto.rosterRoles,
+      rosterSlotPlan: resolveRosterSlotPlan({
+        rosterSlotPlan: dto.rosterSlotPlan,
+        rosterRoles: dto.rosterRoles,
+      }),
       visibleToChurch: dto.ministryId ? dto.visibleToChurch : true,
     });
 
@@ -525,6 +554,10 @@ export class EventsService {
           data.description = dto.description;
         }
 
+        if (dto.availabilityMessage !== undefined) {
+          data.availabilityMessage = dto.availabilityMessage;
+        }
+
         if (dto.location !== undefined) {
           data.location = dto.location;
         }
@@ -571,13 +604,31 @@ export class EventsService {
       }),
     );
 
-    if (dto.rosterRoles !== undefined) {
+    const rosterPlanUpdateRequested =
+      dto.rosterSlotPlan !== undefined || dto.rosterRoles !== undefined;
+
+    if (rosterPlanUpdateRequested) {
+      const rosterSlotPlan = resolveRosterSlotPlan({
+        rosterSlotPlan: dto.rosterSlotPlan,
+        rosterRoles: dto.rosterRoles,
+      });
+
       for (const target of targets) {
         const usesRoster =
           dto.usesRoster !== undefined ? dto.usesRoster : target.usesRoster;
 
-        if (usesRoster) {
-          await syncEventRosterSlots(this.prisma, target.id, dto.rosterRoles);
+        if (!usesRoster) {
+          continue;
+        }
+
+        try {
+          await syncEventRosterSlots(this.prisma, target.id, rosterSlotPlan);
+        } catch (error) {
+          if (error instanceof RosterSlotSyncError) {
+            throw new BadRequestException(error.message);
+          }
+
+          throw error;
         }
       }
     }

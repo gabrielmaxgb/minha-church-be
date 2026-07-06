@@ -10,6 +10,7 @@ import { ChurchPermission, MemberStatus } from '@prisma/client';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
 import { EventCreationService } from '../events/event-creation.service';
+import { resolveRosterSlotPlan } from '../events/event-roster-slots';
 import { EventsService } from '../events/events.service';
 import type { EventMutationScope } from '../events/dto/event-mutation-scope';
 import { UsersService } from '../users/users.service';
@@ -600,6 +601,7 @@ export class MinistriesService {
       location: string | null;
       usesRoster: boolean;
       rosterOpen: boolean;
+      availabilityMessage: string | null;
       recurrenceSeriesId: string | null;
       availabilities: Array<{
         memberId: string;
@@ -646,6 +648,7 @@ export class MinistriesService {
       location: event.location,
       rosterOpen,
       rosterRoles: event.rosterSlots.map((slot) => slot.label),
+      availabilityMessage: event.availabilityMessage,
       profileKey,
       myProfileRoleLabels: myAvailability?.roleLabels ?? [],
       myAvailabilityStatus: myAvailability?.status ?? null,
@@ -674,6 +677,7 @@ export class MinistriesService {
       location: string | null;
       usesRoster: boolean;
       rosterOpen: boolean;
+      availabilityMessage: string | null;
       recurrenceSeriesId: string | null;
       ministry: {
         id: string;
@@ -730,6 +734,7 @@ export class MinistriesService {
       location: event.location,
       rosterOpen,
       rosterRoles: event.rosterSlots.map((slot) => slot.label),
+      availabilityMessage: event.availabilityMessage,
       profileKey,
       myProfileRoleLabels,
       myAvailabilityStatus: myAvailability?.status ?? null,
@@ -832,6 +837,7 @@ export class MinistriesService {
         isRecurring: Boolean(event.recurrenceSeriesId),
         rosterOpen: event.rosterOpen,
         rosterRoles: event.rosterSlots.map((slot) => slot.label),
+        availabilityMessage: event.availabilityMessage,
         myStatus: myAvailability?.status ?? null,
         myRoleLabels: myAvailability?.roleLabels ?? [],
         availableCount,
@@ -1284,6 +1290,7 @@ export class MinistriesService {
       ministryId,
       name: dto.name,
       description: dto.description,
+      availabilityMessage: dto.availabilityMessage,
       location: dto.location,
       startsAt: new Date(dto.startsAt),
       endsAt: dto.endsAt ? new Date(dto.endsAt) : null,
@@ -1292,6 +1299,10 @@ export class MinistriesService {
       usesRoster,
       rosterOpen,
       rosterRoles: dto.rosterRoles,
+      rosterSlotPlan: resolveRosterSlotPlan({
+        rosterSlotPlan: dto.rosterSlotPlan,
+        rosterRoles: dto.rosterRoles,
+      }),
       visibleToChurch: dto.visibleToChurch,
     });
 

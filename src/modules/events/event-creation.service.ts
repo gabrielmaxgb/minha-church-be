@@ -10,13 +10,14 @@ import { PrismaService } from '../../database/prisma.service';
 import type { EventRecurrenceDto } from './dto/event-recurrence.dto';
 import { generateRecurrenceOccurrences } from './event-recurrence.generator';
 import type { EventRecurrenceInput } from './event-recurrence.types';
-import { createEventRosterSlots, createEventRosterSlotsForEvents } from './event-roster-slots';
+import { createEventRosterSlots, createEventRosterSlotsForEvents, resolveRosterSlotPlan, type RosterSlotPlanItem } from './event-roster-slots';
 
 export interface CreateEventData {
   churchId: string;
   ministryId: string | null;
   name: string;
   description?: string | null;
+  availabilityMessage?: string | null;
   location?: string | null;
   startsAt: Date;
   endsAt: Date | null;
@@ -25,6 +26,7 @@ export interface CreateEventData {
   usesRoster?: boolean;
   rosterOpen?: boolean;
   rosterRoles?: string[];
+  rosterSlotPlan?: RosterSlotPlanItem[];
   visibleToChurch?: boolean;
 }
 
@@ -48,7 +50,12 @@ export class EventCreationService {
   }> {
     const usesRoster = data.usesRoster ?? false;
     const rosterOpen = usesRoster ? (data.rosterOpen ?? false) : false;
-    const rosterRoles = usesRoster ? (data.rosterRoles ?? []) : [];
+    const rosterSlotPlan = usesRoster
+      ? resolveRosterSlotPlan({
+          rosterSlotPlan: data.rosterSlotPlan,
+          rosterRoles: data.rosterRoles,
+        })
+      : [];
     const visibleToChurch = data.ministryId
       ? (data.visibleToChurch ?? true)
       : true;
@@ -60,6 +67,7 @@ export class EventCreationService {
           ministryId: data.ministryId,
           name: data.name.trim(),
           description: data.description,
+          availabilityMessage: data.availabilityMessage,
           location: data.location,
           startsAt: data.startsAt,
           endsAt: data.endsAt,
@@ -71,8 +79,8 @@ export class EventCreationService {
         include: eventInclude,
       });
 
-      if (rosterRoles.length > 0) {
-        await createEventRosterSlots(this.prisma, event.id, rosterRoles);
+      if (rosterSlotPlan.length > 0) {
+        await createEventRosterSlots(this.prisma, event.id, rosterSlotPlan);
       }
 
       return { event, occurrencesCreated: 1 };
@@ -113,6 +121,7 @@ export class EventCreationService {
             ministryId: data.ministryId,
             name: data.name.trim(),
             description: data.description,
+            availabilityMessage: data.availabilityMessage,
             location: data.location,
             startsAt,
             endsAt:
@@ -136,7 +145,7 @@ export class EventCreationService {
           include: eventInclude,
         });
 
-        if (rosterRoles.length > 0) {
+        if (rosterSlotPlan.length > 0) {
           const seriesEvents = await tx.ministryEvent.findMany({
             where: {
               churchId: data.churchId,
@@ -149,7 +158,7 @@ export class EventCreationService {
           await createEventRosterSlotsForEvents(
             tx,
             seriesEvents.map((item) => item.id),
-            rosterRoles,
+            rosterSlotPlan,
           );
         }
 
