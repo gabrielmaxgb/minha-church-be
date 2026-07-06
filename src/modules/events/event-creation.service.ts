@@ -10,6 +10,7 @@ import { PrismaService } from '../../database/prisma.service';
 import type { EventRecurrenceDto } from './dto/event-recurrence.dto';
 import { generateRecurrenceOccurrences } from './event-recurrence.generator';
 import type { EventRecurrenceInput } from './event-recurrence.types';
+import { createEventRosterSlots, createEventRosterSlotsForEvents } from './event-roster-slots';
 
 export interface CreateEventData {
   churchId: string;
@@ -21,7 +22,10 @@ export interface CreateEventData {
   endsAt: Date | null;
   createdByUserId: string;
   recurrence?: EventRecurrenceDto;
+  usesRoster?: boolean;
   rosterOpen?: boolean;
+  rosterRoles?: string[];
+  visibleToChurch?: boolean;
 }
 
 const eventInclude = {
@@ -42,7 +46,12 @@ export class EventCreationService {
     event: MinistryEventWithRelations;
     occurrencesCreated: number;
   }> {
-    const rosterOpen = data.rosterOpen ?? false;
+    const usesRoster = data.usesRoster ?? false;
+    const rosterOpen = usesRoster ? (data.rosterOpen ?? false) : false;
+    const rosterRoles = usesRoster ? (data.rosterRoles ?? []) : [];
+    const visibleToChurch = data.ministryId
+      ? (data.visibleToChurch ?? true)
+      : true;
 
     if (!data.recurrence) {
       const event = await this.prisma.ministryEvent.create({
@@ -55,10 +64,16 @@ export class EventCreationService {
           startsAt: data.startsAt,
           endsAt: data.endsAt,
           createdByUserId: data.createdByUserId,
+          usesRoster,
           rosterOpen,
+          visibleToChurch,
         },
         include: eventInclude,
       });
+
+      if (rosterRoles.length > 0) {
+        await createEventRosterSlots(this.prisma, event.id, rosterRoles);
+      }
 
       return { event, occurrencesCreated: 1 };
     }
@@ -76,53 +91,75 @@ export class EventCreationService {
         ? data.endsAt.getTime() - data.startsAt.getTime()
         : null;
 
-    return this.prisma.$transaction(async (tx) => {
-      const series = await tx.eventRecurrenceSeries.create({
-        data: {
-          churchId: data.churchId,
-          ministryId: data.ministryId,
-          frequency: recurrenceInput.frequency,
-          interval: recurrenceInput.interval,
-          daysOfWeek: recurrenceInput.daysOfWeek ?? [],
-          endDate: recurrenceInput.endDate
-            ? new Date(`${recurrenceInput.endDate}T12:00:00`)
-            : null,
-          maxOccurrences: recurrenceInput.maxOccurrences ?? null,
-        },
-      });
-
-      await tx.ministryEvent.createMany({
-        data: occurrenceStarts.map((startsAt) => ({
-          churchId: data.churchId,
-          ministryId: data.ministryId,
-          name: data.name.trim(),
-          description: data.description,
-          location: data.location,
-          startsAt,
-          endsAt:
-            durationMs !== null
-              ? new Date(startsAt.getTime() + durationMs)
+    return this.prisma.$transaction(
+      async (tx) => {
+        const series = await tx.eventRecurrenceSeries.create({
+          data: {
+            churchId: data.churchId,
+            ministryId: data.ministryId,
+            frequency: recurrenceInput.frequency,
+            interval: recurrenceInput.interval,
+            daysOfWeek: recurrenceInput.daysOfWeek ?? [],
+            endDate: recurrenceInput.endDate
+              ? new Date(`${recurrenceInput.endDate}T12:00:00`)
               : null,
-          createdByUserId: data.createdByUserId,
-          recurrenceSeriesId: series.id,
-          rosterOpen,
-        })),
-      });
+            maxOccurrences: recurrenceInput.maxOccurrences ?? null,
+          },
+        });
 
-      const event = await tx.ministryEvent.findFirstOrThrow({
-        where: {
-          churchId: data.churchId,
-          recurrenceSeriesId: series.id,
-        },
-        orderBy: { startsAt: 'asc' },
-        include: eventInclude,
-      });
+        await tx.ministryEvent.createMany({
+          data: occurrenceStarts.map((startsAt) => ({
+            churchId: data.churchId,
+            ministryId: data.ministryId,
+            name: data.name.trim(),
+            description: data.description,
+            location: data.location,
+            startsAt,
+            endsAt:
+              durationMs !== null
+                ? new Date(startsAt.getTime() + durationMs)
+                : null,
+            createdByUserId: data.createdByUserId,
+            recurrenceSeriesId: series.id,
+            usesRoster,
+            rosterOpen,
+            visibleToChurch,
+          })),
+        });
 
-      return {
-        event,
-        occurrencesCreated: occurrenceStarts.length,
-      };
-    });
+        const event = await tx.ministryEvent.findFirstOrThrow({
+          where: {
+            churchId: data.churchId,
+            recurrenceSeriesId: series.id,
+          },
+          orderBy: { startsAt: 'asc' },
+          include: eventInclude,
+        });
+
+        if (rosterRoles.length > 0) {
+          const seriesEvents = await tx.ministryEvent.findMany({
+            where: {
+              churchId: data.churchId,
+              recurrenceSeriesId: series.id,
+              deletedAt: null,
+            },
+            select: { id: true },
+          });
+
+          await createEventRosterSlotsForEvents(
+            tx,
+            seriesEvents.map((item) => item.id),
+            rosterRoles,
+          );
+        }
+
+        return {
+          event,
+          occurrencesCreated: occurrenceStarts.length,
+        };
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
   }
 
   private toRecurrenceInput(

@@ -24,6 +24,7 @@ import {
   UpdateMinistryEventDto,
   UpdateMinistryRoleDto,
   UpdateRosterProfileDto,
+  UpdateRosterCollectionDto,
   type OpenAvailabilityWindowDto,
 } from './dto/ministry.dto';
 import {
@@ -31,7 +32,6 @@ import {
   defaultPeriodStart,
   formatDateOnly,
   formatPeriodLabel,
-  isEventInAvailabilityWindow,
   parseDateOnly,
 } from './worship-availability-window';
 import {
@@ -142,7 +142,7 @@ export class MinistriesService {
         churchId,
         name: dto.name.trim(),
         description: dto.description,
-        hasRoster: dto.hasRoster ?? false,
+        hasRoster: false,
       },
       include: { roles: true },
     });
@@ -156,7 +156,7 @@ export class MinistriesService {
     userId: string,
     dto: OpenAvailabilityWindowDto,
   ): Promise<RosterAvailabilityWindowResponse> {
-    await this.getRosterMinistryOrThrow(churchId, ministryId);
+    await this.getMinistryOrThrow(churchId, ministryId);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
     const anchor = dto.startDate
@@ -174,27 +174,7 @@ export class MinistriesService {
       },
     });
 
-    await this.prisma.ministryEvent.updateMany({
-      where: {
-        churchId,
-        ministryId,
-        deletedAt: null,
-        startsAt: { gte: start, lte: end },
-      },
-      data: { rosterOpen: true },
-    });
-
-    await this.prisma.ministryEvent.updateMany({
-      where: {
-        churchId,
-        ministryId,
-        deletedAt: null,
-        OR: [{ startsAt: { lt: start } }, { startsAt: { gt: end } }],
-      },
-      data: { rosterOpen: false },
-    });
-
-    const updated = await this.getRosterMinistryOrThrow(churchId, ministryId);
+    const updated = await this.getMinistryOrThrow(churchId, ministryId);
     return (await this.buildAvailabilityWindowResponse(churchId, updated))!;
   }
 
@@ -203,7 +183,7 @@ export class MinistriesService {
     ministryId: string,
     userId: string,
   ): Promise<RosterAvailabilityWindowResponse> {
-    await this.getRosterMinistryOrThrow(churchId, ministryId);
+    await this.getMinistryOrThrow(churchId, ministryId);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
     await this.prisma.ministry.update({
@@ -216,13 +196,44 @@ export class MinistriesService {
       },
     });
 
-    await this.prisma.ministryEvent.updateMany({
-      where: { churchId, ministryId, deletedAt: null },
-      data: { rosterOpen: false },
+    const updated = await this.getMinistryOrThrow(churchId, ministryId);
+    return (await this.buildAvailabilityWindowResponse(churchId, updated))!;
+  }
+
+  async setRosterCollection(
+    churchId: string,
+    ministryId: string,
+    userId: string,
+    dto: UpdateRosterCollectionDto,
+  ): Promise<{ updated: number }> {
+    await this.getMinistryOrThrow(churchId, ministryId);
+    await this.assertCanManageEvents(userId, churchId, ministryId);
+
+    const hasEventIds = Boolean(dto.eventIds?.length);
+    const hasSeries = Boolean(dto.recurrenceSeriesId);
+
+    if (!hasEventIds && !hasSeries) {
+      throw new BadRequestException(
+        'Informe os eventos ou uma série recorrente.',
+      );
+    }
+
+    const now = new Date();
+
+    const result = await this.prisma.ministryEvent.updateMany({
+      where: {
+        churchId,
+        ministryId,
+        deletedAt: null,
+        usesRoster: true,
+        startsAt: { gte: now },
+        ...(hasEventIds ? { id: { in: dto.eventIds } } : {}),
+        ...(hasSeries ? { recurrenceSeriesId: dto.recurrenceSeriesId } : {}),
+      },
+      data: { rosterOpen: dto.rosterOpen },
     });
 
-    const updated = await this.getRosterMinistryOrThrow(churchId, ministryId);
-    return (await this.buildAvailabilityWindowResponse(churchId, updated))!;
+    return { updated: result.count };
   }
 
   async update(
@@ -244,7 +255,6 @@ export class MinistriesService {
           ? { description: dto.description }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        ...(dto.hasRoster !== undefined ? { hasRoster: dto.hasRoster } : {}),
       },
       include: { roles: true },
     });
@@ -400,7 +410,6 @@ export class MinistriesService {
       summary: {
         pendingAvailabilityCount: 0,
         upcomingAssignmentsCount: 0,
-        missingRosterFunctionsCount: 0,
         nextAssignment: null,
       },
       ministries: [],
@@ -425,7 +434,6 @@ export class MinistriesService {
         ministry: {
           churchId,
           isActive: true,
-          hasRoster: true,
         },
       },
       include: { ministry: true },
@@ -443,6 +451,7 @@ export class MinistriesService {
         churchId,
         ministryId: { in: ministryIds },
         deletedAt: null,
+        usesRoster: true,
         startsAt: { gte: now },
       },
       include: {
@@ -471,7 +480,6 @@ export class MinistriesService {
           ministry: event.ministry,
         },
         member.id,
-        event.ministry,
       );
 
       if (mapped) {
@@ -535,10 +543,6 @@ export class MinistriesService {
           upcomingAssignments: upcomingAssignments.filter(
             (item) => item.ministryId === link.ministryId,
           ),
-          rosterFunctions: link.instruments,
-          needsRosterFunctions: link.instruments.every(
-            (item) => !item.trim(),
-          ),
         };
       }),
     );
@@ -548,9 +552,6 @@ export class MinistriesService {
       summary: {
         pendingAvailabilityCount: pendingAvailability.length,
         upcomingAssignmentsCount: upcomingAssignments.length,
-        missingRosterFunctionsCount: ministries.filter(
-          (ministry) => ministry.needsRosterFunctions,
-        ).length,
         nextAssignment: upcomingAssignments[0] ?? null,
       },
       ministries,
@@ -565,6 +566,8 @@ export class MinistriesService {
       startsAt: Date;
       endsAt: Date | null;
       location: string | null;
+      usesRoster: boolean;
+      rosterOpen: boolean;
       ministry: {
         id: string;
         name: string;
@@ -583,11 +586,6 @@ export class MinistriesService {
       }>;
     },
     memberId: string,
-    ministry: {
-      availabilityWindowActive: boolean;
-      availabilityPeriodStart: Date | null;
-      availabilityPeriodEnd: Date | null;
-    },
   ): MyScheduleEventResponse | null {
     const myAssignment = event.rosterAssignments.find(
       (assignment) => assignment.memberId === memberId,
@@ -595,7 +593,12 @@ export class MinistriesService {
     const myAvailability = event.availabilities.find(
       (availability) => availability.memberId === memberId,
     );
-    const rosterOpen = isEventInAvailabilityWindow(event.startsAt, ministry);
+
+    if (!event.usesRoster && !myAssignment) {
+      return null;
+    }
+
+    const rosterOpen = event.usesRoster && event.rosterOpen;
 
     if (!myAssignment && !myAvailability && !rosterOpen) {
       return null;
@@ -630,7 +633,7 @@ export class MinistriesService {
     ministryId: string,
     userId: string,
   ): Promise<RosterProfileResponse> {
-    const ministry = await this.getRosterMinistryOrThrow(churchId, ministryId);
+    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
     const memberLink = await this.getActiveMinistryMemberLink(
       churchId,
       ministryId,
@@ -651,34 +654,21 @@ export class MinistriesService {
     ))!;
 
     const now = new Date();
-    const periodStart =
-      ministry.availabilityWindowActive && ministry.availabilityPeriodStart
-        ? ministry.availabilityPeriodStart > now
-          ? ministry.availabilityPeriodStart
-          : now
-        : null;
 
-    const events =
-      ministry.availabilityWindowActive &&
-      ministry.availabilityPeriodStart &&
-      ministry.availabilityPeriodEnd
-        ? await this.prisma.ministryEvent.findMany({
-            where: {
-              churchId,
-              ministryId,
-              deletedAt: null,
-              startsAt: {
-                gte: periodStart ?? ministry.availabilityPeriodStart,
-                lte: ministry.availabilityPeriodEnd,
-              },
-            },
-            include: {
-              availabilities: true,
-            },
-            orderBy: { startsAt: 'asc' },
-            take: 40,
-          })
-        : [];
+    const events = await this.prisma.ministryEvent.findMany({
+      where: {
+        churchId,
+        ministryId,
+        deletedAt: null,
+        usesRoster: true,
+        startsAt: { gte: now },
+      },
+      include: {
+        availabilities: true,
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 60,
+    });
 
     const upcomingEvents = events.map((event) => {
       const myAvailability = event.availabilities.find(
@@ -690,7 +680,6 @@ export class MinistriesService {
       const unavailableCount = event.availabilities.filter(
         (item) => item.status === 'unavailable',
       ).length;
-      const inWindow = isEventInAvailabilityWindow(event.startsAt, ministry);
 
       return {
         id: event.id,
@@ -700,7 +689,7 @@ export class MinistriesService {
         location: event.location,
         recurrenceSeriesId: event.recurrenceSeriesId,
         isRecurring: Boolean(event.recurrenceSeriesId),
-        rosterOpen: inWindow,
+        rosterOpen: event.rosterOpen,
         myStatus: myAvailability?.status ?? null,
         availableCount,
         unavailableCount,
@@ -769,8 +758,6 @@ export class MinistriesService {
       ministryName: ministry.name,
       hasRoster: true,
       memberId: memberLink.memberId,
-      instruments: memberLink.instruments,
-      needsRosterFunctions: memberLink.instruments.every((item) => !item.trim()),
       availabilityWindow,
       series,
       summary: {
@@ -788,7 +775,7 @@ export class MinistriesService {
     userId: string,
     dto: UpdateRosterProfileDto,
   ): Promise<RosterProfileResponse> {
-    await this.getRosterMinistryOrThrow(churchId, ministryId);
+    await this.getMinistryOrThrow(churchId, ministryId);
     const memberLink = await this.getActiveMinistryMemberLink(
       churchId,
       ministryId,
@@ -812,7 +799,7 @@ export class MinistriesService {
     userId: string,
     dto: UpdateEventAvailabilityDto,
   ): Promise<RosterProfileResponse> {
-    await this.getRosterMinistryOrThrow(churchId, ministryId);
+    await this.getMinistryOrThrow(churchId, ministryId);
     const memberLink = await this.getActiveMinistryMemberLink(
       churchId,
       ministryId,
@@ -832,27 +819,21 @@ export class MinistriesService {
       throw new NotFoundException('Evento não encontrado.');
     }
 
-    const ministry = await this.getRosterMinistryOrThrow(churchId, ministryId);
-
-    if (!isEventInAvailabilityWindow(event.startsAt, ministry)) {
+    if (!event.usesRoster) {
       throw new BadRequestException(
-        'Este evento está fora do período aberto para coleta de disponibilidade.',
+        'Este evento não está configurado para coleta de disponibilidade.',
+      );
+    }
+
+    if (!event.rosterOpen) {
+      throw new BadRequestException(
+        'A coleta de disponibilidade ainda não foi liberada para este evento.',
       );
     }
 
     if (event.startsAt.getTime() < Date.now()) {
       throw new BadRequestException(
         'Não é possível alterar disponibilidade de eventos passados.',
-      );
-    }
-
-    const hasRosterFunctions = memberLink.instruments.some((item) =>
-      item.trim(),
-    );
-
-    if (dto.status !== 'clear' && !hasRosterFunctions) {
-      throw new BadRequestException(
-        'Cadastre pelo menos uma função na escala antes de informar disponibilidade.',
       );
     }
 
@@ -883,18 +864,6 @@ export class MinistriesService {
     }
 
     return this.getRosterProfile(churchId, ministryId, userId);
-  }
-
-  private async getRosterMinistryOrThrow(churchId: string, ministryId: string) {
-    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
-
-    if (!ministry.hasRoster) {
-      throw new BadRequestException(
-        'Este recurso está disponível apenas para ministérios com escalas.',
-      );
-    }
-
-    return ministry;
   }
 
   private async getActiveMinistryMemberLink(
@@ -966,7 +935,8 @@ export class MinistriesService {
     const ministry = await this.getMinistryOrThrow(churchId, ministryId);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
-    const rosterOpen = dto.rosterOpen ?? ministry.hasRoster;
+    const usesRoster = dto.usesRoster ?? false;
+    const rosterOpen = usesRoster ? (dto.rosterOpen ?? false) : false;
 
     const { event, occurrencesCreated } = await this.eventCreation.createEvent({
       churchId,
@@ -978,11 +948,30 @@ export class MinistriesService {
       endsAt: dto.endsAt ? new Date(dto.endsAt) : null,
       createdByUserId: userId,
       recurrence: dto.recurrence,
+      usesRoster,
       rosterOpen,
+      rosterRoles: dto.rosterRoles,
+      visibleToChurch: dto.visibleToChurch,
+    });
+
+    const eventWithSlots = await this.prisma.ministryEvent.findFirstOrThrow({
+      where: { id: event.id, churchId },
+      include: {
+        ministry: true,
+        recurrenceSeries: true,
+        rosterSlots: {
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            assignments: {
+              include: { member: true },
+            },
+          },
+        },
+      },
     });
 
     return {
-      ...toMinistryEventResponse(event),
+      ...toMinistryEventResponse(eventWithSlots),
       occurrencesCreated,
     };
   }
@@ -1121,17 +1110,12 @@ export class MinistriesService {
     churchId: string,
     ministry: {
       id: string;
-      hasRoster: boolean;
       availabilityWindowActive: boolean;
       availabilityPeriodType: string | null;
       availabilityPeriodStart: Date | null;
       availabilityPeriodEnd: Date | null;
     },
   ): Promise<RosterAvailabilityWindowResponse | null> {
-    if (!ministry.hasRoster) {
-      return null;
-    }
-
     const base: RosterAvailabilityWindowResponse = {
       active: ministry.availabilityWindowActive,
       periodType: (ministry.availabilityPeriodType ??
@@ -1154,6 +1138,7 @@ export class MinistriesService {
             )
           : null,
       eventsInPeriod: 0,
+      openEventsInPeriod: 0,
       teamPendingCount: 0,
     };
 
@@ -1165,12 +1150,27 @@ export class MinistriesService {
       return base;
     }
 
-    const [eventsInPeriod, teamSize, respondedCount] = await Promise.all([
+    const [eventsInPeriod, openEventsInPeriod, teamSize, respondedCount] =
+      await Promise.all([
       this.prisma.ministryEvent.count({
         where: {
           churchId,
           ministryId: ministry.id,
           deletedAt: null,
+          usesRoster: true,
+          startsAt: {
+            gte: ministry.availabilityPeriodStart,
+            lte: ministry.availabilityPeriodEnd,
+          },
+        },
+      }),
+      this.prisma.ministryEvent.count({
+        where: {
+          churchId,
+          ministryId: ministry.id,
+          deletedAt: null,
+          usesRoster: true,
+          rosterOpen: true,
           startsAt: {
             gte: ministry.availabilityPeriodStart,
             lte: ministry.availabilityPeriodEnd,
@@ -1190,6 +1190,8 @@ export class MinistriesService {
             churchId,
             ministryId: ministry.id,
             deletedAt: null,
+            usesRoster: true,
+            rosterOpen: true,
             startsAt: {
               gte: ministry.availabilityPeriodStart,
               lte: ministry.availabilityPeriodEnd,
@@ -1199,11 +1201,12 @@ export class MinistriesService {
       }),
     ]);
 
-    const maxResponses = eventsInPeriod * teamSize;
+    const maxResponses = openEventsInPeriod * teamSize;
 
     return {
       ...base,
       eventsInPeriod,
+      openEventsInPeriod,
       teamPendingCount: Math.max(maxResponses - respondedCount, 0),
     };
   }

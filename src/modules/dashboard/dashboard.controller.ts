@@ -3,6 +3,8 @@ import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DashboardService } from './dashboard.service';
 
@@ -14,7 +16,10 @@ export class DashboardController {
   @Get('summary')
   @UseGuards(PermissionsGuard)
   @RequirePermission(ChurchPermission.dashboard_access)
-  getSummary(@Param('churchId') churchId: string) {
-    return this.dashboardService.getSummary(churchId);
+  getSummary(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.dashboardService.getSummary(churchId, user.sub);
   }
 }

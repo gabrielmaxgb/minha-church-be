@@ -83,6 +83,7 @@ export async function resetDatabaseKeepUsers(prisma = new PrismaClient()) {
   await prisma.$transaction([
     prisma.eventRosterAssignment.deleteMany(),
     prisma.eventAvailability.deleteMany(),
+    prisma.eventRosterSlot.deleteMany(),
     prisma.ministryEvent.deleteMany(),
     prisma.eventRecurrenceSeries.deleteMany(),
     prisma.memberMinistryRole.deleteMany(),

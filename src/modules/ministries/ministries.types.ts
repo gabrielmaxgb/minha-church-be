@@ -6,6 +6,7 @@ import type {
 } from '@prisma/client';
 
 import type { EventRecurrenceResponse } from '../events/event-recurrence.types';
+import { toEventRosterSlotResponse } from '../events/event-roster-slots';
 import { formatPeriodLabel } from './worship-availability-window';
 
 export interface MinistryRoleResponse {
@@ -27,6 +28,7 @@ export interface RosterAvailabilityWindowResponse {
   periodEnd: string | null;
   label: string | null;
   eventsInPeriod: number;
+  openEventsInPeriod: number;
   teamPendingCount: number;
 }
 
@@ -57,7 +59,10 @@ export interface MinistryEventResponse {
   createdByUserId: string | null;
   recurrenceSeriesId: string | null;
   recurrence: EventRecurrenceResponse | null;
+  usesRoster: boolean;
   rosterOpen: boolean;
+  visibleToChurch: boolean;
+  rosterSlots?: EventRosterSlotResponse[];
   createdAt: string;
   updatedAt: string;
 }
@@ -108,20 +113,28 @@ export interface WorshipSeriesGroupResponse {
   occurrences: WorshipAvailabilityEventResponse[];
 }
 
+export interface EventRosterSlotResponse {
+  id: string;
+  eventId: string;
+  label: string;
+  sortOrder: number;
+  assignedMemberId: string | null;
+  assignedMemberName: string | null;
+}
+
 export interface EventRosterAssignmentResponse {
   id: string;
   eventId: string;
   memberId: string;
   memberName: string;
+  rosterSlotId: string;
   roleLabel: string;
-  instruments: string[];
   availabilityStatus: 'available' | 'unavailable' | null;
 }
 
 export interface EventRosterCandidateResponse {
   memberId: string;
   memberName: string;
-  instruments: string[];
   availabilityStatus: 'available' | 'unavailable' | null;
 }
 
@@ -130,8 +143,6 @@ export interface RosterProfileResponse {
   ministryName: string;
   hasRoster: true;
   memberId: string;
-  instruments: string[];
-  needsRosterFunctions: boolean;
   availabilityWindow: RosterAvailabilityWindowResponse;
   series: WorshipSeriesGroupResponse[];
   summary: {
@@ -195,8 +206,6 @@ export interface MyMinistryScheduleResponse {
   pendingAvailability: MySchedulePendingResponse[];
   upcomingAssignments: MyScheduleAssignmentResponse[];
   events: MyScheduleEventResponse[];
-  rosterFunctions: string[];
-  needsRosterFunctions: boolean;
 }
 
 export interface MySchedulesResponse {
@@ -204,7 +213,6 @@ export interface MySchedulesResponse {
   summary: {
     pendingAvailabilityCount: number;
     upcomingAssignmentsCount: number;
-    missingRosterFunctionsCount: number;
     nextAssignment: MyScheduleAssignmentResponse | null;
   };
   ministries: MyMinistryScheduleResponse[];
@@ -228,32 +236,30 @@ export function toMinistryRoleResponse(
 export function toMinistryResponse(
   ministry: Ministry & { roles: MinistryRole[] },
 ): MinistryResponse {
-  const availabilityWindow: RosterAvailabilityWindowResponse | null =
-    ministry.hasRoster
-      ? {
-          active: ministry.availabilityWindowActive,
-          periodType: ministry.availabilityPeriodType,
-          periodStart: ministry.availabilityPeriodStart
-            ? ministry.availabilityPeriodStart.toISOString().slice(0, 10)
-            : null,
-          periodEnd: ministry.availabilityPeriodEnd
-            ? ministry.availabilityPeriodEnd.toISOString().slice(0, 10)
-            : null,
-          label:
-            ministry.availabilityWindowActive &&
-            ministry.availabilityPeriodType &&
-            ministry.availabilityPeriodStart &&
-            ministry.availabilityPeriodEnd
-              ? formatPeriodLabel(
-                  ministry.availabilityPeriodType,
-                  ministry.availabilityPeriodStart,
-                  ministry.availabilityPeriodEnd,
-                )
-              : null,
-          eventsInPeriod: 0,
-          teamPendingCount: 0,
-        }
-      : null;
+  const availabilityWindow: RosterAvailabilityWindowResponse | null = {
+    active: ministry.availabilityWindowActive,
+    periodType: ministry.availabilityPeriodType,
+    periodStart: ministry.availabilityPeriodStart
+      ? ministry.availabilityPeriodStart.toISOString().slice(0, 10)
+      : null,
+    periodEnd: ministry.availabilityPeriodEnd
+      ? ministry.availabilityPeriodEnd.toISOString().slice(0, 10)
+      : null,
+    label:
+      ministry.availabilityWindowActive &&
+      ministry.availabilityPeriodType &&
+      ministry.availabilityPeriodStart &&
+      ministry.availabilityPeriodEnd
+        ? formatPeriodLabel(
+            ministry.availabilityPeriodType,
+            ministry.availabilityPeriodStart,
+            ministry.availabilityPeriodEnd,
+          )
+        : null,
+    eventsInPeriod: 0,
+    openEventsInPeriod: 0,
+    teamPendingCount: 0,
+  };
 
   return {
     id: ministry.id,
@@ -288,6 +294,16 @@ export function toMinistryEventResponse(
   event: MinistryEvent & {
     ministry: Ministry | null;
     recurrenceSeries?: EventRecurrenceSeries | null;
+    rosterSlots?: Array<{
+      id: string;
+      eventId: string;
+      label: string;
+      sortOrder: number;
+      assignments: Array<{
+        memberId: string;
+        member: { name: string };
+      }>;
+    }>;
   },
 ): MinistryEventResponse {
   return {
@@ -306,7 +322,12 @@ export function toMinistryEventResponse(
     recurrence: event.recurrenceSeries
       ? toEventRecurrenceResponse(event.recurrenceSeries)
       : null,
+    usesRoster: event.usesRoster,
     rosterOpen: event.rosterOpen,
+    visibleToChurch: event.visibleToChurch,
+    rosterSlots: event.rosterSlots
+      ? event.rosterSlots.map(toEventRosterSlotResponse)
+      : undefined,
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),
   };

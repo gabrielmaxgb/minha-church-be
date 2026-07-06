@@ -1,4 +1,6 @@
 import {
+  IsArray,
+  IsBoolean,
   IsDateString,
   IsIn,
   IsOptional,
@@ -42,6 +44,27 @@ export class CreateChurchEventDto {
   @ValidateNested()
   @Type(() => EventRecurrenceDto)
   recurrence?: EventRecurrenceDto;
+
+  /** Este evento participa do fluxo de escala (apenas eventos de ministério). */
+  @IsOptional()
+  @IsBoolean()
+  usesRoster?: boolean;
+
+  /** Abre o evento para a equipe marcar disponibilidade (requer usesRoster). */
+  @IsOptional()
+  @IsBoolean()
+  rosterOpen?: boolean;
+
+  /** Funções necessárias neste evento (quando usesRoster). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  rosterRoles?: string[];
+
+  /** Exibir na agenda da igreja (apenas eventos de ministério). */
+  @IsOptional()
+  @IsBoolean()
+  visibleToChurch?: boolean;
 }
 
 export class UpdateChurchEventDto {
@@ -65,6 +88,23 @@ export class UpdateChurchEventDto {
   @IsOptional()
   @IsDateString()
   endsAt?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  usesRoster?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  rosterOpen?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  rosterRoles?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  visibleToChurch?: boolean;
 
   /** Escopo da edição em eventos recorrentes (padrão: só esta ocorrência). */
   @IsOptional()
@@ -101,6 +141,5 @@ export class UpsertEventRosterDto {
   memberId: string;
 
   @IsString()
-  @MinLength(1)
-  roleLabel: string;
+  rosterSlotId: string;
 }

@@ -19,8 +19,12 @@ import {
   type EventRosterCandidateResponse,
   type MinistryEventResponse,
 } from '../ministries/ministries.types';
-import { isAllowedMemberRosterRole } from '../ministries/roster-roles';
 import { EventCreationService } from './event-creation.service';
+import { syncEventRosterSlots } from './event-roster-slots';
+import {
+  buildVisibleEventsWhere,
+  canUserViewEvent,
+} from './event-visibility';
 import type { EventMutationScope } from './dto/event-mutation-scope';
 import {
   CreateChurchEventDto,
@@ -34,6 +38,25 @@ const eventInclude = {
   recurrenceSeries: true,
 } as const;
 
+const rosterSlotsInclude = {
+  orderBy: { sortOrder: 'asc' as const },
+  include: {
+    assignments: {
+      include: { member: true },
+    },
+  },
+};
+
+const eventDetailInclude = {
+  ...eventInclude,
+  rosterSlots: rosterSlotsInclude,
+  rosterAssignments: {
+    include: { member: true, rosterSlot: true },
+    orderBy: { roleLabel: 'asc' as const },
+  },
+  availabilities: true,
+} as const;
+
 @Injectable()
 export class EventsService {
   constructor(
@@ -45,47 +68,70 @@ export class EventsService {
   async findOne(
     churchId: string,
     eventId: string,
+    userId: string,
   ): Promise<
     MinistryEventResponse & {
       seriesOccurrences: MinistryEventResponse[];
       roster: EventRosterAssignmentResponse[];
       rosterCandidates: EventRosterCandidateResponse[];
       isRosterMinistry: boolean;
+      usesRoster: boolean;
     }
   > {
     const event = await this.prisma.ministryEvent.findFirst({
       where: { id: eventId, churchId, deletedAt: null },
-      include: {
-        ...eventInclude,
-        rosterAssignments: {
-          include: { member: true },
-          orderBy: { roleLabel: 'asc' },
-        },
-        availabilities: true,
-      },
+      include: eventDetailInclude,
     });
 
     if (!event) {
       throw new NotFoundException('Evento não encontrado.');
     }
 
-    const seriesOccurrences = event.recurrenceSeriesId
-      ? (
-          await this.prisma.ministryEvent.findMany({
-            where: {
-              churchId,
-              recurrenceSeriesId: event.recurrenceSeriesId,
-              deletedAt: null,
-            },
-            include: eventInclude,
-            orderBy: { startsAt: 'asc' },
-          })
-        ).map(toMinistryEventResponse)
-      : [];
+    const canView = await canUserViewEvent(
+      this.prisma,
+      this.churchPermissions,
+      userId,
+      churchId,
+      event,
+    );
 
-    const isRosterMinistry = event.ministry?.hasRoster ?? false;
-    const roster = await this.buildRosterResponse(event, event.ministryId);
-    const rosterCandidates = isRosterMinistry
+    if (!canView) {
+      throw new NotFoundException('Evento não encontrado.');
+    }
+
+    let seriesOccurrences: MinistryEventResponse[] = [];
+
+    if (event.recurrenceSeriesId) {
+      const occurrences = await this.prisma.ministryEvent.findMany({
+        where: {
+          churchId,
+          recurrenceSeriesId: event.recurrenceSeriesId,
+          deletedAt: null,
+        },
+        include: eventInclude,
+        orderBy: { startsAt: 'asc' },
+      });
+
+      for (const occurrence of occurrences) {
+        const canViewOccurrence = await canUserViewEvent(
+          this.prisma,
+          this.churchPermissions,
+          userId,
+          churchId,
+          occurrence,
+        );
+
+        if (canViewOccurrence) {
+          seriesOccurrences.push(toMinistryEventResponse(occurrence));
+        }
+      }
+    }
+
+    const usesRoster = event.usesRoster;
+    const roster = usesRoster
+      ? await this.buildRosterResponse(event, event.ministryId)
+      : [];
+    const rosterCandidates = usesRoster
       ? await this.buildRosterCandidates(churchId, event)
       : [];
 
@@ -94,7 +140,8 @@ export class EventsService {
       seriesOccurrences,
       roster,
       rosterCandidates,
-      isRosterMinistry,
+      isRosterMinistry: usesRoster,
+      usesRoster,
     };
   }
 
@@ -113,13 +160,9 @@ export class EventsService {
       );
     }
 
-    const ministry = await this.prisma.ministry.findFirst({
-      where: { id: event.ministryId, churchId },
-    });
-
-    if (!ministry?.hasRoster) {
+    if (!event.usesRoster) {
       throw new BadRequestException(
-        'Escala está disponível apenas para ministérios com escalas ativadas.',
+        'Este evento não está configurado para usar escala.',
       );
     }
 
@@ -153,22 +196,24 @@ export class EventsService {
       );
     }
 
-    const roleLabel = dto.roleLabel.trim();
+    const slot = await this.prisma.eventRosterSlot.findFirst({
+      where: {
+        id: dto.rosterSlotId,
+        eventId,
+      },
+      include: { assignments: true },
+    });
 
-    if (!roleLabel) {
-      throw new BadRequestException('Informe a função na escala.');
+    if (!slot) {
+      throw new BadRequestException('Função não encontrada neste evento.');
     }
 
-    if (memberLink.instruments.length === 0) {
-      throw new BadRequestException(
-        'Esta pessoa ainda não cadastrou funções no perfil da escala.',
-      );
-    }
+    const slotTakenByOther = slot.assignments.find(
+      (assignment) => assignment.memberId !== dto.memberId,
+    );
 
-    if (!isAllowedMemberRosterRole(memberLink.instruments, roleLabel)) {
-      throw new BadRequestException(
-        'Escolha uma função que esta pessoa cadastrou no perfil da escala.',
-      );
+    if (slotTakenByOther) {
+      throw new BadRequestException('Esta função já está preenchida na escala.');
     }
 
     await this.prisma.eventRosterAssignment.upsert({
@@ -181,10 +226,12 @@ export class EventsService {
       create: {
         eventId,
         memberId: dto.memberId,
-        roleLabel,
+        rosterSlotId: slot.id,
+        roleLabel: slot.label,
       },
       update: {
-        roleLabel,
+        rosterSlotId: slot.id,
+        roleLabel: slot.label,
       },
     });
 
@@ -192,7 +239,7 @@ export class EventsService {
       where: { id: eventId, churchId },
       include: {
         rosterAssignments: {
-          include: { member: true },
+          include: { member: true, rosterSlot: true },
           orderBy: { roleLabel: 'asc' },
         },
         availabilities: true,
@@ -231,8 +278,16 @@ export class EventsService {
 
   async findAll(
     churchId: string,
+    userId: string,
     query: ListChurchEventsQueryDto,
   ): Promise<MinistryEventResponse[]> {
+    const visibilityWhere = await buildVisibleEventsWhere(
+      this.prisma,
+      this.churchPermissions,
+      userId,
+      churchId,
+    );
+
     const events = await this.prisma.ministryEvent.findMany({
       where: {
         churchId,
@@ -243,6 +298,7 @@ export class EventsService {
         ...(query.to
           ? { startsAt: { lte: new Date(`${query.to}T23:59:59.999Z`) } }
           : {}),
+        ...(visibilityWhere ?? {}),
       },
       include: eventInclude,
       orderBy: { startsAt: 'asc' },
@@ -272,10 +328,22 @@ export class EventsService {
       endsAt: dto.endsAt ? new Date(dto.endsAt) : null,
       createdByUserId: userId,
       recurrence: dto.recurrence,
+      usesRoster: dto.ministryId ? (dto.usesRoster ?? false) : false,
+      rosterOpen: dto.ministryId ? dto.rosterOpen : false,
+      rosterRoles: dto.ministryId ? dto.rosterRoles : undefined,
+      visibleToChurch: dto.ministryId ? dto.visibleToChurch : true,
+    });
+
+    const eventWithSlots = await this.prisma.ministryEvent.findFirstOrThrow({
+      where: { id: event.id, churchId },
+      include: {
+        ...eventInclude,
+        rosterSlots: rosterSlotsInclude,
+      },
     });
 
     return {
-      ...toMinistryEventResponse(event),
+      ...toMinistryEventResponse(eventWithSlots),
       occurrencesCreated,
     };
   }
@@ -340,6 +408,23 @@ export class EventsService {
           data.endsAt = new Date(target.endsAt.getTime() + startsDeltaMs);
         }
 
+        if (dto.usesRoster !== undefined) {
+          data.usesRoster = dto.usesRoster;
+          if (!dto.usesRoster) {
+            data.rosterOpen = false;
+          }
+        }
+
+        if (dto.rosterOpen !== undefined) {
+          const nextUsesRoster =
+            dto.usesRoster !== undefined ? dto.usesRoster : target.usesRoster;
+          data.rosterOpen = nextUsesRoster ? dto.rosterOpen : false;
+        }
+
+        if (dto.visibleToChurch !== undefined && target.ministryId) {
+          data.visibleToChurch = dto.visibleToChurch;
+        }
+
         return this.prisma.ministryEvent.update({
           where: { id: target.id },
           data,
@@ -347,9 +432,23 @@ export class EventsService {
       }),
     );
 
+    if (dto.rosterRoles !== undefined) {
+      for (const target of targets) {
+        const usesRoster =
+          dto.usesRoster !== undefined ? dto.usesRoster : target.usesRoster;
+
+        if (usesRoster) {
+          await syncEventRosterSlots(this.prisma, target.id, dto.rosterRoles);
+        }
+      }
+    }
+
     const event = await this.prisma.ministryEvent.findFirstOrThrow({
       where: { id: eventId, churchId },
-      include: eventInclude,
+      include: {
+        ...eventInclude,
+        rosterSlots: rosterSlotsInclude,
+      },
     });
 
     return toMinistryEventResponse(event);
@@ -514,6 +613,7 @@ export class EventsService {
         id: string;
         eventId: string;
         memberId: string;
+        rosterSlotId: string;
         roleLabel: string;
         member: { name: string };
       }>;
@@ -522,23 +622,8 @@ export class EventsService {
         status: 'available' | 'unavailable';
       }>;
     },
-    ministryId: string | null,
+    _ministryId: string | null,
   ): Promise<EventRosterAssignmentResponse[]> {
-    const memberIds = event.rosterAssignments.map((item) => item.memberId);
-    const links =
-      memberIds.length === 0 || !ministryId
-        ? []
-        : await this.prisma.memberMinistry.findMany({
-            where: {
-              memberId: { in: memberIds },
-              ministryId,
-            },
-          });
-
-    const instrumentsByMember = new Map(
-      links.map((link) => [link.memberId, link.instruments]),
-    );
-
     return event.rosterAssignments.map((assignment) => {
       const availability = event.availabilities.find(
         (item) => item.memberId === assignment.memberId,
@@ -549,8 +634,8 @@ export class EventsService {
         eventId: assignment.eventId,
         memberId: assignment.memberId,
         memberName: assignment.member.name,
+        rosterSlotId: assignment.rosterSlotId,
         roleLabel: assignment.roleLabel,
-        instruments: instrumentsByMember.get(assignment.memberId) ?? [],
         availabilityStatus: availability?.status ?? null,
       };
     });
@@ -596,7 +681,6 @@ export class EventsService {
         return {
           memberId: link.memberId,
           memberName: link.member.name,
-          instruments: link.instruments,
           availabilityStatus: availability?.status ?? null,
         };
       })

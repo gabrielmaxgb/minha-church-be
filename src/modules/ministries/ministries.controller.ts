@@ -29,6 +29,7 @@ import {
   UpdateMinistryEventDto,
   UpdateMinistryRoleDto,
   UpdateRosterProfileDto,
+  UpdateRosterCollectionDto,
   OpenAvailabilityWindowDto,
 } from './dto/ministry.dto';
 import { MinistriesService } from './ministries.service';
@@ -216,6 +217,21 @@ export class MinistriesController {
       churchId,
       ministryId,
       user.sub,
+    );
+  }
+
+  @Patch(':ministryId/roster/collection')
+  setRosterCollection(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateRosterCollectionDto,
+  ) {
+    return this.ministriesService.setRosterCollection(
+      churchId,
+      ministryId,
+      user.sub,
+      dto,
     );
   }
 

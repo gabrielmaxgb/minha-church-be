@@ -123,10 +123,24 @@ export class CreateMinistryEventDto {
   @Type(() => EventRecurrenceDto)
   recurrence?: EventRecurrenceDto;
 
-  /** Abre o evento para a equipe marcar disponibilidade. */
+  /** Este evento participa do fluxo de escala (disponibilidade e montagem). */
+  @IsOptional()
+  @IsBoolean()
+  usesRoster?: boolean;
+
+  /** Abre o evento para a equipe marcar disponibilidade (requer usesRoster). */
   @IsOptional()
   @IsBoolean()
   rosterOpen?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  rosterRoles?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  visibleToChurch?: boolean;
 }
 
 export class UpdateMinistryEventDto {
@@ -153,7 +167,20 @@ export class UpdateMinistryEventDto {
 
   @IsOptional()
   @IsBoolean()
+  usesRoster?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   rosterOpen?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  rosterRoles?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  visibleToChurch?: boolean;
 
   @IsOptional()
   @IsIn(['this', 'this_and_following', 'all'])
@@ -191,4 +218,18 @@ export class OpenAvailabilityWindowDto {
   @IsOptional()
   @IsDateString()
   startDate?: string;
+}
+
+export class UpdateRosterCollectionDto {
+  @IsBoolean()
+  rosterOpen: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  eventIds?: string[];
+
+  @IsOptional()
+  @IsString()
+  recurrenceSeriesId?: string;
 }

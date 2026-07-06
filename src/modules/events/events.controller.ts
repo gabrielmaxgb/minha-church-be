@@ -41,9 +41,10 @@ export class EventsController {
   )
   findAll(
     @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
     @Query() query: ListChurchEventsQueryDto,
   ) {
-    return this.eventsService.findAll(churchId, query);
+    return this.eventsService.findAll(churchId, user.sub, query);
   }
 
   @Get(':eventId')
@@ -55,8 +56,9 @@ export class EventsController {
   findOne(
     @Param('churchId') churchId: string,
     @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.eventsService.findOne(churchId, eventId);
+    return this.eventsService.findOne(churchId, eventId, user.sub);
   }
 
   @Post()

@@ -150,7 +150,7 @@ export class ChurchPermissionsService {
 
     if (granted.has(ChurchPermission.ministries_manage)) {
       const ministries = await this.prisma.ministry.findMany({
-        where: { churchId, isActive: true, hasRoster: true },
+        where: { churchId, isActive: true },
         select: { id: true },
       });
 
@@ -176,7 +176,7 @@ export class ChurchPermissionsService {
             },
             include: {
               ministry: {
-                select: { id: true, hasRoster: true, isActive: true },
+                select: { id: true, isActive: true },
               },
             },
           },
@@ -185,9 +185,7 @@ export class ChurchPermissionsService {
 
       rosterMinistryIds =
         member?.ministryLinks
-          .filter(
-            (link) => link.ministry.isActive && link.ministry.hasRoster,
-          )
+          .filter((link) => link.ministry.isActive)
           .map((link) => link.ministryId) ?? [];
     }
 
@@ -252,7 +250,7 @@ export class ChurchPermissionsService {
     }
 
     const ministry = await this.prisma.ministry.findFirst({
-      where: { id: ministryId, churchId, isActive: true, hasRoster: true },
+      where: { id: ministryId, churchId, isActive: true },
     });
 
     if (!ministry) {
