@@ -29,7 +29,8 @@ import { EventCreationService } from './event-creation.service';
 import { syncEventRosterSlots } from './event-roster-slots';
 import {
   buildVisibleEventsWhere,
-  canUserViewEvent,
+  buildEventViewContext,
+  canUserViewEventWithContext,
 } from './event-visibility';
 import type { EventMutationScope } from './dto/event-mutation-scope';
 import {
@@ -87,24 +88,33 @@ export class EventsService {
       myRoleLabels: string[];
     }
   > {
-    const event = await this.prisma.ministryEvent.findFirst({
-      where: { id: eventId, churchId, deletedAt: null },
-      include: eventDetailInclude,
-    });
+    const [event, viewContext, viewerMember] = await Promise.all([
+      this.prisma.ministryEvent.findFirst({
+        where: { id: eventId, churchId, deletedAt: null },
+        include: eventDetailInclude,
+      }),
+      buildEventViewContext(
+        this.prisma,
+        this.churchPermissions,
+        userId,
+        churchId,
+      ),
+      this.prisma.member.findFirst({
+        where: {
+          churchId,
+          userId,
+          deletedAt: null,
+          status: MemberStatus.active,
+        },
+        select: { id: true },
+      }),
+    ]);
 
     if (!event) {
       throw new NotFoundException('Evento não encontrado.');
     }
 
-    const canView = await canUserViewEvent(
-      this.prisma,
-      this.churchPermissions,
-      userId,
-      churchId,
-      event,
-    );
-
-    if (!canView) {
+    if (!canUserViewEventWithContext(event, viewContext)) {
       throw new NotFoundException('Evento não encontrado.');
     }
 
@@ -121,38 +131,27 @@ export class EventsService {
         orderBy: { startsAt: 'asc' },
       });
 
-      for (const occurrence of occurrences) {
-        const canViewOccurrence = await canUserViewEvent(
-          this.prisma,
-          this.churchPermissions,
-          userId,
-          churchId,
-          occurrence,
-        );
-
-        if (canViewOccurrence) {
-          seriesOccurrences.push(toMinistryEventResponse(occurrence));
-        }
-      }
+      seriesOccurrences = occurrences
+        .filter((occurrence) =>
+          canUserViewEventWithContext(occurrence, viewContext),
+        )
+        .map((occurrence) => toMinistryEventResponse(occurrence));
     }
 
     const usesRoster = event.usesRoster;
+    const canManageRoster = await this.canManageEventRoster(
+      userId,
+      churchId,
+      event,
+    );
+
     const roster = usesRoster
       ? await this.buildRosterResponse(event, event.ministryId)
       : [];
-    const rosterCandidates = usesRoster
-      ? await this.buildRosterCandidates(churchId, event)
-      : [];
-
-    const viewerMember = await this.prisma.member.findFirst({
-      where: {
-        churchId,
-        userId,
-        deletedAt: null,
-        status: MemberStatus.active,
-      },
-      select: { id: true },
-    });
+    const rosterCandidates =
+      usesRoster && canManageRoster
+        ? await this.buildRosterCandidates(churchId, event)
+        : [];
 
     const myAvailability = viewerMember
       ? event.availabilities.find(
@@ -702,6 +701,30 @@ export class EventsService {
     return event;
   }
 
+  private async canManageEventRoster(
+    userId: string,
+    churchId: string,
+    event: { ministryId: string | null; createdByUserId: string | null },
+  ): Promise<boolean> {
+    if (event.ministryId) {
+      return this.churchPermissions.canManageMinistryRosters(
+        userId,
+        churchId,
+        event.ministryId,
+      );
+    }
+
+    if (event.createdByUserId === userId) {
+      return true;
+    }
+
+    return this.churchPermissions.hasPermission(
+      userId,
+      churchId,
+      ChurchPermission.events_create_church_wide,
+    );
+  }
+
   private async assertCanManageRoster(
     userId: string,
     churchId: string,
@@ -862,10 +885,25 @@ export class EventsService {
       event.rosterAssignments.map((item) => item.memberId),
     );
 
+    const availableRows = event.availabilities.filter(
+      (item) =>
+        item.status === 'available' && !assignedIds.has(item.memberId),
+    );
+
+    if (availableRows.length === 0) {
+      return [];
+    }
+
+    const memberIds = availableRows.map((item) => item.memberId);
+    const availabilityByMemberId = new Map(
+      availableRows.map((item) => [item.memberId, item]),
+    );
+
     if (event.ministryId) {
       const links = await this.prisma.memberMinistry.findMany({
         where: {
           ministryId: event.ministryId,
+          memberId: { in: memberIds },
           endedAt: null,
           member: {
             churchId,
@@ -878,17 +916,14 @@ export class EventsService {
       });
 
       return links
-        .filter((link) => !assignedIds.has(link.memberId))
         .map((link) => {
-          const availability = event.availabilities.find(
-            (item) => item.memberId === link.memberId,
-          );
+          const availability = availabilityByMemberId.get(link.memberId)!;
 
           return {
             memberId: link.memberId,
             memberName: link.member.name,
-            availabilityStatus: availability?.status ?? null,
-            roleLabels: availability?.roleLabels ?? [],
+            availabilityStatus: availability.status,
+            roleLabels: availability.roleLabels ?? [],
           };
         })
         .sort((a, b) => this.compareRosterCandidates(a, b));
@@ -896,6 +931,7 @@ export class EventsService {
 
     const members = await this.prisma.member.findMany({
       where: {
+        id: { in: memberIds },
         churchId,
         deletedAt: null,
         status: MemberStatus.active,
@@ -904,17 +940,14 @@ export class EventsService {
     });
 
     return members
-      .filter((member) => !assignedIds.has(member.id))
       .map((member) => {
-        const availability = event.availabilities.find(
-          (item) => item.memberId === member.id,
-        );
+        const availability = availabilityByMemberId.get(member.id)!;
 
         return {
           memberId: member.id,
           memberName: member.name,
-          availabilityStatus: availability?.status ?? null,
-          roleLabels: availability?.roleLabels ?? [],
+          availabilityStatus: availability.status,
+          roleLabels: availability.roleLabels ?? [],
         };
       })
       .sort((a, b) => this.compareRosterCandidates(a, b));

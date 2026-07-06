@@ -52,6 +52,77 @@ export async function buildVisibleEventsWhere(
   };
 }
 
+export interface EventViewContext {
+  canBypass: boolean;
+  memberMinistryIds: Set<string>;
+  hasMembership: boolean;
+}
+
+export async function buildEventViewContext(
+  prisma: PrismaService,
+  churchPermissions: ChurchPermissionsService,
+  userId: string,
+  churchId: string,
+): Promise<EventViewContext> {
+  const access = await churchPermissions.getMembershipAccess(userId, churchId);
+
+  if (!access) {
+    return {
+      canBypass: false,
+      memberMinistryIds: new Set(),
+      hasMembership: false,
+    };
+  }
+
+  if (canBypassEventVisibility(access)) {
+    return {
+      canBypass: true,
+      memberMinistryIds: new Set(),
+      hasMembership: true,
+    };
+  }
+
+  const member = await prisma.member.findFirst({
+    where: { churchId, userId, deletedAt: null },
+    include: {
+      ministryLinks: {
+        where: { endedAt: null },
+        select: { ministryId: true },
+      },
+    },
+  });
+
+  return {
+    canBypass: false,
+    memberMinistryIds: new Set(
+      member?.ministryLinks.map((link) => link.ministryId) ?? [],
+    ),
+    hasMembership: true,
+  };
+}
+
+export function canUserViewEventWithContext(
+  event: {
+    ministryId: string | null;
+    visibleToChurch: boolean;
+  },
+  context: EventViewContext,
+): boolean {
+  if (!context.hasMembership) {
+    return false;
+  }
+
+  if (!event.ministryId || event.visibleToChurch) {
+    return true;
+  }
+
+  if (context.canBypass) {
+    return true;
+  }
+
+  return context.memberMinistryIds.has(event.ministryId);
+}
+
 export async function canUserViewEvent(
   prisma: PrismaService,
   churchPermissions: ChurchPermissionsService,
@@ -62,34 +133,12 @@ export async function canUserViewEvent(
     visibleToChurch: boolean;
   },
 ): Promise<boolean> {
-  if (!event.ministryId || event.visibleToChurch) {
-    return true;
-  }
+  const context = await buildEventViewContext(
+    prisma,
+    churchPermissions,
+    userId,
+    churchId,
+  );
 
-  const access = await churchPermissions.getMembershipAccess(userId, churchId);
-
-  if (!access) {
-    return false;
-  }
-
-  if (canBypassEventVisibility(access)) {
-    return true;
-  }
-
-  const member = await prisma.member.findFirst({
-    where: {
-      churchId,
-      userId,
-      deletedAt: null,
-      ministryLinks: {
-        some: {
-          ministryId: event.ministryId,
-          endedAt: null,
-        },
-      },
-    },
-    select: { id: true },
-  });
-
-  return Boolean(member);
+  return canUserViewEventWithContext(event, context);
 }
