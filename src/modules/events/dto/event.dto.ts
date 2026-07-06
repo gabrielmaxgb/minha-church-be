@@ -45,7 +45,7 @@ export class CreateChurchEventDto {
   @Type(() => EventRecurrenceDto)
   recurrence?: EventRecurrenceDto;
 
-  /** Este evento participa do fluxo de escala (apenas eventos de ministério). */
+  /** Este evento participa do fluxo de escala (disponibilidade e montagem). */
   @IsOptional()
   @IsBoolean()
   usesRoster?: boolean;
@@ -134,6 +134,15 @@ export class ListChurchEventsQueryDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+}
+
+export class UpdateEventRosterCollectionDto {
+  @IsBoolean()
+  rosterOpen: boolean;
+
+  @IsArray()
+  @IsString({ each: true })
+  eventIds: string[];
 }
 
 export class UpsertEventRosterDto {

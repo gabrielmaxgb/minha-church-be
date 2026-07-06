@@ -24,8 +24,10 @@ import {
   DeleteChurchEventQueryDto,
   ListChurchEventsQueryDto,
   UpdateChurchEventDto,
+  UpdateEventRosterCollectionDto,
   UpsertEventRosterDto,
 } from './dto/event.dto';
+import { UpdateEventAvailabilityDto } from '../ministries/dto/ministry.dto';
 import { EventsService } from './events.service';
 
 @Controller('churches/:churchId/events')
@@ -85,6 +87,22 @@ export class EventsController {
     );
   }
 
+  @Patch(':eventId/availability')
+  @HttpCode(204)
+  async updateMyAvailability(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventAvailabilityDto,
+  ): Promise<void> {
+    await this.eventsService.updateMyAvailability(
+      churchId,
+      eventId,
+      user.sub,
+      dto,
+    );
+  }
+
   @Delete(':eventId/roster/:memberId')
   removeRoster(
     @Param('churchId') churchId: string,
@@ -97,6 +115,21 @@ export class EventsController {
       eventId,
       memberId,
       user.sub,
+    );
+  }
+
+  @Patch(':eventId/roster-collection')
+  setRosterCollection(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventRosterCollectionDto,
+  ) {
+    return this.eventsService.setRosterCollection(
+      churchId,
+      eventId,
+      user.sub,
+      dto,
     );
   }
 

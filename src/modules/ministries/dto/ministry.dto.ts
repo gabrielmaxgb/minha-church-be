@@ -61,6 +61,17 @@ export class UpdateRosterProfileDto {
 export class UpdateEventAvailabilityDto {
   @IsIn([...EVENT_AVAILABILITY_STATUSES, 'clear'])
   status: 'available' | 'unavailable' | 'clear';
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roleLabels?: string[];
+}
+
+export class UpdateEventRoleProfileDto {
+  @IsArray()
+  @IsString({ each: true })
+  roleLabels: string[];
 }
 
 export class CreateMinistryRoleDto {
@@ -201,23 +212,6 @@ export class ListMinistryEventsQueryDto {
   @IsOptional()
   @IsDateString()
   to?: string;
-}
-
-export const WORSHIP_AVAILABILITY_PERIOD_VALUES = [
-  'weekly',
-  'monthly',
-  'quarterly',
-  'semiannual',
-  'annual',
-] as const;
-
-export class OpenAvailabilityWindowDto {
-  @IsIn(WORSHIP_AVAILABILITY_PERIOD_VALUES)
-  periodType: (typeof WORSHIP_AVAILABILITY_PERIOD_VALUES)[number];
-
-  @IsOptional()
-  @IsDateString()
-  startDate?: string;
 }
 
 export class UpdateRosterCollectionDto {

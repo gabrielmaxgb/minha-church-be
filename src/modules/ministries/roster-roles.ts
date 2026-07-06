@@ -36,6 +36,34 @@ export function normalizeRosterRoleValue(value: string): string {
   return preset?.id ?? trimmed;
 }
 
+export function needsRosterFunctions(memberFunctions: string[]): boolean {
+  return (
+    memberFunctions
+      .map((item) => normalizeRosterRoleValue(item))
+      .filter(Boolean).length === 0
+  );
+}
+
+export function resolveEventProfileKey(
+  recurrenceSeriesId: string | null | undefined,
+  eventId: string,
+): string {
+  return recurrenceSeriesId ?? `single:${eventId}`;
+}
+
+export function filterRoleLabelsForEventSlots(
+  slotLabels: string[],
+  requested: string[],
+): string[] {
+  const normalized = requested
+    .map((item) => normalizeRosterRoleValue(item))
+    .filter(Boolean);
+
+  const unique = [...new Set(normalized)];
+
+  return unique.filter((role) => isAllowedMemberRosterRole(slotLabels, role));
+}
+
 export function isAllowedMemberRosterRole(
   memberFunctions: string[],
   roleLabel: string,

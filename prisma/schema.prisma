@@ -195,6 +195,7 @@ model Member {
   user           User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
   ministryLinks  MemberMinistry[]
   availabilities EventAvailability[]
+  eventRoleProfiles MemberEventRoleProfile[]
   rosterAssignments EventRosterAssignment[]
 
   @@unique([churchId, email])
@@ -235,9 +236,27 @@ model Ministry {
   roles   MinistryRole[]
   members MemberMinistry[]
   events  MinistryEvent[]
+  eventRoleProfiles MemberEventRoleProfile[]
 
   @@unique([churchId, name])
   @@map("ministries")
+}
+
+model MemberEventRoleProfile {
+  id         String   @id @default(cuid())
+  memberId   String   @map("member_id")
+  ministryId String   @map("ministry_id")
+  profileKey String   @map("profile_key")
+  roleLabels String[] @default([]) @map("role_labels")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  member   Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  ministry Ministry @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, ministryId, profileKey])
+  @@index([memberId])
+  @@map("member_event_role_profiles")
 }
 
 model MinistryRole {
@@ -336,12 +355,13 @@ model MinistryEvent {
 }
 
 model EventAvailability {
-  id        String                  @id @default(cuid())
-  eventId   String                  @map("event_id")
-  memberId  String                  @map("member_id")
-  status    EventAvailabilityStatus
-  createdAt DateTime                @default(now()) @map("created_at")
-  updatedAt DateTime                @updatedAt @map("updated_at")
+  id         String                  @id @default(cuid())
+  eventId    String                  @map("event_id")
+  memberId   String                  @map("member_id")
+  status     EventAvailabilityStatus
+  roleLabels String[]                @default([]) @map("role_labels")
+  createdAt  DateTime                @default(now()) @map("created_at")
+  updatedAt  DateTime                @updatedAt @map("updated_at")
 
   event  MinistryEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
   member Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)

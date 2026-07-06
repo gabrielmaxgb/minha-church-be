@@ -25,12 +25,12 @@ import {
   DeleteMinistryEventQueryDto,
   ListMinistryEventsQueryDto,
   UpdateEventAvailabilityDto,
+  UpdateEventRoleProfileDto,
   UpdateMinistryDto,
   UpdateMinistryEventDto,
   UpdateMinistryRoleDto,
   UpdateRosterProfileDto,
   UpdateRosterCollectionDto,
-  OpenAvailabilityWindowDto,
 } from './dto/ministry.dto';
 import { MinistriesService } from './ministries.service';
 
@@ -174,6 +174,23 @@ export class MinistriesController {
     );
   }
 
+  @Put(':ministryId/roster/event-profiles/:profileKey')
+  updateMyEventRoleProfile(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @Param('profileKey') profileKey: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventRoleProfileDto,
+  ) {
+    return this.ministriesService.updateMyEventRoleProfile(
+      churchId,
+      ministryId,
+      decodeURIComponent(profileKey),
+      user.sub,
+      dto,
+    );
+  }
+
   @Put(':ministryId/roster/events/:eventId/availability')
   updateMyEventAvailability(
     @Param('churchId') churchId: string,
@@ -188,35 +205,6 @@ export class MinistriesController {
       eventId,
       user.sub,
       dto,
-    );
-  }
-
-  @Post(':ministryId/roster/availability-window')
-  openAvailabilityWindow(
-    @Param('churchId') churchId: string,
-    @Param('ministryId') ministryId: string,
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: OpenAvailabilityWindowDto,
-  ) {
-    return this.ministriesService.openAvailabilityWindow(
-      churchId,
-      ministryId,
-      user.sub,
-      dto,
-    );
-  }
-
-  @Delete(':ministryId/roster/availability-window')
-  @HttpCode(200)
-  closeAvailabilityWindow(
-    @Param('churchId') churchId: string,
-    @Param('ministryId') ministryId: string,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.ministriesService.closeAvailabilityWindow(
-      churchId,
-      ministryId,
-      user.sub,
     );
   }
 
