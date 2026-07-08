@@ -17,6 +17,7 @@ export interface CreateEventData {
   ministryId: string | null;
   name: string;
   description?: string | null;
+  highlightNote?: string | null;
   availabilityMessage?: string | null;
   location?: string | null;
   startsAt: Date;
@@ -67,6 +68,7 @@ export class EventCreationService {
           ministryId: data.ministryId,
           name: data.name.trim(),
           description: data.description,
+          highlightNote: data.highlightNote,
           availabilityMessage: data.availabilityMessage,
           location: data.location,
           startsAt: data.startsAt,
@@ -121,6 +123,7 @@ export class EventCreationService {
             ministryId: data.ministryId,
             name: data.name.trim(),
             description: data.description,
+            highlightNote: data.highlightNote,
             availabilityMessage: data.availabilityMessage,
             location: data.location,
             startsAt,

@@ -125,6 +125,12 @@ export class CreateMinistryEventDto {
   @IsString()
   description?: string;
 
+  /** Recado em destaque exibido na página do evento (tema da palavra, avisos pastorais). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  highlightNote?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(1000)

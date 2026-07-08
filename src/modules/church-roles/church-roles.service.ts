@@ -195,15 +195,12 @@ export class ChurchRolesService {
       );
     }
 
-    const assignmentCount = await this.prisma.churchMembershipRole.count({
+    // O vínculo em church_membership_roles tem onDelete: Cascade, então a
+    // exclusão remove o cargo de todos os usuários automaticamente. Contamos
+    // apenas para registrar o impacto na auditoria.
+    const affectedMembers = await this.prisma.churchMembershipRole.count({
       where: { roleId },
     });
-
-    if (assignmentCount > 0) {
-      throw new BadRequestException(
-        'Remova este cargo de todos os usuários antes de excluí-lo.',
-      );
-    }
 
     await this.prisma.churchRole.delete({
       where: { id: roleId },
@@ -218,7 +215,7 @@ export class ChurchRolesService {
       targetType: AUDIT_TARGET_TYPES.churchRole,
       targetId: roleId,
       summary: `${actorName} excluiu o cargo ${role.name}`,
-      metadata: { roleName: role.name },
+      metadata: { roleName: role.name, affectedMembers },
     });
   }
 

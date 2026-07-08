@@ -158,7 +158,8 @@ export class MinistriesService {
     userId: string,
     dto: UpdateRosterCollectionDto,
   ): Promise<{ updated: number }> {
-    await this.getMinistryOrThrow(churchId, ministryId);
+    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
+    this.assertMinistryActive(ministry);
 
     const allowed = await this.churchPermissions.canManageMinistryRosters(
       userId,
@@ -1381,6 +1382,7 @@ export class MinistriesService {
     dto: CreateMinistryEventDto,
   ): Promise<CreateMinistryEventResponse> {
     const ministry = await this.getMinistryOrThrow(churchId, ministryId);
+    this.assertMinistryActive(ministry);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
     const usesRoster = dto.usesRoster ?? true;
@@ -1391,6 +1393,7 @@ export class MinistriesService {
       ministryId,
       name: dto.name,
       description: dto.description,
+      highlightNote: dto.highlightNote,
       availabilityMessage: dto.availabilityMessage,
       location: dto.location,
       startsAt: new Date(dto.startsAt),
@@ -1436,7 +1439,8 @@ export class MinistriesService {
     userId: string,
     dto: UpdateMinistryEventDto,
   ): Promise<MinistryEventResponse> {
-    await this.getMinistryOrThrow(churchId, ministryId);
+    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
+    this.assertMinistryActive(ministry);
     await this.assertCanManageEvents(userId, churchId, ministryId);
     await this.getEventOrThrow(churchId, ministryId, eventId);
 
@@ -1450,7 +1454,8 @@ export class MinistriesService {
     userId: string,
     scope?: EventMutationScope,
   ): Promise<void> {
-    await this.getMinistryOrThrow(churchId, ministryId);
+    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
+    this.assertMinistryActive(ministry);
     await this.assertCanManageEvents(userId, churchId, ministryId);
     await this.getEventOrThrow(churchId, ministryId, eventId);
 
@@ -1471,6 +1476,14 @@ export class MinistriesService {
     if (!allowed) {
       throw new ForbiddenException(
         'Sem permissão para gerenciar eventos deste ministério.',
+      );
+    }
+  }
+
+  private assertMinistryActive(ministry: { isActive: boolean }) {
+    if (!ministry.isActive) {
+      throw new ForbiddenException(
+        'Este ministério está inativo. Reative-o para gerenciar eventos e escalas.',
       );
     }
   }

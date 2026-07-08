@@ -13,7 +13,7 @@ export interface UserPermissions {
   };
   schedules: { access: boolean };
   finances: { access: boolean };
-  communication: { access: boolean };
+  communication: { access: boolean; manage: boolean };
   reports: { access: boolean };
   settings: { access: boolean };
   roles: { manage: boolean };

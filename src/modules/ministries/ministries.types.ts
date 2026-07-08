@@ -44,9 +44,11 @@ export interface MinistryEventResponse {
   churchId: string;
   ministryId: string | null;
   ministryName: string | null;
+  ministryIsActive: boolean;
   isChurchWide: boolean;
   name: string;
   description: string | null;
+  highlightNote: string | null;
   availabilityMessage: string | null;
   location: string | null;
   startsAt: string;
@@ -307,9 +309,11 @@ export function toMinistryEventResponse(
     churchId: event.churchId,
     ministryId: event.ministryId,
     ministryName: event.ministry?.name ?? null,
+    ministryIsActive: event.ministry?.isActive ?? true,
     isChurchWide: event.ministryId === null,
     name: event.name,
     description: event.description,
+    highlightNote: event.highlightNote,
     availabilityMessage: event.availabilityMessage,
     location: event.location,
     startsAt: event.startsAt.toISOString(),

@@ -22,6 +22,18 @@ enum ChurchPermission {
   settings_access
   roles_manage
   memberships_manage
+  communication_manage
+}
+
+enum AnnouncementPriority {
+  normal
+  important
+  urgent
+}
+
+enum AnnouncementAudienceType {
+  church_wide
+  ministries
 }
 
 enum ChurchPlanTier {
@@ -83,6 +95,8 @@ model User {
   passwordResetTokens           PasswordResetToken[]
   passwordResetRequests         PasswordResetRequest[]
   resolvedPasswordResetRequests PasswordResetRequest[] @relation("ResolvedPasswordResetRequests")
+  announcements                 Announcement[]     @relation("AnnouncementAuthor")
+  announcementReads             AnnouncementRead[]
 
   @@map("users")
 }
@@ -102,6 +116,7 @@ model Church {
   roles                 ChurchRole[]
   auditLogs             AuditLog[]
   passwordResetRequests PasswordResetRequest[]
+  announcements         Announcement[]
 
   @@map("churches")
 }
@@ -239,6 +254,7 @@ model Ministry {
   events  MinistryEvent[]
   eventRoleProfiles MemberEventRoleProfile[]
   serviceFunctions MinistryServiceFunction[]
+  announcementTargets AnnouncementMinistry[]
 
   @@unique([churchId, name])
   @@map("ministries")
@@ -347,6 +363,7 @@ model MinistryEvent {
   ministryId           String?   @map("ministry_id")
   name                 String
   description          String?
+  highlightNote        String?   @map("highlight_note")
   availabilityMessage  String?   @map("availability_message")
   location             String?
   startsAt             DateTime  @map("starts_at")
@@ -475,4 +492,53 @@ model PasswordResetRequest {
   @@index([churchId, status])
   @@index([userId, churchId, status])
   @@map("password_reset_requests")
+}
+
+model Announcement {
+  id              String                   @id @default(cuid())
+  churchId        String                   @map("church_id")
+  title           String
+  body            String
+  priority        AnnouncementPriority     @default(normal)
+  audienceType    AnnouncementAudienceType @default(church_wide) @map("audience_type")
+  pinned          Boolean                  @default(false)
+  publishedAt     DateTime?                @map("published_at")
+  expiresAt       DateTime?                @map("expires_at")
+  createdByUserId String?                  @map("created_by_user_id")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+  deletedAt       DateTime?                @map("deleted_at")
+
+  church     Church                 @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  createdBy  User?                  @relation("AnnouncementAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  ministries AnnouncementMinistry[]
+  reads      AnnouncementRead[]
+
+  @@index([churchId, deletedAt, publishedAt])
+  @@map("announcements")
+}
+
+model AnnouncementMinistry {
+  announcementId String @map("announcement_id")
+  ministryId     String @map("ministry_id")
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  ministry     Ministry     @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, ministryId])
+  @@index([ministryId])
+  @@map("announcement_ministries")
+}
+
+model AnnouncementRead {
+  announcementId String   @map("announcement_id")
+  userId         String   @map("user_id")
+  readAt         DateTime @default(now()) @map("read_at")
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, userId])
+  @@index([userId])
+  @@map("announcement_reads")
 }

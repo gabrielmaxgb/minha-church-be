@@ -214,6 +214,7 @@ export class EventsService {
         usesRoster: true,
         ministryId: true,
         visibleToChurch: true,
+        ministry: { select: { isActive: true } },
       },
       orderBy: { startsAt: 'asc' },
     });
@@ -577,6 +578,11 @@ export class EventsService {
         ...(query.to
           ? { startsAt: { lte: new Date(`${query.to}T23:59:59.999Z`) } }
           : {}),
+        // Atividades de ministérios inativos somem da lista geral; o acesso
+        // continua pelo painel do ministério (que filtra por ministryId).
+        ...(query.ministryId
+          ? {}
+          : { OR: [{ ministryId: null }, { ministry: { isActive: true } }] }),
         ...(visibilityWhere ?? {}),
       },
       include: eventInclude,
@@ -602,6 +608,7 @@ export class EventsService {
       ministryId: dto.ministryId ?? null,
       name: dto.name,
       description: dto.description,
+      highlightNote: dto.highlightNote,
       availabilityMessage: dto.availabilityMessage,
       location: dto.location,
       startsAt: new Date(dto.startsAt),
@@ -668,6 +675,10 @@ export class EventsService {
 
         if (dto.description !== undefined) {
           data.description = dto.description;
+        }
+
+        if (dto.highlightNote !== undefined) {
+          data.highlightNote = dto.highlightNote;
         }
 
         if (dto.availabilityMessage !== undefined) {
@@ -900,6 +911,8 @@ export class EventsService {
     event: { ministryId: string | null; createdByUserId: string | null },
   ) {
     if (event.ministryId) {
+      await this.assertMinistryActive(churchId, event.ministryId);
+
       const allowed = await this.churchPermissions.canManageMinistryRosters(
         userId,
         churchId,
@@ -981,13 +994,7 @@ export class EventsService {
     churchId: string,
     ministryId: string,
   ) {
-    const ministry = await this.prisma.ministry.findFirst({
-      where: { id: ministryId, churchId, isActive: true },
-    });
-
-    if (!ministry) {
-      throw new NotFoundException('Ministério não encontrado.');
-    }
+    await this.assertMinistryActive(churchId, ministryId);
 
     const allowed = await this.churchPermissions.canManageMinistryEvents(
       userId,
@@ -998,6 +1005,23 @@ export class EventsService {
     if (!allowed) {
       throw new ForbiddenException(
         'Sem permissão para gerenciar atividades deste ministério.',
+      );
+    }
+  }
+
+  private async assertMinistryActive(churchId: string, ministryId: string) {
+    const ministry = await this.prisma.ministry.findFirst({
+      where: { id: ministryId, churchId },
+      select: { isActive: true },
+    });
+
+    if (!ministry) {
+      throw new NotFoundException('Ministério não encontrado.');
+    }
+
+    if (!ministry.isActive) {
+      throw new ForbiddenException(
+        'Este ministério está inativo. Reative-o para gerenciar eventos e escalas.',
       );
     }
   }

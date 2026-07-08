@@ -31,6 +31,12 @@ export class CreateChurchEventDto {
   @IsString()
   description?: string;
 
+  /** Recado em destaque exibido na página do evento (tema da palavra, avisos pastorais). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  highlightNote?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(1000)
@@ -90,6 +96,11 @@ export class UpdateChurchEventDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  highlightNote?: string | null;
 
   @IsOptional()
   @IsString()

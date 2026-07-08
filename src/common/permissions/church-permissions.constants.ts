@@ -18,6 +18,7 @@ export const ADMIN_ACTION_PERMISSIONS: readonly ChurchPermission[] = [
   ChurchPermission.members_manage,
   ChurchPermission.ministries_manage,
   ChurchPermission.events_create_church_wide,
+  ChurchPermission.communication_manage,
   ChurchPermission.roles_manage,
   ChurchPermission.memberships_manage,
 ] as const;
@@ -77,6 +78,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
         ChurchPermission.members_manage,
         ChurchPermission.ministries_manage,
         ChurchPermission.events_create_church_wide,
+        ChurchPermission.communication_manage,
         ChurchPermission.memberships_manage,
       ],
     },
@@ -90,6 +92,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
         ChurchPermission.ministries_access,
         ChurchPermission.activities_access,
         ChurchPermission.communication_access,
+        ChurchPermission.communication_manage,
         ChurchPermission.members_manage,
       ],
     },
@@ -131,6 +134,7 @@ export const PERMISSION_TO_USER_PERMISSIONS_KEY: Record<
   [ChurchPermission.events_create_church_wide]: 'activities',
   [ChurchPermission.finances_access]: 'finances',
   [ChurchPermission.communication_access]: 'communication',
+  [ChurchPermission.communication_manage]: 'communication',
   [ChurchPermission.reports_access]: 'reports',
   [ChurchPermission.settings_access]: 'settings',
   [ChurchPermission.roles_manage]: 'roles',
@@ -151,6 +155,7 @@ export const CHURCH_PERMISSION_LABELS: Record<ChurchPermission, string> = {
   [ChurchPermission.ministries_manage]: 'Gerenciar ministérios',
   [ChurchPermission.events_create_church_wide]:
     'Criar atividades em toda a igreja',
+  [ChurchPermission.communication_manage]: 'Enviar comunicados',
   [ChurchPermission.roles_manage]: 'Gerenciar cargos da igreja',
   [ChurchPermission.memberships_manage]: 'Atribuir cargos a usuários',
 };

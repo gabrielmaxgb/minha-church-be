@@ -13,6 +13,7 @@ import { EventsModule } from './modules/events/events.module';
 import { ChurchMembershipsModule } from './modules/church-memberships/church-memberships.module';
 import { ChurchRolesModule } from './modules/church-roles/church-roles.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
+import { AnnouncementsModule } from './modules/announcements/announcements.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
     ChurchMembershipsModule,
     ChurchRolesModule,
     AuditLogsModule,
+    AnnouncementsModule,
   ],
 })
 export class AppModule {}

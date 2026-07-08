@@ -36,6 +36,8 @@ export class MembersController {
   @RequirePermission(
     ChurchPermission.members_access,
     ChurchPermission.members_manage,
+    // Gestores de ministérios precisam listar membros para montar as equipes.
+    ChurchPermission.ministries_manage,
   )
   findAll(
     @Param('churchId') churchId: string,
@@ -127,7 +129,10 @@ export class MembersController {
 
   @Post(':memberId/ministries')
   @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.members_manage)
+  @RequirePermission(
+    ChurchPermission.members_manage,
+    ChurchPermission.ministries_manage,
+  )
   assignMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
@@ -138,7 +143,10 @@ export class MembersController {
 
   @Delete(':memberId/ministries/:ministryId')
   @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.members_manage)
+  @RequirePermission(
+    ChurchPermission.members_manage,
+    ChurchPermission.ministries_manage,
+  )
   removeMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,

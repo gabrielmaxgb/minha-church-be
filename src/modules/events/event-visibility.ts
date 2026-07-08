@@ -42,12 +42,19 @@ export async function buildVisibleEventsWhere(
   const ministryIds = member?.ministryLinks.map((link) => link.ministryId) ?? [];
 
   return {
-    OR: [
-      { ministryId: null },
-      { visibleToChurch: true },
-      ...(ministryIds.length > 0
-        ? [{ ministryId: { in: ministryIds } }]
-        : []),
+    AND: [
+      {
+        OR: [{ ministryId: null }, { ministry: { isActive: true } }],
+      },
+      {
+        OR: [
+          { ministryId: null },
+          { visibleToChurch: true },
+          ...(ministryIds.length > 0
+            ? [{ ministryId: { in: ministryIds } }]
+            : []),
+        ],
+      },
     ],
   };
 }
@@ -105,10 +112,19 @@ export function canUserViewEventWithContext(
   event: {
     ministryId: string | null;
     visibleToChurch: boolean;
+    ministry?: { isActive: boolean } | null;
   },
   context: EventViewContext,
 ): boolean {
   if (!context.hasMembership) {
+    return false;
+  }
+
+  const ministryInactive =
+    Boolean(event.ministryId) && event.ministry?.isActive === false;
+
+  // Ministério inativo some para membros comuns; gestores ainda veem.
+  if (ministryInactive && !context.canBypass) {
     return false;
   }
 
