@@ -2,6 +2,7 @@ import { MemberStatus, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
+import { createPgPool, createPrismaWithPg } from './pg-prisma';
 
 const DEMO_CHURCH_ID = 'church_demo';
 
@@ -643,7 +644,8 @@ export async function seedDatabase(prisma = new PrismaClient()) {
 }
 
 async function main() {
-  const prisma = new PrismaClient();
+  const pool = createPgPool();
+  const { prisma } = createPrismaWithPg(pool);
 
   try {
     await seedDatabase(prisma);
@@ -658,6 +660,7 @@ async function main() {
     }
   } finally {
     await prisma.$disconnect();
+    await pool.end();
   }
 }
 

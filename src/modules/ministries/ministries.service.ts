@@ -13,6 +13,7 @@ import { EventCreationService } from '../events/event-creation.service';
 import { resolveRosterSlotPlan } from '../events/event-roster-slots';
 import { EventsService } from '../events/events.service';
 import type { EventMutationScope } from '../events/dto/event-mutation-scope';
+import { memberNeedsServiceFunctions } from '../members/member-ministry-notifications';
 import { UsersService } from '../users/users.service';
 import {
   CreateMinistryDto,
@@ -26,10 +27,19 @@ import {
   UpdateMinistryRoleDto,
   UpdateRosterProfileDto,
   UpdateRosterCollectionDto,
+  ReplaceMinistryServiceFunctionsDto,
+  UpdateMemberMinistryInstrumentsDto,
 } from './dto/ministry.dto';
 import {
+  filterMemberInstrumentsToCatalog,
+  listMinistryServiceFunctions,
+  replaceMinistryServiceFunctions,
+} from './ministry-service-functions';
+import {
   filterRoleLabelsForEventSlots,
+  isAllowedMemberRosterRole,
   needsRosterFunctions,
+  normalizeRosterRoleValue,
   resolveEventProfileKey,
 } from './roster-roles';
 import {
@@ -43,7 +53,6 @@ import {
   type MinistryRoleResponse,
   type MyScheduleEventResponse,
   type MySchedulesResponse,
-  type RosterAvailabilityWindowResponse,
   type RosterProfileResponse,
 } from './ministries.types';
 
@@ -82,11 +91,13 @@ export class MinistriesService {
               },
             },
           },
-      include: { roles: true },
+      include: { roles: true, serviceFunctions: true },
       orderBy: { name: 'asc' },
     });
 
-    return ministries.map(toMinistryResponse);
+    return ministries.map((ministry) =>
+      toMinistryResponse({ ...ministry, serviceFunctions: [] }),
+    );
   }
 
   async findOne(
@@ -134,7 +145,6 @@ export class MinistriesService {
         churchId,
         name: dto.name.trim(),
         description: dto.description,
-        hasRoster: false,
       },
       include: { roles: true },
     });
@@ -299,6 +309,110 @@ export class MinistriesService {
     await this.prisma.ministryRole.delete({ where: { id: roleId } });
   }
 
+  async listServiceFunctions(
+    churchId: string,
+    ministryId: string,
+  ) {
+    await this.getMinistryOrThrow(churchId, ministryId);
+    return listMinistryServiceFunctions(this.prisma, ministryId);
+  }
+
+  async replaceServiceFunctions(
+    churchId: string,
+    ministryId: string,
+    userId: string,
+    dto: ReplaceMinistryServiceFunctionsDto,
+  ) {
+    await this.getMinistryOrThrow(churchId, ministryId);
+
+    const allowed = await this.churchPermissions.canManageMinistryRosters(
+      userId,
+      churchId,
+      ministryId,
+    );
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Sem permissão para gerenciar funções deste ministério.',
+      );
+    }
+
+    return replaceMinistryServiceFunctions(
+      this.prisma,
+      ministryId,
+      dto.labels,
+    );
+  }
+
+  async updateMemberInstruments(
+    churchId: string,
+    ministryId: string,
+    memberId: string,
+    userId: string,
+    dto: UpdateMemberMinistryInstrumentsDto,
+  ): Promise<MinistryMemberResponse> {
+    await this.getMinistryOrThrow(churchId, ministryId);
+
+    const viewerMember = await this.prisma.member.findFirst({
+      where: {
+        churchId,
+        userId,
+        deletedAt: null,
+        status: MemberStatus.active,
+      },
+      select: { id: true },
+    });
+
+    const isSelf = viewerMember?.id === memberId;
+    const canManage =
+      !isSelf &&
+      (await this.churchPermissions.canManageMinistryRosters(
+        userId,
+        churchId,
+        ministryId,
+      ));
+
+    if (!isSelf && !canManage) {
+      throw new ForbiddenException(
+        'Sem permissão para alterar as funções deste membro.',
+      );
+    }
+
+    const link = await this.prisma.memberMinistry.findFirst({
+      where: {
+        ministryId,
+        memberId,
+        endedAt: null,
+        member: { churchId, deletedAt: null },
+      },
+      include: {
+        member: true,
+        roleAssignments: { include: { ministryRole: true } },
+      },
+    });
+
+    if (!link) {
+      throw new NotFoundException('Membro não encontrado neste ministério.');
+    }
+
+    const catalog = await listMinistryServiceFunctions(this.prisma, ministryId);
+    const instruments = filterMemberInstrumentsToCatalog(
+      dto.instruments,
+      catalog.map((item) => item.label),
+    );
+
+    const updated = await this.prisma.memberMinistry.update({
+      where: { id: link.id },
+      data: { instruments },
+      include: {
+        member: true,
+        roleAssignments: { include: { ministryRole: true } },
+      },
+    });
+
+    return this.mapMinistryMemberLink(updated);
+  }
+
   async listMembers(
     churchId: string,
     ministryId: string,
@@ -322,36 +436,58 @@ export class MinistriesService {
       orderBy: { member: { name: 'asc' } },
     });
 
-    return links.map((link) => {
-      const roles = link.roleAssignments
-        .map((assignment) => ({
-          id: assignment.ministryRole.id,
-          name: assignment.ministryRole.name,
-          canManageEvents: assignment.ministryRole.canManageEvents,
-          sortOrder: assignment.ministryRole.sortOrder,
-        }))
-        .sort(
-          (a, b) =>
-            a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'pt-BR'),
-        )
-        .map(({ id, name, canManageEvents }) => ({
-          id,
-          name,
-          canManageEvents,
-        }));
+    return links.map((link) => this.mapMinistryMemberLink(link));
+  }
 
-      return {
-        id: link.id,
-        memberId: link.memberId,
-        memberName: link.member.name,
-        memberEmail: link.member.email,
-        memberPhone: link.member.phone,
-        instruments: link.instruments,
-        roles,
-        canManageEvents: roles.some((role) => role.canManageEvents),
-        startedAt: link.startedAt?.toISOString() ?? null,
+  private mapMinistryMemberLink(
+    link: {
+      id: string;
+      memberId: string;
+      instruments: string[];
+      startedAt: Date | null;
+      member: {
+        name: string;
+        email: string | null;
+        phone: string | null;
       };
-    });
+      roleAssignments: Array<{
+        ministryRole: {
+          id: string;
+          name: string;
+          canManageEvents: boolean;
+          sortOrder: number;
+        };
+      }>;
+    },
+  ): MinistryMemberResponse {
+    const roles = link.roleAssignments
+      .map((assignment) => ({
+        id: assignment.ministryRole.id,
+        name: assignment.ministryRole.name,
+        canManageEvents: assignment.ministryRole.canManageEvents,
+        sortOrder: assignment.ministryRole.sortOrder,
+      }))
+      .sort(
+        (a, b) =>
+          a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'pt-BR'),
+      )
+      .map(({ id, name, canManageEvents }) => ({
+        id,
+        name,
+        canManageEvents,
+      }));
+
+    return {
+      id: link.id,
+      memberId: link.memberId,
+      memberName: link.member.name,
+      memberEmail: link.member.email,
+      memberPhone: link.member.phone,
+      instruments: link.instruments,
+      roles,
+      canManageEvents: roles.some((role) => role.canManageEvents),
+      startedAt: link.startedAt?.toISOString() ?? null,
+    };
   }
 
   async getMySchedules(
@@ -359,7 +495,6 @@ export class MinistriesService {
     userId: string,
   ): Promise<MySchedulesResponse> {
     const empty: MySchedulesResponse = {
-      hasRosterMinistries: false,
       hasSchedule: false,
       churchWide: null,
       summary: {
@@ -420,7 +555,13 @@ export class MinistriesService {
           isActive: true,
         },
       },
-      include: { ministry: true },
+      include: {
+        ministry: {
+          include: {
+            serviceFunctions: { select: { id: true } },
+          },
+        },
+      },
     });
 
     const ministryIds = rosterLinks.map((link) => link.ministryId);
@@ -525,13 +666,6 @@ export class MinistriesService {
         return {
           ministryId: link.ministry.id,
           ministryName: link.ministry.name,
-          availabilityWindow: {
-            active: false,
-            periodType: null,
-            periodStart: null,
-            periodEnd: null,
-            label: null,
-          },
           events: ministryEvents,
           pendingAvailability: pendingAvailability.filter(
             (item) => item.ministryId === link.ministryId,
@@ -540,7 +674,10 @@ export class MinistriesService {
             (item) => item.ministryId === link.ministryId,
           ),
           rosterFunctions: link.instruments,
-          needsRosterFunctions: needsRosterFunctions(link.instruments),
+          needsRosterFunctions: memberNeedsServiceFunctions(
+            link.instruments,
+            link.ministry.serviceFunctions,
+          ),
         };
       }),
     );
@@ -557,13 +694,6 @@ export class MinistriesService {
         ? {
             ministryId: CHURCH_WIDE_SCHEDULE_ID,
             ministryName: 'Igreja',
-            availabilityWindow: {
-              active: churchWideScheduleEvents.some((event) => event.rosterOpen),
-              periodType: null,
-              periodStart: null,
-              periodEnd: null,
-              label: null,
-            },
             events: churchWideScheduleEvents,
             pendingAvailability: churchWidePending,
             upcomingAssignments: churchWideAssignments,
@@ -579,7 +709,6 @@ export class MinistriesService {
     const hasSchedule = ministries.length > 0 || churchWide !== null;
 
     return {
-      hasRosterMinistries: ministries.length > 0,
       hasSchedule,
       churchWide,
       summary: {
@@ -682,9 +811,6 @@ export class MinistriesService {
       ministry: {
         id: string;
         name: string;
-        availabilityWindowActive: boolean;
-        availabilityPeriodStart: Date | null;
-        availabilityPeriodEnd: Date | null;
       };
       availabilities: Array<{
         memberId: string;
@@ -772,17 +898,6 @@ export class MinistriesService {
         member: { churchId, deletedAt: null },
       },
     });
-
-    const availabilityWindow: RosterAvailabilityWindowResponse = {
-      active: false,
-      periodType: null,
-      periodStart: null,
-      periodEnd: null,
-      label: null,
-      eventsInPeriod: 0,
-      openEventsInPeriod: 0,
-      teamPendingCount: 0,
-    };
 
     const now = new Date();
 
@@ -913,11 +1028,9 @@ export class MinistriesService {
     return {
       ministryId: ministry.id,
       ministryName: ministry.name,
-      hasRoster: true,
       memberId: memberLink.memberId,
       instruments: memberLink.instruments,
       needsRosterFunctions: needsRosterFunctions(memberLink.instruments),
-      availabilityWindow,
       series,
       summary: {
         totalOpen: openEvents.length,
@@ -944,7 +1057,12 @@ export class MinistriesService {
     await this.prisma.memberMinistry.update({
       where: { id: memberLink.id },
       data: {
-        instruments: dto.instruments.map((item) => item.trim()).filter(Boolean),
+        instruments: filterMemberInstrumentsToCatalog(
+          dto.instruments,
+          (
+            await listMinistryServiceFunctions(this.prisma, ministryId)
+          ).map((item) => item.label),
+        ),
       },
     });
 
@@ -999,7 +1117,7 @@ export class MinistriesService {
     userId: string,
     dto: UpdateEventAvailabilityDto,
   ): Promise<RosterProfileResponse> {
-    await this.getMinistryOrThrow(churchId, ministryId);
+    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
     const memberLink = await this.getActiveMinistryMemberLink(
       churchId,
       ministryId,
@@ -1040,12 +1158,6 @@ export class MinistriesService {
       );
     }
 
-    const slotLabels = event.rosterSlots.map((slot) => slot.label);
-    const profileKey = resolveEventProfileKey(
-      event.recurrenceSeriesId,
-      event.id,
-    );
-
     if (dto.status === 'clear') {
       await this.prisma.eventAvailability.deleteMany({
         where: {
@@ -1053,27 +1165,16 @@ export class MinistriesService {
           memberId: memberLink.memberId,
         },
       });
-    } else if (dto.status === 'available') {
-      if (slotLabels.length === 0) {
-        throw new BadRequestException(
-          'O líder ainda não definiu as funções deste evento.',
-        );
-      }
-
-      const roleLabels = await this.resolveAvailabilityRoleLabels(
-        memberLink.memberId,
-        ministryId,
-        profileKey,
-        slotLabels,
-        dto.roleLabels,
+    } else if (
+      memberNeedsServiceFunctions(
+        memberLink.instruments,
+        ministry.serviceFunctions,
+      )
+    ) {
+      throw new BadRequestException(
+        'Configure suas funções no perfil antes de marcar disponibilidade.',
       );
-
-      if (roleLabels.length === 0) {
-        throw new BadRequestException(
-          'Defina suas funções neste evento antes de marcar disponibilidade.',
-        );
-      }
-
+    } else if (dto.status === 'available') {
       await this.prisma.eventAvailability.upsert({
         where: {
           eventId_memberId: {
@@ -1085,11 +1186,11 @@ export class MinistriesService {
           eventId,
           memberId: memberLink.memberId,
           status: dto.status,
-          roleLabels,
+          roleLabels: [],
         },
         update: {
           status: dto.status,
-          roleLabels,
+          roleLabels: [],
         },
       });
     } else {
@@ -1282,7 +1383,7 @@ export class MinistriesService {
     const ministry = await this.getMinistryOrThrow(churchId, ministryId);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
-    const usesRoster = dto.usesRoster ?? false;
+    const usesRoster = dto.usesRoster ?? true;
     const rosterOpen = usesRoster ? (dto.rosterOpen ?? false) : false;
 
     const { event, occurrencesCreated } = await this.eventCreation.createEvent({
@@ -1377,7 +1478,7 @@ export class MinistriesService {
   private async getMinistryOrThrow(churchId: string, ministryId: string) {
     const ministry = await this.prisma.ministry.findFirst({
       where: { id: ministryId, churchId },
-      include: { roles: true },
+      include: { roles: true, serviceFunctions: true },
     });
 
     if (!ministry) {

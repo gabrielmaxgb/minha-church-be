@@ -1,4 +1,8 @@
+/** Função padrão quando a atividade da igreja não define vagas por função. */
+export const CHURCH_WIDE_DEFAULT_ROSTER_ROLE = 'voluntario';
+
 export const ROSTER_ROLE_PRESETS = [
+  { id: CHURCH_WIDE_DEFAULT_ROSTER_ROLE, label: 'Voluntário' },
   { id: 'reception', label: 'Recepção' },
   { id: 'media', label: 'Mídia' },
   { id: 'vocal', label: 'Vocal' },

@@ -28,10 +28,6 @@ export class CreateMinistryDto {
   @IsOptional()
   @IsString()
   description?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  hasRoster?: boolean;
 }
 
 export class UpdateMinistryDto {
@@ -47,13 +43,22 @@ export class UpdateMinistryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  hasRoster?: boolean;
 }
 
 export class UpdateRosterProfileDto {
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  instruments: string[];
+}
+
+export class ReplaceMinistryServiceFunctionsDto {
+  @IsArray()
+  @IsString({ each: true })
+  labels: string[];
+}
+
+export class UpdateMemberMinistryInstrumentsDto {
   @IsArray()
   @ArrayUnique()
   @IsString({ each: true })

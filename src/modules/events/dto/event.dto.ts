@@ -174,6 +174,10 @@ export class UpsertEventRosterDto {
   @IsString()
   memberId: string;
 
+  @IsOptional()
   @IsString()
-  rosterSlotId: string;
+  rosterSlotId?: string;
+
+  @IsString()
+  roleLabel: string;
 }

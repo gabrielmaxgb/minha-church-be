@@ -48,7 +48,7 @@ export class EventCreationService {
     event: MinistryEventWithRelations;
     occurrencesCreated: number;
   }> {
-    const usesRoster = data.usesRoster ?? false;
+    const usesRoster = data.usesRoster ?? true;
     const rosterOpen = usesRoster ? (data.rosterOpen ?? false) : false;
     const rosterSlotPlan = usesRoster
       ? resolveRosterSlotPlan({

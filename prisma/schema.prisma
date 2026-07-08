@@ -229,6 +229,7 @@ model Ministry {
   availabilityPeriodType   WorshipAvailabilityPeriod? @map("availability_period_type")
   availabilityPeriodStart  DateTime?                  @map("availability_period_start") @db.Date
   availabilityPeriodEnd    DateTime?                  @map("availability_period_end") @db.Date
+  serviceFunctionsUpdatedAt DateTime                  @default(now()) @map("service_functions_updated_at")
   createdAt   DateTime          @default(now()) @map("created_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
 
@@ -237,9 +238,25 @@ model Ministry {
   members MemberMinistry[]
   events  MinistryEvent[]
   eventRoleProfiles MemberEventRoleProfile[]
+  serviceFunctions MinistryServiceFunction[]
 
   @@unique([churchId, name])
   @@map("ministries")
+}
+
+model MinistryServiceFunction {
+  id         String   @id @default(cuid())
+  ministryId String   @map("ministry_id")
+  label      String
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  ministry Ministry @relation(fields: [ministryId], references: [id], onDelete: Cascade)
+
+  @@unique([ministryId, label])
+  @@index([ministryId])
+  @@map("ministry_service_functions")
 }
 
 model MemberEventRoleProfile {
@@ -295,6 +312,7 @@ model MemberMinistry {
   instruments String[]  @default([])
   startedAt   DateTime? @map("started_at") @db.Date
   endedAt     DateTime? @map("ended_at") @db.Date
+  serviceFunctionsCatalogSeenAt DateTime? @map("service_functions_catalog_seen_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -335,7 +353,7 @@ model MinistryEvent {
   endsAt               DateTime? @map("ends_at")
   createdByUserId      String?   @map("created_by_user_id")
   recurrenceSeriesId   String?   @map("recurrence_series_id")
-  usesRoster           Boolean   @default(false) @map("uses_roster")
+  usesRoster           Boolean   @default(true) @map("uses_roster")
   rosterOpen           Boolean   @default(false) @map("roster_open")
   visibleToChurch      Boolean   @default(true) @map("visible_to_church")
   deletedAt            DateTime? @map("deleted_at")
@@ -393,14 +411,14 @@ model EventRosterAssignment {
   id           String   @id @default(cuid())
   eventId      String   @map("event_id")
   memberId     String   @map("member_id")
-  rosterSlotId String   @map("roster_slot_id")
+  rosterSlotId String?  @map("roster_slot_id")
   roleLabel    String   @map("role_label")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  event      MinistryEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  member     Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  rosterSlot EventRosterSlot @relation(fields: [rosterSlotId], references: [id], onDelete: Cascade)
+  event      MinistryEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member     Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  rosterSlot EventRosterSlot? @relation(fields: [rosterSlotId], references: [id], onDelete: SetNull)
 
   @@unique([eventId, memberId])
   @@index([eventId, rosterSlotId])

@@ -19,10 +19,16 @@ import {
 import { PrismaService } from '../../database/prisma.service';
 import {
   AssignMemberMinistryDto,
+  AckMinistryCatalogNotificationsDto,
   CreateMemberDto,
   ListMembersQueryDto,
   UpdateMemberDto,
 } from './dto/member.dto';
+import {
+  buildMyMinistryNotifications,
+  memberNeedsServiceFunctions,
+  type MyMinistryNotificationsResponse,
+} from './member-ministry-notifications';
 import {
   MemberWithMinistries,
   parseOptionalDate,
@@ -105,6 +111,106 @@ export class MembersService {
     const member = await this.getMemberOrThrow(churchId, memberId);
 
     return toMemberResponse(member);
+  }
+
+  async findMine(userId: string, churchId: string): Promise<MemberResponse> {
+    const member = await this.prisma.member.findFirst({
+      where: { userId, churchId, deletedAt: null },
+      include: memberInclude,
+    });
+
+    if (!member) {
+      throw new NotFoundException('Cadastro pastoral não encontrado.');
+    }
+
+    return toMemberResponse(member as MemberWithMinistries);
+  }
+
+  async findMyMinistryNotifications(
+    userId: string,
+    churchId: string,
+  ): Promise<MyMinistryNotificationsResponse> {
+    const member = await this.prisma.member.findFirst({
+      where: { userId, churchId, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!member) {
+      return buildMyMinistryNotifications([]);
+    }
+
+    const links = await this.prisma.memberMinistry.findMany({
+      where: {
+        memberId: member.id,
+        endedAt: null,
+        ministry: { churchId, isActive: true },
+      },
+      select: {
+        instruments: true,
+        serviceFunctionsCatalogSeenAt: true,
+        ministry: {
+          select: {
+            id: true,
+            name: true,
+            serviceFunctionsUpdatedAt: true,
+            serviceFunctions: { select: { id: true } },
+          },
+        },
+      },
+      orderBy: { ministry: { name: 'asc' } },
+    });
+
+    return buildMyMinistryNotifications(links);
+  }
+
+  async ackMinistryCatalogNotifications(
+    userId: string,
+    churchId: string,
+    ministryIds: string[],
+  ): Promise<MyMinistryNotificationsResponse> {
+    const uniqueMinistryIds = [...new Set(ministryIds.filter(Boolean))];
+
+    if (uniqueMinistryIds.length === 0) {
+      return this.findMyMinistryNotifications(userId, churchId);
+    }
+
+    const member = await this.prisma.member.findFirst({
+      where: { userId, churchId, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!member) {
+      throw new NotFoundException('Cadastro pastoral não encontrado.');
+    }
+
+    const ministries = await this.prisma.ministry.findMany({
+      where: {
+        id: { in: uniqueMinistryIds },
+        churchId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        serviceFunctionsUpdatedAt: true,
+      },
+    });
+
+    await this.prisma.$transaction(
+      ministries.map((ministry) =>
+        this.prisma.memberMinistry.updateMany({
+          where: {
+            memberId: member.id,
+            ministryId: ministry.id,
+            endedAt: null,
+          },
+          data: {
+            serviceFunctionsCatalogSeenAt: ministry.serviceFunctionsUpdatedAt,
+          },
+        }),
+      ),
+    );
+
+    return this.findMyMinistryNotifications(userId, churchId);
   }
 
   async create(

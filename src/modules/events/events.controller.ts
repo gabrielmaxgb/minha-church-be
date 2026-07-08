@@ -49,6 +49,24 @@ export class EventsController {
     return this.eventsService.findAll(churchId, user.sub, query);
   }
 
+  @Get('series/:seriesId/occurrences')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  listSeriesOccurrences(
+    @Param('churchId') churchId: string,
+    @Param('seriesId') seriesId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.eventsService.listSeriesOccurrences(
+      churchId,
+      seriesId,
+      user.sub,
+    );
+  }
+
   @Get(':eventId')
   @UseGuards(PermissionsGuard)
   @RequirePermission(

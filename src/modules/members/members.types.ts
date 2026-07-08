@@ -29,6 +29,7 @@ export interface MemberMinistryLinkResponse {
   id: string;
   ministryId: string;
   ministryName: string;
+  instruments: string[];
   roles: MemberMinistryRoleSummary[];
   canManageEvents: boolean;
   startedAt: string | null;
@@ -139,6 +140,7 @@ export function toMemberResponse(member: MemberWithMinistries): MemberResponse {
         id: link.id,
         ministryId: link.ministryId,
         ministryName: link.ministry.name,
+        instruments: link.instruments,
         roles,
         canManageEvents: roles.some((role) => role.canManageEvents),
         startedAt: formatDate(link.startedAt),

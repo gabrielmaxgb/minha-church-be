@@ -1,8 +1,9 @@
 import type {
   EventRecurrenceSeries,
   Ministry,
-  MinistryEvent,
   MinistryRole,
+  MinistryServiceFunction,
+  MinistryEvent,
 } from '@prisma/client';
 
 import type { EventRecurrenceResponse } from '../events/event-recurrence.types';
@@ -19,16 +20,11 @@ export interface MinistryRoleResponse {
   updatedAt: string;
 }
 
-export interface RosterAvailabilityWindowResponse {
-  active: boolean;
-  periodType:
-    'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual' | null;
-  periodStart: string | null;
-  periodEnd: string | null;
-  label: string | null;
-  eventsInPeriod: number;
-  openEventsInPeriod: number;
-  teamPendingCount: number;
+export interface MinistryServiceFunctionResponse {
+  id: string;
+  ministryId: string;
+  label: string;
+  sortOrder: number;
 }
 
 export interface MinistryResponse {
@@ -36,10 +32,9 @@ export interface MinistryResponse {
   churchId: string;
   name: string;
   description: string | null;
-  hasRoster: boolean;
   isActive: boolean;
-  availabilityWindow: RosterAvailabilityWindowResponse | null;
   roles: MinistryRoleResponse[];
+  serviceFunctions: MinistryServiceFunctionResponse[];
   createdAt: string;
   updatedAt: string;
 }
@@ -134,7 +129,7 @@ export interface EventRosterAssignmentResponse {
   eventId: string;
   memberId: string;
   memberName: string;
-  rosterSlotId: string;
+  rosterSlotId: string | null;
   roleLabel: string;
   availabilityStatus: 'available' | 'unavailable' | null;
 }
@@ -149,12 +144,10 @@ export interface EventRosterCandidateResponse {
 export interface RosterProfileResponse {
   ministryId: string;
   ministryName: string;
-  hasRoster: true;
   memberId: string;
   /** Funções cadastradas pelo membro neste ministério. */
   instruments: string[];
   needsRosterFunctions: boolean;
-  availabilityWindow: RosterAvailabilityWindowResponse;
   series: WorshipSeriesGroupResponse[];
   summary: {
     totalOpen: number;
@@ -212,13 +205,6 @@ export interface MySchedulePendingResponse {
 export interface MyMinistryScheduleResponse {
   ministryId: string;
   ministryName: string;
-  availabilityWindow: {
-    active: boolean;
-    periodType: RosterAvailabilityWindowResponse['periodType'];
-    periodStart: string | null;
-    periodEnd: string | null;
-    label: string | null;
-  };
   pendingAvailability: MySchedulePendingResponse[];
   upcomingAssignments: MyScheduleAssignmentResponse[];
   events: MyScheduleEventResponse[];
@@ -227,7 +213,6 @@ export interface MyMinistryScheduleResponse {
 }
 
 export interface MySchedulesResponse {
-  hasRosterMinistries: boolean;
   hasSchedule: boolean;
   churchWide: MyMinistryScheduleResponse | null;
   summary: {
@@ -254,20 +239,35 @@ export function toMinistryRoleResponse(
   };
 }
 
+export function toMinistryServiceFunctionResponse(
+  item: MinistryServiceFunction,
+): MinistryServiceFunctionResponse {
+  return {
+    id: item.id,
+    ministryId: item.ministryId,
+    label: item.label,
+    sortOrder: item.sortOrder,
+  };
+}
+
 export function toMinistryResponse(
-  ministry: Ministry & { roles: MinistryRole[] },
+  ministry: Ministry & {
+    roles: MinistryRole[];
+    serviceFunctions?: MinistryServiceFunction[];
+  },
 ): MinistryResponse {
   return {
     id: ministry.id,
     churchId: ministry.churchId,
     name: ministry.name,
     description: ministry.description,
-    hasRoster: ministry.hasRoster,
     isActive: ministry.isActive,
-    availabilityWindow: null,
     roles: ministry.roles
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map(toMinistryRoleResponse),
+    serviceFunctions: (ministry.serviceFunctions ?? [])
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(toMinistryServiceFunctionResponse),
     createdAt: ministry.createdAt.toISOString(),
     updatedAt: ministry.updatedAt.toISOString(),
   };

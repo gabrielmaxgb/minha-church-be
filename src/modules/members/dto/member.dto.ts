@@ -193,6 +193,12 @@ export class AssignMemberMinistryDto {
   startedAt?: string;
 }
 
+export class AckMinistryCatalogNotificationsDto {
+  @IsArray()
+  @IsString({ each: true })
+  ministryIds: string[];
+}
+
 export class ListMembersQueryDto {
   @IsOptional()
   @IsEnum(MemberStatus)

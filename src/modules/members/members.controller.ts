@@ -15,8 +15,11 @@ import { ChurchPermission } from '@prisma/client';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/auth.types';
 import {
   AssignMemberMinistryDto,
+  AckMinistryCatalogNotificationsDto,
   CreateMemberDto,
   ListMembersQueryDto,
   UpdateMemberDto,
@@ -39,6 +42,35 @@ export class MembersController {
     @Query() query: ListMembersQueryDto,
   ) {
     return this.membersService.findAll(churchId, query);
+  }
+
+  @Get('me')
+  findMine(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.membersService.findMine(user.sub, churchId);
+  }
+
+  @Get('me/ministry-notifications')
+  findMyMinistryNotifications(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.membersService.findMyMinistryNotifications(user.sub, churchId);
+  }
+
+  @Post('me/ministry-notifications/ack-catalog')
+  ackMinistryCatalogNotifications(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: AckMinistryCatalogNotificationsDto,
+  ) {
+    return this.membersService.ackMinistryCatalogNotifications(
+      user.sub,
+      churchId,
+      dto.ministryIds,
+    );
   }
 
   @Get(':memberId')

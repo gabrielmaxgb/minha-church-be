@@ -31,6 +31,8 @@ import {
   UpdateMinistryRoleDto,
   UpdateRosterProfileDto,
   UpdateRosterCollectionDto,
+  ReplaceMinistryServiceFunctionsDto,
+  UpdateMemberMinistryInstrumentsDto,
 } from './dto/ministry.dto';
 import { MinistriesService } from './ministries.service';
 
@@ -144,6 +146,46 @@ export class MinistriesController {
     @Param('ministryId') ministryId: string,
   ) {
     return this.ministriesService.listMembers(churchId, ministryId);
+  }
+
+  @Get(':ministryId/service-functions')
+  listServiceFunctions(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+  ) {
+    return this.ministriesService.listServiceFunctions(churchId, ministryId);
+  }
+
+  @Put(':ministryId/service-functions')
+  replaceServiceFunctions(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ReplaceMinistryServiceFunctionsDto,
+  ) {
+    return this.ministriesService.replaceServiceFunctions(
+      churchId,
+      ministryId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Patch(':ministryId/members/:memberId/instruments')
+  updateMemberInstruments(
+    @Param('churchId') churchId: string,
+    @Param('ministryId') ministryId: string,
+    @Param('memberId') memberId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateMemberMinistryInstrumentsDto,
+  ) {
+    return this.ministriesService.updateMemberInstruments(
+      churchId,
+      ministryId,
+      memberId,
+      user.sub,
+      dto,
+    );
   }
 
   @Get(':ministryId/roster/me')
