@@ -7,9 +7,13 @@ import { PrismaService } from '../../database/prisma.service';
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TRIAL_DAYS = 30;
 
-/** Mensagem exibida quando o trial expira e o recurso é bloqueado. */
+/** Mensagem exibida quando o trial expira e alterações são bloqueadas. */
 export const TRIAL_FEATURE_LOCKED_MESSAGE =
-  'Seu período de teste terminou. Assine um plano para criar novos ministérios, atividades e escalas. O cadastro de membros continua liberado.';
+  'Seu período de teste terminou. Você pode continuar consultando o painel e cadastrando membros. Para editar ministérios, atividades, comunicados e configurações da igreja, assine um plano.';
+
+/** Mensagem ao tentar liberar acesso/login de membro com trial expirado. */
+export const TRIAL_MEMBER_ACCESS_LOCKED_MESSAGE =
+  'Seu período de teste terminou. Você pode cadastrar e editar membros, mas liberar acesso ao sistema exige um plano ativo.';
 
 export interface SubscriptionSnapshot {
   status: SubscriptionStatus;
@@ -87,7 +91,7 @@ export class SubscriptionPolicyService {
     });
   }
 
-  /** Bloqueia recursos de crescimento/gestão quando o trial expira. */
+  /** Bloqueia alterações de gestão quando o trial expira (leitura continua liberada). */
   async assertCanUseGatedFeature(churchId: string): Promise<void> {
     if (!this.isEnforced()) {
       return;
@@ -97,6 +101,19 @@ export class SubscriptionPolicyService {
 
     if (state.featuresLocked) {
       throw new ForbiddenException(TRIAL_FEATURE_LOCKED_MESSAGE);
+    }
+  }
+
+  /** Bloqueia provisionamento de login/acesso para membros. */
+  async assertCanProvisionMemberAccess(churchId: string): Promise<void> {
+    if (!this.isEnforced()) {
+      return;
+    }
+
+    const state = await this.getState(churchId);
+
+    if (state.featuresLocked) {
+      throw new ForbiddenException(TRIAL_MEMBER_ACCESS_LOCKED_MESSAGE);
     }
   }
 }

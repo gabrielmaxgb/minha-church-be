@@ -19,6 +19,7 @@ import {
 import { resolveEmailCanonical } from '../../common/utils/canonical-email';
 import { PrismaService } from '../../database/prisma.service';
 import { OnboardingPolicyService } from '../../common/services/onboarding-policy.service';
+import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
@@ -63,6 +64,7 @@ export class MembersService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly onboardingPolicy: OnboardingPolicyService,
+    private readonly subscriptionPolicy: SubscriptionPolicyService,
   ) {}
 
   async findAll(
@@ -296,6 +298,8 @@ export class MembersService {
 
     let account: MemberAccountCredentials;
 
+    await this.subscriptionPolicy.assertCanProvisionMemberAccess(churchId);
+
     const member = await this.prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
         data: memberData,
@@ -367,6 +371,14 @@ export class MembersService {
     const maritalStatus = dto.maritalStatus ?? existing.maritalStatus;
     const previousStatus = existing.status;
     let account: MemberAccountCredentials | undefined;
+
+    if (
+      nextStatus === MemberStatus.active &&
+      previousStatus !== MemberStatus.active &&
+      !existing.userId
+    ) {
+      await this.subscriptionPolicy.assertCanProvisionMemberAccess(churchId);
+    }
 
     const member = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.member.update({
@@ -478,6 +490,10 @@ export class MembersService {
       throw new BadRequestException(
         'Cadastre e-mail ou CPF antes de receber como membro.',
       );
+    }
+
+    if (!member.userId) {
+      await this.subscriptionPolicy.assertCanProvisionMemberAccess(churchId);
     }
 
     let account: MemberAccountCredentials | undefined;

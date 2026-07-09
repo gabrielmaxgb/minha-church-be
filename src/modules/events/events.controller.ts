@@ -15,11 +15,7 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import {
-  ActivePlanGuard,
-  ChurchAccessGuard,
-  PermissionsGuard,
-} from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard, TrialWriteGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -35,7 +31,7 @@ import { UpdateEventAvailabilityDto } from '../ministries/dto/ministry.dto';
 import { EventsService } from './events.service';
 
 @Controller('churches/:churchId/events')
-@UseGuards(JwtAuthGuard, ChurchAccessGuard)
+@UseGuards(JwtAuthGuard, ChurchAccessGuard, TrialWriteGuard)
 export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
@@ -86,7 +82,6 @@ export class EventsController {
   }
 
   @Post()
-  @UseGuards(ActivePlanGuard)
   create(
     @Param('churchId') churchId: string,
     @CurrentUser() user: JwtPayload,

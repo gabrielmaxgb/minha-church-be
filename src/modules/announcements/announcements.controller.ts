@@ -12,7 +12,8 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
+import { AllowWhenTrialExpired } from '../../common/decorators/allow-when-trial-expired.decorator';
+import { ChurchAccessGuard, PermissionsGuard, TrialWriteGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
@@ -23,7 +24,7 @@ import {
 } from './dto/announcement.dto';
 
 @Controller('churches/:churchId/announcements')
-@UseGuards(JwtAuthGuard, ChurchAccessGuard)
+@UseGuards(JwtAuthGuard, ChurchAccessGuard, TrialWriteGuard)
 export class AnnouncementsController {
   constructor(private readonly announcementsService: AnnouncementsService) {}
 
@@ -83,6 +84,7 @@ export class AnnouncementsController {
     ChurchPermission.communication_access,
     ChurchPermission.communication_manage,
   )
+  @AllowWhenTrialExpired()
   async markAllRead(
     @Param('churchId') churchId: string,
     @CurrentUser() user: JwtPayload,
@@ -97,6 +99,7 @@ export class AnnouncementsController {
     ChurchPermission.communication_access,
     ChurchPermission.communication_manage,
   )
+  @AllowWhenTrialExpired()
   async markRead(
     @Param('churchId') churchId: string,
     @Param('announcementId') announcementId: string,
