@@ -37,7 +37,7 @@ export class AnnouncementsController {
     @Param('churchId') churchId: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.listForViewer(churchId, user.sub);
+    return this.announcementsService.listForUser(churchId, user.sub);
   }
 
   @Get('unread-count')

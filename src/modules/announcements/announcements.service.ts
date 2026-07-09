@@ -5,9 +5,11 @@ import {
 } from '@nestjs/common';
 import {
   AnnouncementAudienceType,
+  ChurchPermission,
   Prisma,
 } from '@prisma/client';
 
+import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
 import {
   AnnouncementResponse,
@@ -34,7 +36,55 @@ const announcementInclude = {
 
 @Injectable()
 export class AnnouncementsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly churchPermissions: ChurchPermissionsService,
+  ) {}
+
+  async listForUser(
+    churchId: string,
+    userId: string,
+  ): Promise<AnnouncementResponse[]> {
+    const canManage = await this.churchPermissions.hasPermission(
+      userId,
+      churchId,
+      ChurchPermission.communication_manage,
+    );
+
+    if (canManage) {
+      return this.listAllForManager(churchId, userId);
+    }
+
+    return this.listForViewer(churchId, userId);
+  }
+
+  /** Gestores e proprietários veem todo o histórico da igreja. */
+  async listAllForManager(
+    churchId: string,
+    userId: string,
+  ): Promise<AnnouncementResponse[]> {
+    const now = new Date();
+
+    const announcements = await this.prisma.announcement.findMany({
+      where: { churchId, deletedAt: null },
+      include: {
+        ...announcementInclude,
+        reads: { where: { userId }, select: { userId: true } },
+      },
+      orderBy: [
+        { pinned: 'desc' },
+        { publishedAt: 'desc' },
+        { createdAt: 'desc' },
+      ],
+    });
+
+    return announcements.map((announcement) => ({
+      ...this.toResponse(announcement, now),
+      isRead:
+        announcement.createdByUserId === userId ||
+        announcement.reads.length > 0,
+    }));
+  }
 
   /** Comunicados endereçados ao usuário (igreja inteira + seus ministérios). */
   async listForViewer(
