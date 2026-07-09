@@ -59,7 +59,9 @@ export class AnnouncementsService {
 
     return announcements.map((announcement) => ({
       ...this.toResponse(announcement, now),
-      isRead: announcement.reads.length > 0,
+      isRead:
+        announcement.createdByUserId === userId ||
+        announcement.reads.length > 0,
     }));
   }
 
@@ -258,6 +260,7 @@ export class AnnouncementsService {
       where: {
         ...this.buildViewerWhere(churchId, ministryIds, now),
         reads: { none: { userId } },
+        NOT: { createdByUserId: userId },
       },
     });
   }
