@@ -19,6 +19,7 @@ import type { AuthResponse } from './auth.types';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
+import { RegisterChurchDto } from './dto/register-church.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -47,6 +48,34 @@ export class AuthController {
     this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
 
     return session;
+  }
+
+  @Post('register-church')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 3, ttl: 3_600_000 } })
+  async registerChurch(
+    @Body() dto: RegisterChurchDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
+    const { session, tokens } = await this.authService.registerChurch(dto);
+
+    this.authCookiesService.setAuthCookies(res, tokens, session.church.id);
+
+    return session;
+  }
+
+  @Get('verify-email')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  verifyEmail(@Query('token') token: string) {
+    return this.authService.verifyEmail(token ?? '');
+  }
+
+  @Post('resend-verification')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 3_600_000 } })
+  resendVerification(@CurrentUser() user: JwtPayload) {
+    return this.authService.resendVerificationEmail(user.sub);
   }
 
   @Get('me')

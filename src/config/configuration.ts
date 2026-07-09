@@ -16,4 +16,38 @@ export default () => ({
       process.env.RESEND_FROM_EMAIL ??
       'MinhaChurch <nao-responda@send.minhachurch.com>',
   },
+  onboarding: {
+    enforceCanonicalEmail: readBooleanFlag('ENFORCE_CANONICAL_EMAIL', true),
+    emailVerificationRequired: readBooleanFlag(
+      'EMAIL_VERIFICATION_REQUIRED',
+      true,
+    ),
+    unverifiedMemberLimit: parseInt(
+      process.env.UNVERIFIED_MEMBER_LIMIT ?? '5',
+      10,
+    ),
+  },
+  subscription: {
+    trialDays: parseInt(process.env.TRIAL_DAYS ?? '30', 10),
+    enforcement: readBooleanFlag('TRIAL_ENFORCEMENT', true),
+  },
 });
+
+function readBooleanFlag(
+  envName: string,
+  productionDefault: boolean,
+): boolean {
+  const raw = process.env[envName]?.trim().toLowerCase();
+
+  if (raw === 'true') {
+    return true;
+  }
+
+  if (raw === 'false') {
+    return false;
+  }
+
+  return (process.env.NODE_ENV ?? 'development') === 'production'
+    ? productionDefault
+    : !productionDefault;
+}

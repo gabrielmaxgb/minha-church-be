@@ -14,7 +14,7 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard, TrialWriteGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -37,7 +37,7 @@ import {
 import { MinistriesService } from './ministries.service';
 
 @Controller('churches/:churchId/ministries')
-@UseGuards(JwtAuthGuard, ChurchAccessGuard)
+@UseGuards(JwtAuthGuard, ChurchAccessGuard, TrialWriteGuard)
 export class MinistriesController {
   constructor(private readonly ministriesService: MinistriesService) {}
 

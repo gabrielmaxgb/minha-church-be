@@ -1,4 +1,4 @@
-import { MemberStatus, PrismaClient } from '@prisma/client';
+import { MemberStatus, PrismaClient, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
@@ -225,12 +225,14 @@ async function ensureChurch(
     update: {
       name: church.name,
       slug: church.slug,
+      subscriptionStatus: SubscriptionStatus.active,
     },
     create: {
       id: church.id,
       name: church.name,
       slug: church.slug,
       memberCount: 0,
+      subscriptionStatus: SubscriptionStatus.active,
     },
   });
 
@@ -242,14 +244,20 @@ async function upsertDemoUser(
   demoUser: (typeof DEMO_USERS)[number],
   passwordHash: string,
 ) {
+  const email = demoUser.email.trim().toLowerCase();
+
   return prisma.user.upsert({
     where: { email: demoUser.email },
     update: {
       name: demoUser.name,
       passwordHash,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
     },
     create: {
       email: demoUser.email,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
       name: demoUser.name,
       passwordHash,
     },
@@ -488,14 +496,20 @@ async function upsertMockMemberWithLogin(
   passwordHash: string,
   mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
 ) {
+  const email = mockMember.email.trim().toLowerCase();
+
   const user = await prisma.user.upsert({
     where: { email: mockMember.email },
     update: {
       name: mockMember.name,
       passwordHash,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
     },
     create: {
       email: mockMember.email,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
       name: mockMember.name,
       passwordHash,
     },

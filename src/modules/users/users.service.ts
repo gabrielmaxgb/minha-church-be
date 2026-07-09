@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { isInternalLoginEmail } from '../../common/utils/login-email';
+import { resolveEmailCanonical } from '../../common/utils/canonical-email';
 import { normalizeCpf } from '../../common/utils/cpf';
 import { PrismaService } from '../../database/prisma.service';
 import type { ChurchMembershipRecord, UserRecord } from './users.types';
@@ -246,6 +247,7 @@ export class UsersService {
     name: string;
     avatarUrl: string | null;
     mustChangePassword: boolean;
+    emailVerifiedAt?: Date | null;
   }): UserRecord {
     return {
       id: user.id,
@@ -255,6 +257,7 @@ export class UsersService {
       name: user.name,
       avatarUrl: user.avatarUrl ?? undefined,
       mustChangePassword: user.mustChangePassword,
+      emailVerifiedAt: user.emailVerifiedAt ?? null,
     };
   }
 }

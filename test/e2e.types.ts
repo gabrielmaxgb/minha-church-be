@@ -11,5 +11,6 @@ export interface E2eLoginResponse {
   permissions?: {
     members: { manage: boolean };
     activities: { createChurchWide: boolean };
+    settings?: { access: boolean };
   };
 }
