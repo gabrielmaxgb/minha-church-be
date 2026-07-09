@@ -555,6 +555,123 @@ export class ChurchMembershipsService {
     return response;
   }
 
+  async transferOwnership(
+    churchId: string,
+    targetUserId: string,
+    actorUserId: string,
+  ): Promise<ChurchMembershipResponse> {
+    if (targetUserId === actorUserId) {
+      throw new BadRequestException(
+        'Escolha outra pessoa para receber a propriedade.',
+      );
+    }
+
+    const actorAccess = await this.churchPermissions.getMembershipAccess(
+      actorUserId,
+      churchId,
+    );
+
+    if (!actorAccess?.isOwner) {
+      throw new ForbiddenException(
+        'Somente o proprietário pode transferir a propriedade.',
+      );
+    }
+
+    const [actorMembership, targetMembership] = await Promise.all([
+      this.prisma.churchMembership.findUnique({
+        where: {
+          userId_churchId: { userId: actorUserId, churchId },
+        },
+      }),
+      this.prisma.churchMembership.findUnique({
+        where: {
+          userId_churchId: { userId: targetUserId, churchId },
+        },
+        include: membershipInclude,
+      }),
+    ]);
+
+    if (!actorMembership || !targetMembership) {
+      throw new NotFoundException('Usuário não encontrado nesta igreja.');
+    }
+
+    if (targetMembership.isOwner) {
+      throw new BadRequestException(
+        'Este usuário já é proprietário da igreja.',
+      );
+    }
+
+    const memberRole = await this.prisma.churchRole.findFirst({
+      where: { churchId, systemKey: 'member' },
+      select: { id: true, name: true },
+    });
+
+    if (!memberRole) {
+      throw new BadRequestException(
+        'Cargo de membro não encontrado nesta igreja.',
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.churchMembership.update({
+        where: { id: actorMembership.id },
+        data: { isOwner: false },
+      });
+
+      await tx.churchMembershipRole.createMany({
+        data: [
+          {
+            membershipId: actorMembership.id,
+            roleId: memberRole.id,
+          },
+        ],
+        skipDuplicates: true,
+      });
+
+      return tx.churchMembership.update({
+        where: { id: targetMembership.id },
+        data: { isOwner: true },
+        include: membershipInclude,
+      });
+    });
+
+    const response = this.toResponse(updated, churchId);
+
+    const [actor, target] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: actorUserId },
+        select: { name: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { name: true },
+      }),
+    ]);
+
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.membershipUpdated,
+      targetType: AUDIT_TARGET_TYPES.membership,
+      targetId: targetMembership.id,
+      summary: `${actor?.name ?? 'Usuário'} transferiu a propriedade da igreja para ${target?.name ?? 'outro usuário'}`,
+      metadata: {
+        targetUserId,
+        targetEmail: targetMembership.user.email,
+        isOwner: { before: false, after: true },
+        transferredFromUserId: actorUserId,
+        formerOwnerRole: memberRole.name,
+      },
+    });
+
+    await this.membersService.ensurePastoralRecordForUser(
+      churchId,
+      targetUserId,
+    );
+
+    return response;
+  }
+
   private async ensureAnotherOwnerRemains(
     churchId: string,
     excludedUserId: string,

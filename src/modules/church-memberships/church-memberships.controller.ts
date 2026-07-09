@@ -64,6 +64,19 @@ export class ChurchMembershipsController {
     );
   }
 
+  @Post(':userId/transfer-ownership')
+  transferOwnership(
+    @Param('churchId') churchId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.churchMembershipsService.transferOwnership(
+      churchId,
+      userId,
+      actor.sub,
+    );
+  }
+
   @Patch(':userId')
   updateMembership(
     @Param('churchId') churchId: string,

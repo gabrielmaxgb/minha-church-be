@@ -46,6 +46,7 @@ export class MinistriesController {
   @RequirePermission(
     ChurchPermission.ministries_access,
     ChurchPermission.ministries_manage,
+    ChurchPermission.communication_manage,
   )
   findAll(
     @Param('churchId') churchId: string,
