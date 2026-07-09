@@ -302,6 +302,32 @@ export class AnnouncementsService {
     });
   }
 
+  async markAllAsRead(churchId: string, userId: string): Promise<void> {
+    const ministryIds = await this.getViewerMinistryIds(churchId, userId);
+    const now = new Date();
+
+    const unread = await this.prisma.announcement.findMany({
+      where: {
+        ...this.buildViewerWhere(churchId, ministryIds, now),
+        reads: { none: { userId } },
+        NOT: { createdByUserId: userId },
+      },
+      select: { id: true },
+    });
+
+    if (unread.length === 0) {
+      return;
+    }
+
+    await this.prisma.announcementRead.createMany({
+      data: unread.map((announcement) => ({
+        announcementId: announcement.id,
+        userId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
   async unreadCount(churchId: string, userId: string): Promise<number> {
     const ministryIds = await this.getViewerMinistryIds(churchId, userId);
     const now = new Date();

@@ -76,6 +76,20 @@ export class AnnouncementsController {
     return this.announcementsService.create(churchId, user.sub, dto);
   }
 
+  @Post('read-all')
+  @HttpCode(204)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.communication_access,
+    ChurchPermission.communication_manage,
+  )
+  async markAllRead(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.announcementsService.markAllAsRead(churchId, user.sub);
+  }
+
   @Post(':announcementId/read')
   @HttpCode(204)
   @UseGuards(PermissionsGuard)
