@@ -68,10 +68,20 @@ export class DashboardService {
         churchId,
       );
 
+      const monthEnd = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+
       const eventWhere = {
         churchId,
         deletedAt: null,
-        startsAt: { gte: now },
+        startsAt: { gte: now, lte: monthEnd },
         ...(visibilityWhere ?? {}),
       };
 

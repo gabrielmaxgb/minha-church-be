@@ -1,6 +1,10 @@
 import type { PrismaClient } from '@prisma/client';
 
-import { normalizeRosterRoleValue } from './roster-roles';
+import {
+  DEFAULT_MINISTRY_SERVICE_FUNCTION,
+  isProtectedMinistryServiceFunction,
+  normalizeRosterRoleValue,
+} from './roster-roles';
 
 export interface MinistryServiceFunctionItem {
   id: string;
@@ -24,6 +28,14 @@ export function normalizeServiceFunctionLabels(labels: string[]): string[] {
     });
 }
 
+export function ensureDefaultServiceFunctionLabels(labels: string[]): string[] {
+  const normalized = normalizeServiceFunctionLabels(labels).filter(
+    (label) => label !== DEFAULT_MINISTRY_SERVICE_FUNCTION,
+  );
+
+  return [DEFAULT_MINISTRY_SERVICE_FUNCTION, ...normalized];
+}
+
 export function filterMemberInstrumentsToCatalog(
   instruments: string[],
   catalogLabels: string[],
@@ -33,6 +45,46 @@ export function filterMemberInstrumentsToCatalog(
   return normalizeServiceFunctionLabels(instruments).filter((item) =>
     allowed.has(item),
   );
+}
+
+/** Funções iniciais ao entrar em um ministério. */
+export function defaultMemberMinistryInstruments(
+  catalogLabels?: string[],
+): string[] {
+  const catalog =
+    catalogLabels && catalogLabels.length > 0
+      ? catalogLabels
+      : [DEFAULT_MINISTRY_SERVICE_FUNCTION];
+
+  return filterMemberInstrumentsToCatalog(
+    [DEFAULT_MINISTRY_SERVICE_FUNCTION],
+    catalog,
+  );
+}
+
+/** Garante Voluntário nas funções do membro quando existir no catálogo. */
+export function ensureMemberMinistryInstruments(
+  instruments: string[],
+  catalogLabels: string[],
+): string[] {
+  const catalog =
+    catalogLabels.length > 0
+      ? catalogLabels
+      : [DEFAULT_MINISTRY_SERVICE_FUNCTION];
+  const allowed = new Set(
+    catalog.map((item) => normalizeRosterRoleValue(item)),
+  );
+
+  if (!allowed.has(DEFAULT_MINISTRY_SERVICE_FUNCTION)) {
+    return filterMemberInstrumentsToCatalog(instruments, catalogLabels);
+  }
+
+  const filtered = filterMemberInstrumentsToCatalog(instruments, catalogLabels);
+  const withoutDefault = filtered.filter(
+    (label) => label !== DEFAULT_MINISTRY_SERVICE_FUNCTION,
+  );
+
+  return [DEFAULT_MINISTRY_SERVICE_FUNCTION, ...withoutDefault];
 }
 
 export async function listMinistryServiceFunctions(
@@ -56,7 +108,7 @@ export async function replaceMinistryServiceFunctions(
   ministryId: string,
   labels: string[],
 ): Promise<MinistryServiceFunctionItem[]> {
-  const normalized = normalizeServiceFunctionLabels(labels);
+  const normalized = ensureDefaultServiceFunctionLabels(labels);
   const existing = await prisma.ministryServiceFunction.findMany({
     where: { ministryId },
     orderBy: { sortOrder: 'asc' },
@@ -68,7 +120,11 @@ export async function replaceMinistryServiceFunctions(
   const nextSignature = normalized.join('\u0001');
   const catalogChanged = previousSignature !== nextSignature;
 
-  const toDelete = existing.filter((item) => !nextLabelSet.has(item.label));
+  const toDelete = existing.filter(
+    (item) =>
+      !nextLabelSet.has(item.label) &&
+      !isProtectedMinistryServiceFunction(item.label),
+  );
   const toCreate = normalized.filter((label) => !existingByLabel.has(label));
 
   await prisma.$transaction(async (tx) => {

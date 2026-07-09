@@ -1,6 +1,13 @@
 /** Função padrão quando a atividade da igreja não define vagas por função. */
 export const CHURCH_WIDE_DEFAULT_ROSTER_ROLE = 'voluntario';
 
+/** Função obrigatória em todo ministério (catálogo de funções de serviço). */
+export const DEFAULT_MINISTRY_SERVICE_FUNCTION = CHURCH_WIDE_DEFAULT_ROSTER_ROLE;
+
+export function isProtectedMinistryServiceFunction(label: string): boolean {
+  return normalizeRosterRoleValue(label) === DEFAULT_MINISTRY_SERVICE_FUNCTION;
+}
+
 export const ROSTER_ROLE_PRESETS = [
   { id: CHURCH_WIDE_DEFAULT_ROSTER_ROLE, label: 'Voluntário' },
   { id: 'reception', label: 'Recepção' },

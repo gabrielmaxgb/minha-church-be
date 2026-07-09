@@ -17,6 +17,7 @@ import {
   normalizeCpf,
 } from '../../common/utils/cpf';
 import { PrismaService } from '../../database/prisma.service';
+import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
   AckMinistryCatalogNotificationsDto,
@@ -519,6 +520,14 @@ export class MembersService {
       }
     }
 
+    const catalog = await this.prisma.ministryServiceFunction.findMany({
+      where: { ministryId: dto.ministryId },
+      select: { label: true },
+    });
+    const defaultInstruments = defaultMemberMinistryInstruments(
+      catalog.map((item) => item.label),
+    );
+
     await this.prisma.$transaction(async (tx) => {
       const link = await tx.memberMinistry.upsert({
         where: {
@@ -535,8 +544,16 @@ export class MembersService {
           memberId,
           ministryId: dto.ministryId,
           startedAt: parseOptionalDate(dto.startedAt) ?? new Date(),
+          instruments: defaultInstruments,
         },
       });
+
+      if (link.instruments.length === 0) {
+        await tx.memberMinistry.update({
+          where: { id: link.id },
+          data: { instruments: defaultInstruments },
+        });
+      }
 
       if (uniqueRoleIds !== undefined) {
         await tx.memberMinistryRole.deleteMany({

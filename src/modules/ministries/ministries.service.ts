@@ -31,11 +31,12 @@ import {
   UpdateMemberMinistryInstrumentsDto,
 } from './dto/ministry.dto';
 import {
-  filterMemberInstrumentsToCatalog,
+  ensureMemberMinistryInstruments,
   listMinistryServiceFunctions,
   replaceMinistryServiceFunctions,
 } from './ministry-service-functions';
 import {
+  DEFAULT_MINISTRY_SERVICE_FUNCTION,
   filterRoleLabelsForEventSlots,
   isAllowedMemberRosterRole,
   needsRosterFunctions,
@@ -145,8 +146,14 @@ export class MinistriesService {
         churchId,
         name: dto.name.trim(),
         description: dto.description,
+        serviceFunctions: {
+          create: {
+            label: DEFAULT_MINISTRY_SERVICE_FUNCTION,
+            sortOrder: 0,
+          },
+        },
       },
-      include: { roles: true },
+      include: { roles: true, serviceFunctions: true },
     });
 
     return toMinistryResponse(ministry);
@@ -397,7 +404,7 @@ export class MinistriesService {
     }
 
     const catalog = await listMinistryServiceFunctions(this.prisma, ministryId);
-    const instruments = filterMemberInstrumentsToCatalog(
+    const instruments = ensureMemberMinistryInstruments(
       dto.instruments,
       catalog.map((item) => item.label),
     );
@@ -1058,7 +1065,7 @@ export class MinistriesService {
     await this.prisma.memberMinistry.update({
       where: { id: memberLink.id },
       data: {
-        instruments: filterMemberInstrumentsToCatalog(
+        instruments: ensureMemberMinistryInstruments(
           dto.instruments,
           (
             await listMinistryServiceFunctions(this.prisma, ministryId)
