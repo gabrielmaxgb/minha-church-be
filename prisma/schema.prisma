@@ -44,6 +44,13 @@ enum ChurchPlanTier {
   enterprise
 }
 
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  canceled
+}
+
 enum MemberStatus {
   visitor
   active
@@ -110,6 +117,8 @@ model Church {
   slug        String         @unique
   memberCount Int            @default(0) @map("member_count")
   planTier    ChurchPlanTier @default(starter) @map("plan_tier")
+  subscriptionStatus SubscriptionStatus @default(trialing) @map("subscription_status")
+  trialEndsAt DateTime?      @map("trial_ends_at")
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
 

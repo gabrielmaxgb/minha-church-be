@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { SubscriptionStatus } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 import type { ChurchRecord } from './churches.types';
@@ -36,12 +37,16 @@ export class ChurchesService {
     name: string;
     slug: string;
     memberCount: number;
+    subscriptionStatus: SubscriptionStatus;
+    trialEndsAt: Date | null;
   }): ChurchRecord {
     return {
       id: church.id,
       name: church.name,
       slug: church.slug,
       memberCount: church.memberCount,
+      subscriptionStatus: church.subscriptionStatus,
+      trialEndsAt: church.trialEndsAt,
     };
   }
 }

@@ -13,6 +13,7 @@ import {
 import { seedDefaultChurchRoles } from '../../common/permissions/seed-default-church-roles';
 import { AuditService } from '../../common/services/audit.service';
 import { OnboardingPolicyService } from '../../common/services/onboarding-policy.service';
+import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import {
   buildUniqueChurchSlug,
   slugifyChurchName,
@@ -42,6 +43,7 @@ export class ChurchRegistrationService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly onboardingPolicy: OnboardingPolicyService,
+    private readonly subscriptionPolicy: SubscriptionPolicyService,
   ) {}
 
   async register(input: RegisterChurchInput): Promise<RegisterChurchResult> {
@@ -75,6 +77,7 @@ export class ChurchRegistrationService {
 
     const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
     const acceptedAt = new Date();
+    const trialEndsAt = this.subscriptionPolicy.buildTrialEndsAt(acceptedAt);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const slug = await this.resolveUniqueSlug(tx, churchName);
@@ -83,6 +86,7 @@ export class ChurchRegistrationService {
           name: churchName,
           slug,
           memberCount: 0,
+          trialEndsAt,
         },
       });
 

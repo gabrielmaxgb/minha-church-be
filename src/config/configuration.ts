@@ -17,8 +17,8 @@ export default () => ({
       'MinhaChurch <nao-responda@send.minhachurch.com>',
   },
   onboarding: {
-    enforceCanonicalEmail: readOnboardingFlag('ENFORCE_CANONICAL_EMAIL', true),
-    emailVerificationRequired: readOnboardingFlag(
+    enforceCanonicalEmail: readBooleanFlag('ENFORCE_CANONICAL_EMAIL', true),
+    emailVerificationRequired: readBooleanFlag(
       'EMAIL_VERIFICATION_REQUIRED',
       true,
     ),
@@ -27,9 +27,13 @@ export default () => ({
       10,
     ),
   },
+  subscription: {
+    trialDays: parseInt(process.env.TRIAL_DAYS ?? '30', 10),
+    enforcement: readBooleanFlag('TRIAL_ENFORCEMENT', true),
+  },
 });
 
-function readOnboardingFlag(
+function readBooleanFlag(
   envName: string,
   productionDefault: boolean,
 ): boolean {

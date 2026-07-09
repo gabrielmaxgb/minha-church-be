@@ -14,7 +14,11 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
+import {
+  ActivePlanGuard,
+  ChurchAccessGuard,
+  PermissionsGuard,
+} from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -70,7 +74,7 @@ export class MinistriesController {
   }
 
   @Post()
-  @UseGuards(PermissionsGuard)
+  @UseGuards(PermissionsGuard, ActivePlanGuard)
   @RequirePermission(ChurchPermission.ministries_manage)
   create(@Param('churchId') churchId: string, @Body() dto: CreateMinistryDto) {
     return this.ministriesService.create(churchId, dto);
@@ -276,6 +280,7 @@ export class MinistriesController {
   }
 
   @Post(':ministryId/events')
+  @UseGuards(ActivePlanGuard)
   createEvent(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,

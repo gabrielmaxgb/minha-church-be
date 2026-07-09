@@ -11,11 +11,18 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
 import { OnboardingPolicyService } from '../../common/services/onboarding-policy.service';
+import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchesService } from '../churches/churches.service';
 import { ChurchRegistrationService } from '../churches/church-registration.service';
+import type { ChurchRecord } from '../churches/churches.types';
 import { UsersService } from '../users/users.service';
-import type { AuthResponse, IssuedTokens, JwtPayload } from './auth.types';
+import type {
+  AuthChurchResponse,
+  AuthResponse,
+  IssuedTokens,
+  JwtPayload,
+} from './auth.types';
 import { LoginDto } from './dto/login.dto';
 import { RegisterChurchDto } from './dto/register-church.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -37,6 +44,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly onboardingPolicy: OnboardingPolicyService,
+    private readonly subscriptionPolicy: SubscriptionPolicyService,
   ) {}
 
   async login(
@@ -455,17 +463,39 @@ export class AuthService {
         name: church.name,
         slug: church.slug,
         memberCount: church.memberCount,
+        ...this.buildSubscriptionFields(church),
       },
       churches: churches.map((item) => ({
         id: item.id,
         name: item.name,
         slug: item.slug,
         memberCount: item.memberCount,
+        ...this.buildSubscriptionFields(item),
       })),
       permissions,
       tokens: {
         expiresIn: this.getAccessExpiresInSeconds(),
       },
+    };
+  }
+
+  private buildSubscriptionFields(church: {
+    subscriptionStatus: ChurchRecord['subscriptionStatus'];
+    trialEndsAt: Date | null;
+  }): Pick<
+    AuthChurchResponse,
+    'subscriptionStatus' | 'trialEndsAt' | 'trialDaysRemaining' | 'featuresLocked'
+  > {
+    const state = this.subscriptionPolicy.evaluate({
+      status: church.subscriptionStatus,
+      trialEndsAt: church.trialEndsAt,
+    });
+
+    return {
+      subscriptionStatus: state.status,
+      trialEndsAt: state.trialEndsAt,
+      trialDaysRemaining: state.trialDaysRemaining,
+      featuresLocked: state.featuresLocked,
     };
   }
 

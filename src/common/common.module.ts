@@ -5,10 +5,12 @@ import {
   ChurchAccessGuard,
   PermissionsGuard,
 } from './guards/church-access.guard';
+import { ActivePlanGuard } from './guards/active-plan.guard';
 import { ChurchPermissionsService } from './services/church-permissions.service';
 import { AuditService } from './services/audit.service';
 import { EmailService } from './services/email.service';
 import { OnboardingPolicyService } from './services/onboarding-policy.service';
+import { SubscriptionPolicyService } from './services/subscription-policy.service';
 import { PasswordCredentialsService } from './services/password-credentials.service';
 
 @Global()
@@ -17,19 +19,23 @@ import { PasswordCredentialsService } from './services/password-credentials.serv
   providers: [
     ChurchAccessGuard,
     PermissionsGuard,
+    ActivePlanGuard,
     ChurchPermissionsService,
     AuditService,
     EmailService,
     OnboardingPolicyService,
+    SubscriptionPolicyService,
     PasswordCredentialsService,
   ],
   exports: [
     ChurchAccessGuard,
     PermissionsGuard,
+    ActivePlanGuard,
     ChurchPermissionsService,
     AuditService,
     EmailService,
     OnboardingPolicyService,
+    SubscriptionPolicyService,
     PasswordCredentialsService,
   ],
 })

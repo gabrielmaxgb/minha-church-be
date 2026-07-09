@@ -1,4 +1,4 @@
-import { MemberStatus, PrismaClient } from '@prisma/client';
+import { MemberStatus, PrismaClient, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
@@ -225,12 +225,14 @@ async function ensureChurch(
     update: {
       name: church.name,
       slug: church.slug,
+      subscriptionStatus: SubscriptionStatus.active,
     },
     create: {
       id: church.id,
       name: church.name,
       slug: church.slug,
       memberCount: 0,
+      subscriptionStatus: SubscriptionStatus.active,
     },
   });
 

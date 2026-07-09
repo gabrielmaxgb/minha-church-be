@@ -1,3 +1,5 @@
+import type { SubscriptionStatus } from '@prisma/client';
+
 import type { UserPermissions } from '../../common/types/user-permissions';
 
 export interface JwtPayload {
@@ -30,6 +32,10 @@ export interface AuthChurchResponse {
   name: string;
   slug: string;
   memberCount?: number;
+  subscriptionStatus: SubscriptionStatus;
+  trialEndsAt: string | null;
+  trialDaysRemaining: number | null;
+  featuresLocked: boolean;
 }
 
 export interface AuthTokensResponse {
