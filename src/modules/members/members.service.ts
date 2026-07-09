@@ -16,7 +16,9 @@ import {
   isValidCpf,
   normalizeCpf,
 } from '../../common/utils/cpf';
+import { resolveEmailCanonical } from '../../common/utils/canonical-email';
 import { PrismaService } from '../../database/prisma.service';
+import { OnboardingPolicyService } from '../../common/services/onboarding-policy.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
@@ -60,6 +62,7 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly onboardingPolicy: OnboardingPolicyService,
   ) {}
 
   async findAll(
@@ -218,6 +221,8 @@ export class MembersService {
     churchId: string,
     dto: CreateMemberDto,
   ): Promise<CreateMemberResponse> {
+    await this.onboardingPolicy.assertCanAddMember(churchId);
+
     const email = dto.email?.trim().toLowerCase() || null;
     const cpf = dto.cpf ? normalizeCpf(dto.cpf) : null;
     const status = dto.status ?? MemberStatus.visitor;
@@ -764,6 +769,11 @@ export class MembersService {
     const user = await tx.user.create({
       data: {
         email: userEmail,
+        emailCanonical: resolveEmailCanonical(
+          userEmail,
+          this.onboardingPolicy.isCanonicalEmailEnforced(),
+        ),
+        emailVerifiedAt: new Date(),
         cpf,
         name: member.name,
         passwordHash,

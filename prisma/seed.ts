@@ -242,14 +242,20 @@ async function upsertDemoUser(
   demoUser: (typeof DEMO_USERS)[number],
   passwordHash: string,
 ) {
+  const email = demoUser.email.trim().toLowerCase();
+
   return prisma.user.upsert({
     where: { email: demoUser.email },
     update: {
       name: demoUser.name,
       passwordHash,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
     },
     create: {
       email: demoUser.email,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
       name: demoUser.name,
       passwordHash,
     },
@@ -488,14 +494,20 @@ async function upsertMockMemberWithLogin(
   passwordHash: string,
   mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
 ) {
+  const email = mockMember.email.trim().toLowerCase();
+
   const user = await prisma.user.upsert({
     where: { email: mockMember.email },
     update: {
       name: mockMember.name,
       passwordHash,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
     },
     create: {
       email: mockMember.email,
+      emailCanonical: email,
+      emailVerifiedAt: new Date(),
       name: mockMember.name,
       passwordHash,
     },

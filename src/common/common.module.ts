@@ -8,6 +8,7 @@ import {
 import { ChurchPermissionsService } from './services/church-permissions.service';
 import { AuditService } from './services/audit.service';
 import { EmailService } from './services/email.service';
+import { OnboardingPolicyService } from './services/onboarding-policy.service';
 import { PasswordCredentialsService } from './services/password-credentials.service';
 
 @Global()
@@ -19,6 +20,7 @@ import { PasswordCredentialsService } from './services/password-credentials.serv
     ChurchPermissionsService,
     AuditService,
     EmailService,
+    OnboardingPolicyService,
     PasswordCredentialsService,
   ],
   exports: [
@@ -27,6 +29,7 @@ import { PasswordCredentialsService } from './services/password-credentials.serv
     ChurchPermissionsService,
     AuditService,
     EmailService,
+    OnboardingPolicyService,
     PasswordCredentialsService,
   ],
 })

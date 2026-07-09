@@ -86,11 +86,57 @@ describe('Auth (e2e)', () => {
     expect(meBody.permissions?.activities.createChurchWide).toBe(true);
   });
 
+  it('POST /auth/register-church creates church, owner session and cookies', async () => {
+    const ownerEmail = `onboarding-${Date.now()}@example.com`;
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Igreja Teste Onboarding',
+        ownerName: 'Pastor Teste',
+        ownerEmail,
+        password: 'senha-forte',
+        acceptTerms: true,
+      })
+      .expect(200);
+
+    const body = response.body as E2eLoginResponse & {
+      user: { email: string; isOwner?: boolean };
+      church: { id: string; name?: string; slug?: string };
+    };
+
+    expect(body.user.email).toBe(ownerEmail);
+    expect(body.user.isOwner).toBe(true);
+    expect(body.church.name).toBe('Igreja Teste Onboarding');
+    expect(body.church.slug).toMatch(/^igreja-teste-onboarding/);
+    expect(body.permissions?.members.manage).toBe(true);
+    expect(body.permissions?.settings?.access).toBe(true);
+
+    const cookies = response.headers["set-cookie"] as string[] | undefined;
+
+    expect(cookies?.some((cookie) => cookie.startsWith(`${AUTH_COOKIE}=`))).toBe(
+      true,
+    );
+  });
+
+  it('POST /auth/register-church rejects duplicate owner email', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Outra Igreja',
+        ownerName: 'Duplicado',
+        ownerEmail: 'pastor@igreja.com.br',
+        password: 'senha-forte',
+        acceptTerms: true,
+      })
+      .expect(409);
+  });
+
   it('POST /auth/login rejects invalid credentials', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({
-        email: 'pastor@igreja.com.br',
+        identifier: 'pastor@igreja.com.br',
         password: 'senha-errada',
       })
       .expect(401);

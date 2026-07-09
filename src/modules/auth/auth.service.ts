@@ -10,11 +10,14 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
+import { OnboardingPolicyService } from '../../common/services/onboarding-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchesService } from '../churches/churches.service';
+import { ChurchRegistrationService } from '../churches/church-registration.service';
 import { UsersService } from '../users/users.service';
 import type { AuthResponse, IssuedTokens, JwtPayload } from './auth.types';
 import { LoginDto } from './dto/login.dto';
+import { RegisterChurchDto } from './dto/register-church.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -27,11 +30,13 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly churchesService: ChurchesService,
+    private readonly churchRegistrationService: ChurchRegistrationService,
     private readonly churchPermissionsService: ChurchPermissionsService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly onboardingPolicy: OnboardingPolicyService,
   ) {}
 
   async login(
@@ -70,6 +75,123 @@ export class AuthService {
     });
 
     return { session, tokens };
+  }
+
+  async registerChurch(
+    dto: RegisterChurchDto,
+  ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
+    const registration = await this.churchRegistrationService.register({
+      churchName: dto.churchName,
+      ownerName: dto.ownerName,
+      ownerEmail: dto.ownerEmail,
+      password: dto.password,
+    });
+
+    if (this.onboardingPolicy.isEmailVerificationRequired()) {
+      await this.createAndSendVerificationToken(
+        registration.userId,
+        dto.ownerName,
+        dto.ownerEmail,
+      );
+    }
+
+    const session = await this.buildSession(
+      registration.userId,
+      registration.churchId,
+    );
+    const tokens = this.issueTokens({
+      sub: registration.userId,
+      email: dto.ownerEmail,
+      churchId: registration.churchId,
+    });
+
+    return { session, tokens };
+  }
+
+  async verifyEmail(token: string): Promise<{ message: string }> {
+    const trimmedToken = token.trim();
+
+    if (!trimmedToken) {
+      throw new BadRequestException(
+        'Link inválido ou expirado. Solicite um novo e-mail de verificação.',
+      );
+    }
+
+    const successMessage =
+      'E-mail confirmado com sucesso. Você já pode usar todos os recursos.';
+    const tokenHash = this.hashVerificationToken(trimmedToken);
+    const record = await this.prisma.emailVerificationToken.findUnique({
+      where: { tokenHash },
+      include: {
+        user: {
+          select: { id: true, emailVerifiedAt: true },
+        },
+      },
+    });
+
+    if (!record) {
+      throw new BadRequestException(
+        'Link inválido ou expirado. Solicite um novo e-mail de verificação.',
+      );
+    }
+
+    if (record.user.emailVerifiedAt) {
+      if (!record.usedAt) {
+        await this.prisma.emailVerificationToken.update({
+          where: { id: record.id },
+          data: { usedAt: new Date() },
+        });
+      }
+
+      return { message: successMessage };
+    }
+
+    if (record.usedAt || record.expiresAt < new Date()) {
+      throw new BadRequestException(
+        'Link inválido ou expirado. Solicite um novo e-mail de verificação.',
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: record.userId },
+        data: { emailVerifiedAt: new Date() },
+      }),
+      this.prisma.emailVerificationToken.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.emailVerificationToken.updateMany({
+        where: { userId: record.userId, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    return { message: successMessage };
+  }
+
+  async resendVerificationEmail(
+    userId: string,
+  ): Promise<{ message: string }> {
+    const user = await this.usersService.findById(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    if (user.emailVerifiedAt) {
+      return { message: 'Seu e-mail já está confirmado.' };
+    }
+
+    if (!this.onboardingPolicy.isEmailVerificationRequired()) {
+      return { message: 'A verificação de e-mail não é necessária neste ambiente.' };
+    }
+
+    await this.createAndSendVerificationToken(userId, user.name, user.email);
+
+    return {
+      message: 'Enviamos um novo link de verificação para o seu e-mail.',
+    };
   }
 
   async getSession(user: JwtPayload): Promise<AuthResponse> {
@@ -326,6 +448,7 @@ export class AuthService {
         })),
         avatarUrl: user.avatarUrl,
         mustChangePassword: user.mustChangePassword,
+        emailVerified: Boolean(user.emailVerifiedAt),
       },
       church: {
         id: church.id,
@@ -380,6 +503,38 @@ export class AuthService {
 
   private hashResetToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  private hashVerificationToken(token: string): string {
+    return this.hashResetToken(token);
+  }
+
+  private async createAndSendVerificationToken(
+    userId: string,
+    userName: string,
+    email: string,
+  ): Promise<void> {
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = this.hashVerificationToken(token);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await this.prisma.emailVerificationToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    await this.prisma.emailVerificationToken.create({
+      data: { userId, tokenHash, expiresAt },
+    });
+
+    const appUrl = this.configService.getOrThrow<string>('appUrl');
+    const verifyUrl = `${appUrl}/verificar-email?token=${token}`;
+
+    await this.emailService.sendEmailVerificationEmail(
+      email,
+      verifyUrl,
+      userName,
+    );
   }
 
   private async createAndSendResetToken(

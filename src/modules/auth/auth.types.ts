@@ -22,6 +22,7 @@ export interface AuthUserResponse {
   roles: AuthUserRoleResponse[];
   avatarUrl?: string;
   mustChangePassword: boolean;
+  emailVerified: boolean;
 }
 
 export interface AuthChurchResponse {
