@@ -8,6 +8,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -251,6 +252,12 @@ export class UpdateMinistryEventDto {
   @IsOptional()
   @IsBoolean()
   visibleToChurch?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @ValidateNested()
+  @Type(() => EventRecurrenceDto)
+  recurrence?: EventRecurrenceDto | null;
 
   @IsOptional()
   @IsIn(['this', 'this_and_following', 'all'])

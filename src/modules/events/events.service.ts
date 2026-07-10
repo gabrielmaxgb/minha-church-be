@@ -659,6 +659,113 @@ export class EventsService {
     const existing = await this.getEventOrThrow(churchId, eventId);
     await this.assertCanManageEvent(userId, churchId, existing);
 
+    const recurrenceProvided = Object.prototype.hasOwnProperty.call(
+      dto,
+      'recurrence',
+    );
+
+    if (recurrenceProvided) {
+      const scope = this.resolveScope(existing, dto.scope);
+      const startsAt =
+        dto.startsAt !== undefined
+          ? new Date(dto.startsAt)
+          : existing.startsAt;
+      const endsAt =
+        dto.endsAt !== undefined
+          ? dto.endsAt
+            ? new Date(dto.endsAt)
+            : null
+          : existing.endsAt;
+      const usesRoster =
+        dto.usesRoster !== undefined ? dto.usesRoster : existing.usesRoster;
+      const rosterOpen = usesRoster
+        ? dto.rosterOpen !== undefined
+          ? dto.rosterOpen
+          : existing.rosterOpen
+        : false;
+      const visibleToChurch = existing.ministryId
+        ? dto.visibleToChurch !== undefined
+          ? dto.visibleToChurch
+          : existing.visibleToChurch
+        : true;
+
+      const rosterPlanUpdateRequested =
+        dto.rosterSlotPlan !== undefined || dto.rosterRoles !== undefined;
+
+      let rosterSlotPlan = resolveRosterSlotPlan({
+        rosterSlotPlan: dto.rosterSlotPlan,
+        rosterRoles: dto.rosterRoles,
+      });
+
+      if (!rosterPlanUpdateRequested && usesRoster) {
+        const slots = await this.prisma.eventRosterSlot.findMany({
+          where: { eventId: existing.id },
+          orderBy: { sortOrder: 'asc' },
+        });
+        rosterSlotPlan = slots.map((slot) => ({
+          label: slot.label,
+          requiredCount: slot.requiredCount,
+        }));
+      }
+
+      const recurrenceChanged = await this.hasRecurrenceChange(
+        existing,
+        dto.recurrence ?? null,
+        startsAt,
+      );
+
+      if (recurrenceChanged) {
+        await this.eventCreation.applyRecurrenceUpdate({
+          churchId,
+          event: existing,
+          scope,
+          recurrence: dto.recurrence ?? null,
+          name: dto.name !== undefined ? dto.name : existing.name,
+          description:
+            dto.description !== undefined
+              ? dto.description
+              : existing.description,
+          highlightNote:
+            dto.highlightNote !== undefined
+              ? dto.highlightNote
+              : existing.highlightNote,
+          availabilityMessage:
+            dto.availabilityMessage !== undefined
+              ? dto.availabilityMessage
+              : existing.availabilityMessage,
+          location:
+            dto.location !== undefined ? dto.location : existing.location,
+          startsAt,
+          endsAt,
+          usesRoster,
+          rosterOpen,
+          visibleToChurch,
+          rosterSlotPlan,
+        });
+
+        if (rosterPlanUpdateRequested && usesRoster) {
+          try {
+            await syncEventRosterSlots(this.prisma, eventId, rosterSlotPlan);
+          } catch (error) {
+            if (error instanceof RosterSlotSyncError) {
+              throw new BadRequestException(error.message);
+            }
+            throw error;
+          }
+        }
+
+        const event = await this.prisma.ministryEvent.findFirstOrThrow({
+          where: { id: eventId, churchId },
+          include: {
+            ...eventInclude,
+            rosterSlots: rosterSlotsInclude,
+          },
+        });
+
+        return toMinistryEventResponse(event);
+      }
+    }
+
     const scope = this.resolveScope(existing, dto.scope);
     const targets = await this.findScopeTargets(churchId, existing, scope);
 
@@ -845,6 +952,50 @@ export class EventsService {
       },
       data: { deletedAt },
     });
+  }
+
+  private async hasRecurrenceChange(
+    event: MinistryEvent,
+    recurrence: UpdateChurchEventDto['recurrence'],
+    startsAt: Date,
+  ): Promise<boolean> {
+    if (recurrence === null || recurrence === undefined) {
+      return Boolean(event.recurrenceSeriesId);
+    }
+
+    if (!event.recurrenceSeriesId) {
+      return true;
+    }
+
+    const series = await this.prisma.eventRecurrenceSeries.findUnique({
+      where: { id: event.recurrenceSeriesId },
+    });
+
+    if (!series) {
+      return true;
+    }
+
+    const interval = recurrence.interval ?? 1;
+    const daysOfWeek =
+      recurrence.frequency === 'weekly'
+        ? [...(recurrence.daysOfWeek ?? [startsAt.getDay()])].sort(
+            (a, b) => a - b,
+          )
+        : [];
+    const seriesDays = [...series.daysOfWeek].sort((a, b) => a - b);
+    const seriesEnd = series.endDate
+      ? series.endDate.toISOString().slice(0, 10)
+      : null;
+    const nextEnd = recurrence.endDate ?? null;
+
+    return (
+      series.frequency !== recurrence.frequency ||
+      series.interval !== interval ||
+      (recurrence.frequency === 'weekly' &&
+        seriesDays.join(',') !== daysOfWeek.join(',')) ||
+      seriesEnd !== nextEnd ||
+      (series.maxOccurrences ?? null) !== (recurrence.maxOccurrences ?? null)
+    );
   }
 
   private resolveScope(

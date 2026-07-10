@@ -2,6 +2,7 @@ import {
   Gender,
   MaritalStatus,
   MemberStatus,
+  type Family,
   type Member,
   type MemberMinistry,
   type Ministry,
@@ -13,6 +14,7 @@ type MinistryRoleAssignment = {
 };
 
 export type MemberWithMinistries = Member & {
+  family: Family | null;
   ministryLinks: (MemberMinistry & {
     ministry: Ministry;
     roleAssignments: MinistryRoleAssignment[];
@@ -36,9 +38,16 @@ export interface MemberMinistryLinkResponse {
   endedAt: string | null;
 }
 
+export interface MemberFamilySummary {
+  id: string;
+  name: string;
+}
+
 export interface MemberResponse {
   id: string;
   churchId: string;
+  familyId: string | null;
+  family: MemberFamilySummary | null;
   name: string;
   email: string | null;
   cpf: string | null;
@@ -63,6 +72,40 @@ export interface MemberResponse {
   ministries: MemberMinistryLinkResponse[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FamilyResponse {
+  id: string;
+  churchId: string;
+  name: string;
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MemberRelationType = 'spouse' | 'parent';
+
+export interface MemberRelationResponse {
+  id: string;
+  fromMemberId: string;
+  toMemberId: string;
+  type: MemberRelationType;
+  createdAt: string;
+}
+
+export interface FamilyGraphMember {
+  id: string;
+  name: string;
+  status: MemberStatus;
+}
+
+export interface FamilyGraphResponse {
+  family: {
+    id: string;
+    name: string;
+  };
+  members: FamilyGraphMember[];
+  relations: MemberRelationResponse[];
 }
 
 export type MemberAccountCredentials =
@@ -119,6 +162,10 @@ export function toMemberResponse(member: MemberWithMinistries): MemberResponse {
   return {
     id: member.id,
     churchId: member.churchId,
+    familyId: member.familyId,
+    family: member.family
+      ? { id: member.family.id, name: member.family.name }
+      : null,
     name: member.name,
     email: member.email,
     cpf: member.cpf,
