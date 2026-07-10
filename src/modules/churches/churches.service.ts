@@ -69,73 +69,78 @@ export class ChurchesService {
 
     const trialEndsAt = this.computeTrialEndsAt();
 
-    return this.prisma.$transaction(async (tx) => {
-      const slug = await generateUniqueChurchSlug(tx, input.churchName);
+    // Seed de cargos faz vários round-trips; no Railway→Neon o timeout
+    // padrão (5s) fecha a transaction no meio do upsert ("Transaction not found").
+    return this.prisma.$transaction(
+      async (tx) => {
+        const slug = await generateUniqueChurchSlug(tx, input.churchName);
 
-      const church = await tx.church.create({
-        data: {
-          name: input.churchName.trim(),
-          slug,
-          subscriptionStatus: SubscriptionStatus.trialing,
-          trialEndsAt,
-          memberCount: 0,
-        },
-      });
+        const church = await tx.church.create({
+          data: {
+            name: input.churchName.trim(),
+            slug,
+            subscriptionStatus: SubscriptionStatus.trialing,
+            trialEndsAt,
+            memberCount: 0,
+          },
+        });
 
-      await seedDefaultChurchRoles(tx, church.id);
+        await seedDefaultChurchRoles(tx, church.id);
 
-      const ownerName = input.ownerName.trim();
+        const ownerName = input.ownerName.trim();
 
-      const user = await tx.user.create({
-        data: {
-          email,
-          emailCanonical,
-          name: ownerName,
-          passwordHash: input.passwordHash,
-        },
-      });
+        const user = await tx.user.create({
+          data: {
+            email,
+            emailCanonical,
+            name: ownerName,
+            passwordHash: input.passwordHash,
+          },
+        });
 
-      const memberRole = await tx.churchRole.findFirst({
-        where: { churchId: church.id, systemKey: 'member' },
-        select: { id: true },
-      });
+        const memberRole = await tx.churchRole.findFirst({
+          where: { churchId: church.id, systemKey: 'member' },
+          select: { id: true },
+        });
 
-      await tx.churchMembership.create({
-        data: {
-          userId: user.id,
+        await tx.churchMembership.create({
+          data: {
+            userId: user.id,
+            churchId: church.id,
+            isOwner: true,
+            ...(memberRole
+              ? {
+                  roleAssignments: {
+                    create: [{ roleId: memberRole.id }],
+                  },
+                }
+              : {}),
+          },
+        });
+
+        await tx.member.create({
+          data: {
+            churchId: church.id,
+            userId: user.id,
+            name: ownerName,
+            email,
+            status: MemberStatus.active,
+            membershipDate: new Date(),
+          },
+        });
+
+        await tx.church.update({
+          where: { id: church.id },
+          data: { memberCount: 1 },
+        });
+
+        return {
           churchId: church.id,
-          isOwner: true,
-          ...(memberRole
-            ? {
-                roleAssignments: {
-                  create: [{ roleId: memberRole.id }],
-                },
-              }
-            : {}),
-        },
-      });
-
-      await tx.member.create({
-        data: {
-          churchId: church.id,
           userId: user.id,
-          name: ownerName,
-          email,
-          status: MemberStatus.active,
-          membershipDate: new Date(),
-        },
-      });
-
-      await tx.church.update({
-        where: { id: church.id },
-        data: { memberCount: 1 },
-      });
-
-      return {
-        churchId: church.id,
-        userId: user.id,
-      };
-    });
+        };
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
   }
 
   computeTrialEndsAt(from: Date = new Date()): Date {
