@@ -3,6 +3,7 @@ export interface ChurchMembershipRoleResponse {
   name: string;
   color?: string;
   isSystem: boolean;
+  systemKey?: string;
 }
 
 export interface ChurchMembershipResponse {

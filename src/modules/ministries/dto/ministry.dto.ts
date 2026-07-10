@@ -96,6 +96,18 @@ export class CreateMinistryRoleDto {
   @IsOptional()
   @IsBoolean()
   canManageRoster?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  canManageTeam?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  canManageRoles?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  singleHolder?: boolean;
 }
 
 export class UpdateMinistryRoleDto {
@@ -114,6 +126,18 @@ export class UpdateMinistryRoleDto {
   @IsOptional()
   @IsBoolean()
   canManageRoster?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  canManageTeam?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  canManageRoles?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  singleHolder?: boolean;
 }
 
 export class CreateMinistryEventDto {

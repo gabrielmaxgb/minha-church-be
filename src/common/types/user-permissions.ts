@@ -5,6 +5,8 @@ export interface UserPermissions {
     access: boolean;
     manage: boolean;
     rosterMinistryIds: string[];
+    teamMinistryIds: string[];
+    rolesMinistryIds: string[];
   };
   activities: {
     access: boolean;

@@ -162,7 +162,7 @@ async function seedMembers(prisma: PrismaClient) {
     where: {
       churchId: TIER_CROSSING_TEST_CHURCH.id,
       deletedAt: null,
-      status: { in: [MemberStatus.active, MemberStatus.visitor] },
+      status: MemberStatus.active,
     },
   });
 
@@ -202,7 +202,7 @@ async function main() {
     console.log(`Senha: ${result.password}`);
     console.log('');
     console.log(
-      'Próximo passo: cadastre o 100º membro (sem modal) e depois o 101º (com modal) em /app/membros/novo',
+      'Próximo passo: cadastre o 100º membro ativo (sem modal) e depois o 101º ativo — ou receba/ative um visitante/inativo — para abrir o modal em /app/membros',
     );
   } finally {
     await prisma.$disconnect();

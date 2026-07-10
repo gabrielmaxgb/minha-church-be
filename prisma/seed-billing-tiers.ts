@@ -197,7 +197,7 @@ async function seedPlaceholderMembers(
     where: {
       churchId: church.id,
       deletedAt: null,
-      status: { in: [MemberStatus.active, MemberStatus.visitor] },
+      status: MemberStatus.active,
     },
   });
 

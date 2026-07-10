@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +19,8 @@ import {
   isValidCpf,
   normalizeCpf,
 } from '../../common/utils/cpf';
+import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
+import { EmailService } from '../../common/services/email.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BillingService } from '../billing/billing.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
@@ -59,19 +63,32 @@ const memberInclude = {
 
 @Injectable()
 export class MembersService {
+  private readonly logger = new Logger(MembersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly billingService: BillingService,
+    private readonly emailService: EmailService,
+    private readonly churchPermissions: ChurchPermissionsService,
   ) {}
 
   async findAll(
     churchId: string,
     query: ListMembersQueryDto,
+    userId: string,
   ): Promise<{
     data: MemberResponse[];
     meta: { total: number; page: number; limit: number };
   }> {
+    const canList = await this.churchPermissions.canListChurchMembers(
+      userId,
+      churchId,
+    );
+
+    if (!canList) {
+      throw new ForbiddenException('Permissão insuficiente.');
+    }
     const page = Math.max(query.page ?? 1, 1);
     const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
     const skip = (page - 1) * limit;
@@ -245,6 +262,7 @@ export class MembersService {
 
     if (status === MemberStatus.active) {
       await this.ensureUserCredentialsAvailable(email, cpf);
+      await this.assertActiveMemberTierAllowed(churchId);
     }
 
     const visitorSince =
@@ -292,7 +310,7 @@ export class MembersService {
       return toMemberResponse(member);
     }
 
-    let account: MemberAccountCredentials;
+    let account!: MemberAccountCredentials;
 
     const member = await this.prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
@@ -300,7 +318,15 @@ export class MembersService {
         include: memberInclude,
       });
 
-      account = await this.provisionMemberLogin(tx, churchId, created);
+      const provisioned = await this.syncMemberAppAccess(tx, churchId, created);
+
+      if (!provisioned) {
+        throw new BadRequestException(
+          'Não foi possível liberar o acesso ao sistema.',
+        );
+      }
+
+      account = provisioned;
 
       return tx.member.findUniqueOrThrow({
         where: { id: created.id },
@@ -310,9 +336,13 @@ export class MembersService {
 
     await this.syncMemberCount(churchId);
 
+    if (account.kind === 'linked') {
+      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    }
+
     return {
       ...toMemberResponse(member),
-      account: account!,
+      account,
     };
   }
 
@@ -360,6 +390,17 @@ export class MembersService {
       throw new BadRequestException(
         'Informe e-mail ou CPF antes de ativar o acesso ao sistema.',
       );
+    }
+
+    if (
+      nextStatus === MemberStatus.active &&
+      existing.status !== MemberStatus.active
+    ) {
+      await this.assertActiveMemberTierAllowed(churchId);
+    }
+
+    if (nextStatus !== MemberStatus.active && existing.userId) {
+      await this.assertCanLeaveActiveStatus(churchId, existing.userId);
     }
 
     const maritalStatus = dto.maritalStatus ?? existing.maritalStatus;
@@ -422,20 +463,7 @@ export class MembersService {
       include: memberInclude,
     });
 
-      if (
-        nextStatus === MemberStatus.active &&
-        previousStatus !== MemberStatus.active &&
-        !updated.userId
-      ) {
-        account = await this.provisionMemberLogin(tx, churchId, updated);
-      }
-
-      if (
-        nextStatus !== MemberStatus.active &&
-        updated.userId
-      ) {
-        await this.revokeMemberLogin(tx, churchId, memberId, updated.userId);
-      }
+      account = await this.syncMemberAppAccess(tx, churchId, updated);
 
       return tx.member.findUniqueOrThrow({
         where: { id: memberId },
@@ -444,6 +472,10 @@ export class MembersService {
     });
 
     await this.syncMemberCount(churchId);
+
+    if (account?.kind === 'linked') {
+      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    }
 
     return {
       ...toMemberResponse(member),
@@ -478,14 +510,12 @@ export class MembersService {
       );
     }
 
+    await this.assertActiveMemberTierAllowed(churchId);
+
     let account: MemberAccountCredentials | undefined;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (!member.userId) {
-        account = await this.provisionMemberLogin(tx, churchId, member);
-      }
-
-      return tx.member.update({
+      const received = await tx.member.update({
         where: { id: memberId },
         data: {
           status: MemberStatus.active,
@@ -494,9 +524,20 @@ export class MembersService {
         },
         include: memberInclude,
       });
+
+      account = await this.syncMemberAppAccess(tx, churchId, received);
+
+      return tx.member.findUniqueOrThrow({
+        where: { id: memberId },
+        include: memberInclude,
+      });
     });
 
     await this.syncMemberCount(churchId);
+
+    if (account?.kind === 'linked') {
+      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    }
 
     return {
       ...toMemberResponse(updated),
@@ -507,8 +548,10 @@ export class MembersService {
   async assignMinistry(
     churchId: string,
     memberId: string,
+    userId: string,
     dto: AssignMemberMinistryDto,
   ): Promise<MemberResponse> {
+    await this.assertCanManageMinistryTeam(userId, churchId, dto.ministryId);
     await this.getMemberOrThrow(churchId, memberId);
     await this.ensureMinistryBelongsToChurch(churchId, dto.ministryId);
 
@@ -518,8 +561,17 @@ export class MembersService {
         : undefined;
 
     if (uniqueRoleIds) {
-      for (const roleId of uniqueRoleIds) {
-        await this.ensureRoleBelongsToMinistry(dto.ministryId, roleId);
+      const roles = await this.prisma.ministryRole.findMany({
+        where: { ministryId: dto.ministryId, id: { in: uniqueRoleIds } },
+        select: {
+          id: true,
+          name: true,
+          singleHolder: true,
+        },
+      });
+
+      if (roles.length !== uniqueRoleIds.length) {
+        throw new NotFoundException('Cargo do ministério não encontrado.');
       }
     }
 
@@ -559,6 +611,27 @@ export class MembersService {
       }
 
       if (uniqueRoleIds !== undefined) {
+        const singleHolderRoles = await tx.ministryRole.findMany({
+          where: {
+            id: { in: uniqueRoleIds },
+            singleHolder: true,
+          },
+          select: { id: true },
+        });
+
+        for (const role of singleHolderRoles) {
+          await tx.memberMinistryRole.deleteMany({
+            where: {
+              ministryRoleId: role.id,
+              memberMinistryId: { not: link.id },
+              memberMinistry: {
+                ministryId: dto.ministryId,
+                endedAt: null,
+              },
+            },
+          });
+        }
+
         await tx.memberMinistryRole.deleteMany({
           where: { memberMinistryId: link.id },
         });
@@ -583,7 +656,9 @@ export class MembersService {
     churchId: string,
     memberId: string,
     ministryId: string,
+    userId: string,
   ): Promise<MemberResponse> {
+    await this.assertCanManageMinistryTeam(userId, churchId, ministryId);
     await this.getMemberOrThrow(churchId, memberId);
 
     const link = await this.prisma.memberMinistry.findUnique({
@@ -607,6 +682,24 @@ export class MembersService {
     const member = await this.getMemberOrThrow(churchId, memberId);
 
     return toMemberResponse(member);
+  }
+
+  private async assertCanManageMinistryTeam(
+    userId: string,
+    churchId: string,
+    ministryId: string,
+  ) {
+    const allowed = await this.churchPermissions.canManageMinistryTeam(
+      userId,
+      churchId,
+      ministryId,
+    );
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Sem permissão para gerenciar a equipe deste ministério.',
+      );
+    }
   }
 
   private async getMemberOrThrow(
@@ -749,6 +842,15 @@ export class MembersService {
       }
     }
 
+    const existingUser = await this.findExistingUserForLogin(tx, email, cpf);
+
+    if (existingUser) {
+      return this.linkExistingUserLogin(tx, churchId, member.id, existingUser, {
+        email,
+        cpf,
+      });
+    }
+
     await this.ensureUserCredentialsAvailable(email, cpf);
 
     const userEmail = email ?? cpfToInternalEmail(cpf!);
@@ -798,10 +900,338 @@ export class MembersService {
     });
 
     return {
+      kind: 'created',
       login: loginIdentifier,
       temporaryPassword,
       mustChangePassword: true,
     };
+  }
+
+  private async findExistingUserForLogin(
+    tx: Prisma.TransactionClient,
+    email: string | null,
+    cpf: string | null,
+  ): Promise<{
+    id: string;
+    email: string;
+    cpf: string | null;
+    name: string;
+  } | null> {
+    if (email) {
+      const userByEmail = await tx.user.findUnique({
+        where: { email },
+        select: { id: true, email: true, cpf: true, name: true },
+      });
+
+      if (!userByEmail) {
+        if (cpf) {
+          const userByCpf = await tx.user.findUnique({
+            where: { cpf },
+            select: { id: true, email: true, cpf: true, name: true },
+          });
+
+          if (userByCpf) {
+            this.assertLoginIdentityConsistent(userByCpf, email, cpf);
+            return userByCpf;
+          }
+        }
+
+        return null;
+      }
+
+      this.assertLoginIdentityConsistent(userByEmail, email, cpf);
+
+      if (cpf) {
+        const userByCpf = await tx.user.findUnique({
+          where: { cpf },
+          select: { id: true },
+        });
+
+        if (userByCpf && userByCpf.id !== userByEmail.id) {
+          throw new ConflictException(
+            'E-mail e CPF pertencem a contas diferentes no sistema.',
+          );
+        }
+      }
+
+      return userByEmail;
+    }
+
+    if (cpf) {
+      const userByCpf = await tx.user.findUnique({
+        where: { cpf },
+        select: { id: true, email: true, cpf: true, name: true },
+      });
+
+      if (!userByCpf) {
+        return null;
+      }
+
+      this.assertLoginIdentityConsistent(userByCpf, email, cpf);
+      return userByCpf;
+    }
+
+    return null;
+  }
+
+  private assertLoginIdentityConsistent(
+    user: { email: string; cpf: string | null },
+    memberEmail: string | null,
+    memberCpf: string | null,
+  ): void {
+    if (
+      memberCpf &&
+      user.cpf &&
+      normalizeCpf(memberCpf) !== normalizeCpf(user.cpf)
+    ) {
+      throw new ConflictException(
+        'O CPF informado não corresponde à conta existente com este e-mail.',
+      );
+    }
+
+    if (
+      memberEmail &&
+      user.email &&
+      !this.isCpfInternalEmail(user.email) &&
+      user.email.trim().toLowerCase() !== memberEmail
+    ) {
+      throw new ConflictException(
+        'O e-mail informado não corresponde à conta existente com este CPF.',
+      );
+    }
+  }
+
+  private isCpfInternalEmail(email: string): boolean {
+    return email.endsWith('@accounts.minhachurch.app');
+  }
+
+  private async linkExistingUserLogin(
+    tx: Prisma.TransactionClient,
+    churchId: string,
+    memberId: string,
+    user: { id: string; email: string; cpf: string | null },
+    identifiers: { email: string | null; cpf: string | null },
+  ): Promise<MemberAccountCredentials> {
+    const existingMembership = await tx.churchMembership.findUnique({
+      where: {
+        userId_churchId: {
+          userId: user.id,
+          churchId,
+        },
+      },
+    });
+
+    if (existingMembership) {
+      throw new ConflictException(
+        'Esta conta já possui acesso a esta igreja.',
+      );
+    }
+
+    const linkedMember = await tx.member.findFirst({
+      where: {
+        churchId,
+        userId: user.id,
+        deletedAt: null,
+        NOT: { id: memberId },
+      },
+      select: { id: true },
+    });
+
+    if (linkedMember) {
+      throw new ConflictException(
+        'Já existe um cadastro nesta igreja vinculado a esta conta.',
+      );
+    }
+
+    const memberRole = await tx.churchRole.findFirst({
+      where: { churchId, systemKey: 'member' },
+    });
+
+    await tx.churchMembership.create({
+      data: {
+        userId: user.id,
+        churchId,
+        isOwner: false,
+        ...(memberRole
+          ? {
+              roleAssignments: {
+                create: [{ roleId: memberRole.id }],
+              },
+            }
+          : {}),
+      },
+    });
+
+    await tx.member.update({
+      where: { id: memberId },
+      data: { userId: user.id },
+    });
+
+    const login =
+      identifiers.email ??
+      (identifiers.cpf ? formatCpf(identifiers.cpf) : user.email);
+
+    return {
+      kind: 'linked',
+      login,
+      linkedExistingAccount: true,
+    };
+  }
+
+  private async notifyExistingUserLinkedToChurch(
+    churchId: string,
+    login: string,
+  ): Promise<void> {
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { name: true },
+    });
+
+    if (!church) {
+      return;
+    }
+
+    const email = login.includes('@') ? login.trim().toLowerCase() : null;
+
+    if (!email || this.isCpfInternalEmail(email)) {
+      return;
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { name: true, email: true },
+    });
+
+    if (!user) {
+      return;
+    }
+
+    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+
+    try {
+      await this.emailService.sendMemberAccountLinkedEmail(user.email, {
+        userName: user.name,
+        churchName: church.name,
+        login: user.email,
+        appUrl,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de vínculo de conta (${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Fonte da verdade: Member.status === active ⇔ ChurchMembership + cargo `member`.
+   * Owner nunca perde membership por mudança de status pastoral.
+   */
+  private async syncMemberAppAccess(
+    tx: Prisma.TransactionClient,
+    churchId: string,
+    member: {
+      id: string;
+      name: string;
+      email: string | null;
+      cpf: string | null;
+      userId: string | null;
+      status: MemberStatus;
+    },
+  ): Promise<MemberAccountCredentials | undefined> {
+    if (member.status === MemberStatus.active) {
+      if (!member.userId) {
+        return this.provisionMemberLogin(tx, churchId, member);
+      }
+
+      await this.ensureMembershipWithMemberRole(tx, churchId, member.userId);
+
+      return undefined;
+    }
+
+    if (!member.userId) {
+      return undefined;
+    }
+
+    await this.revokeMemberLogin(tx, churchId, member.id, member.userId);
+
+    return undefined;
+  }
+
+  private async assertCanLeaveActiveStatus(
+    churchId: string,
+    userId: string,
+  ): Promise<void> {
+    const membership = await this.prisma.churchMembership.findUnique({
+      where: {
+        userId_churchId: {
+          userId,
+          churchId,
+        },
+      },
+      select: { isOwner: true },
+    });
+
+    if (membership?.isOwner) {
+      throw new BadRequestException(
+        'Não é possível alterar o status pastoral do proprietário para visitante ou inativo.',
+      );
+    }
+  }
+
+  async ensureMembershipWithMemberRole(
+    tx: Prisma.TransactionClient | PrismaService,
+    churchId: string,
+    userId: string,
+  ): Promise<void> {
+    const memberRole = await tx.churchRole.findFirst({
+      where: { churchId, systemKey: 'member' },
+      select: { id: true },
+    });
+
+    const membership = await tx.churchMembership.findUnique({
+      where: {
+        userId_churchId: {
+          userId,
+          churchId,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!membership) {
+      await tx.churchMembership.create({
+        data: {
+          userId,
+          churchId,
+          isOwner: false,
+          ...(memberRole
+            ? {
+                roleAssignments: {
+                  create: [{ roleId: memberRole.id }],
+                },
+              }
+            : {}),
+        },
+      });
+
+      return;
+    }
+
+    if (!memberRole) {
+      return;
+    }
+
+    await tx.churchMembershipRole.createMany({
+      data: [
+        {
+          membershipId: membership.id,
+          roleId: memberRole.id,
+        },
+      ],
+      skipDuplicates: true,
+    });
   }
 
   private async revokeMemberLogin(
@@ -864,12 +1294,28 @@ export class MembersService {
     });
   }
 
+  private async assertActiveMemberTierAllowed(churchId: string): Promise<void> {
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { memberCount: true },
+    });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    await this.billingService.assertActiveMemberIncreaseAllowed(
+      churchId,
+      church.memberCount + 1,
+    );
+  }
+
   private async syncMemberCount(churchId: string) {
     const count = await this.prisma.member.count({
       where: {
         churchId,
         deletedAt: null,
-        status: { in: [MemberStatus.active, MemberStatus.visitor] },
+        status: MemberStatus.active,
       },
     });
 
@@ -906,7 +1352,11 @@ export class MembersService {
     });
 
     if (existing) {
-      if (existing.userId !== userId || existing.name !== user.name) {
+      if (
+        existing.userId !== userId ||
+        existing.name !== user.name ||
+        existing.status !== MemberStatus.active
+      ) {
         await this.prisma.member.update({
           where: { id: existing.id },
           data: {
@@ -918,21 +1368,21 @@ export class MembersService {
           },
         });
       }
+    } else {
+      await this.prisma.member.create({
+        data: {
+          churchId,
+          userId,
+          name: user.name,
+          email,
+          status: MemberStatus.active,
+          membershipDate: new Date(),
+        },
+      });
 
-      return;
+      await this.syncMemberCount(churchId);
     }
 
-    await this.prisma.member.create({
-      data: {
-        churchId,
-        userId,
-        name: user.name,
-        email,
-        status: MemberStatus.active,
-        membershipDate: new Date(),
-      },
-    });
-
-    await this.syncMemberCount(churchId);
+    await this.ensureMembershipWithMemberRole(this.prisma, churchId, userId);
   }
 }

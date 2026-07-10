@@ -108,6 +108,9 @@ model User {
   announcements                 Announcement[]     @relation("AnnouncementAuthor")
   announcementReads             AnnouncementRead[]
   billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
+  billingTierUpgradeRequestsMade    BillingTierUpgradeRequest[]        @relation("BillingTierUpgradeRequestedBy")
+  billingTierUpgradeRequestsResolved BillingTierUpgradeRequest[]       @relation("BillingTierUpgradeResolvedBy")
+  billingTierUpgradeStaffNoticeReads BillingTierUpgradeStaffNoticeRead[]
 
   @@map("users")
 }
@@ -123,6 +126,7 @@ model Church {
   stripeCustomerId       String?              @unique @map("stripe_customer_id")
   stripeSubscriptionId   String?              @map("stripe_subscription_id")
   stripePriceId          String?              @map("stripe_price_id")
+  cancelAtPeriodEnd      Boolean              @default(false) @map("cancel_at_period_end")
   createdAt              DateTime             @default(now()) @map("created_at")
   updatedAt              DateTime             @updatedAt @map("updated_at")
 
@@ -135,6 +139,8 @@ model Church {
   announcements         Announcement[]
 
   billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
+  billingTierUpgradeRequests        BillingTierUpgradeRequest[]
+  billingTierUpgradeStaffNotices    BillingTierUpgradeStaffNotice[]
 
   @@map("churches")
 }
@@ -153,6 +159,58 @@ model BillingTierUpgradeAcknowledgment {
   @@map("billing_tier_upgrade_acknowledgments")
 }
 
+enum BillingTierUpgradeRequestStatus {
+  pending
+  approved
+  dismissed
+}
+
+model BillingTierUpgradeRequest {
+  id               String                          @id @default(cuid())
+  churchId         String                          @map("church_id")
+  targetTierId     String                          @map("target_tier_id")
+  requestedByUserId String                         @map("requested_by_user_id")
+  status           BillingTierUpgradeRequestStatus @default(pending)
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+  resolvedAt       DateTime?                       @map("resolved_at")
+  resolvedByUserId String?                         @map("resolved_by_user_id")
+
+  church      Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  requestedBy User   @relation("BillingTierUpgradeRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Cascade)
+  resolvedBy  User?  @relation("BillingTierUpgradeResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([churchId, targetTierId])
+  @@index([churchId, status])
+  @@map("billing_tier_upgrade_requests")
+}
+
+model BillingTierUpgradeStaffNotice {
+  id        String   @id @default(cuid())
+  churchId  String   @map("church_id")
+  tierId    String   @map("tier_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  church Church                            @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  reads  BillingTierUpgradeStaffNoticeRead[]
+
+  @@index([churchId, createdAt])
+  @@map("billing_tier_upgrade_staff_notices")
+}
+
+model BillingTierUpgradeStaffNoticeRead {
+  id       String   @id @default(cuid())
+  noticeId String   @map("notice_id")
+  userId   String   @map("user_id")
+  readAt   DateTime @default(now()) @map("read_at")
+
+  notice BillingTierUpgradeStaffNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  user   User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeId, userId])
+  @@map("billing_tier_upgrade_staff_notice_reads")
+}
+
 model StripeWebhookEvent {
   id          String   @id
   processedAt DateTime @default(now()) @map("processed_at")
@@ -161,15 +219,16 @@ model StripeWebhookEvent {
 }
 
 model ChurchRole {
-  id        String   @id @default(cuid())
-  churchId  String   @map("church_id")
-  name      String
-  color     String?
-  sortOrder Int      @default(0) @map("sort_order")
-  isSystem  Boolean  @default(false) @map("is_system")
-  systemKey String?  @map("system_key")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  churchId     String   @map("church_id")
+  name         String
+  color        String?
+  sortOrder    Int      @default(0) @map("sort_order")
+  isSystem     Boolean  @default(false) @map("is_system")
+  systemKey    String?  @map("system_key")
+  singleHolder Boolean  @default(false) @map("single_holder")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   church      Church                 @relation(fields: [churchId], references: [id], onDelete: Cascade)
   permissions ChurchRolePermission[]
@@ -338,6 +397,9 @@ model MinistryRole {
   sortOrder       Int      @default(0) @map("sort_order")
   canManageEvents Boolean  @default(false) @map("can_manage_events")
   canManageRoster Boolean  @default(false) @map("can_manage_roster")
+  canManageTeam   Boolean  @default(false) @map("can_manage_team")
+  canManageRoles  Boolean  @default(false) @map("can_manage_roles")
+  singleHolder    Boolean  @default(false) @map("single_holder")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 

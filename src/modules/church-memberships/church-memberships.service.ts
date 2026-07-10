@@ -56,6 +56,7 @@ const membershipInclude = {
           name: true,
           color: true,
           isSystem: true,
+          systemKey: true,
           sortOrder: true,
           permissions: true,
         },
@@ -289,6 +290,7 @@ export class ChurchMembershipsService {
       name: string;
       color?: string;
       isSystem: boolean;
+      systemKey?: string;
       sortOrder: number;
     }>
   > {
@@ -333,6 +335,7 @@ export class ChurchMembershipsService {
         name: role.name,
         color: role.color ?? undefined,
         isSystem: role.isSystem,
+        systemKey: role.systemKey ?? undefined,
         sortOrder: role.sortOrder,
       }));
   }
@@ -422,7 +425,17 @@ export class ChurchMembershipsService {
     }
 
     if (dto.roleIds !== undefined) {
-      const uniqueRoleIds = [...new Set(dto.roleIds)];
+      const memberRole = await this.prisma.churchRole.findFirst({
+        where: { churchId, systemKey: 'member' },
+        select: { id: true },
+      });
+
+      const uniqueRoleIds = [
+        ...new Set([
+          ...dto.roleIds,
+          ...(memberRole ? [memberRole.id] : []),
+        ]),
+      ];
 
       if (
         uniqueRoleIds.length === 0 &&
@@ -461,6 +474,9 @@ export class ChurchMembershipsService {
           'Você não pode atribuir cargos com permissões superiores às suas.',
         );
       }
+
+      // Persist the forced member role for the transaction below.
+      dto.roleIds = uniqueRoleIds;
     }
 
     const beforeRoleNames = membership.roleAssignments
@@ -477,6 +493,25 @@ export class ChurchMembershipsService {
       }
 
       if (dto.roleIds !== undefined) {
+        const singleHolderRoles = await tx.churchRole.findMany({
+          where: {
+            churchId,
+            id: { in: dto.roleIds },
+            singleHolder: true,
+          },
+          select: { id: true },
+        });
+
+        for (const role of singleHolderRoles) {
+          await tx.churchMembershipRole.deleteMany({
+            where: {
+              roleId: role.id,
+              membershipId: { not: membership.id },
+              membership: { churchId },
+            },
+          });
+        }
+
         await tx.churchMembershipRole.deleteMany({
           where: { membershipId: membership.id },
         });
@@ -778,6 +813,7 @@ export class ChurchMembershipsService {
           name: string;
           color: string | null;
           isSystem: boolean;
+          systemKey: string | null;
           sortOrder: number;
         };
       }>;
@@ -812,6 +848,7 @@ export class ChurchMembershipsService {
         name: role.name,
         color: role.color ?? undefined,
         isSystem: role.isSystem,
+        systemKey: role.systemKey ?? undefined,
       })),
       createdAt: membership.createdAt.toISOString(),
       user: {

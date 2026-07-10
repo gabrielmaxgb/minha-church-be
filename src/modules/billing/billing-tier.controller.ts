@@ -6,10 +6,15 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import { ChurchPermission } from '@prisma/client';
+import type { Response } from 'express';
 
-import { ChurchAccessGuard } from '../../common/guards/church-access.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
+import { ChurchOwnerGuard } from '../../common/guards/church-owner.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
@@ -36,6 +41,7 @@ export class BillingTierController {
   }
 
   @Post('tier-crossing/confirm')
+  @UseGuards(ChurchOwnerGuard)
   confirmTierCrossing(
     @Param('churchId') churchId: string,
     @Body() dto: ConfirmTierCrossingDto,
@@ -45,6 +51,83 @@ export class BillingTierController {
       churchId,
       user.sub,
       dto.targetTierId,
+    );
+  }
+
+  @Post('tier-crossing/request')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
+  requestTierCrossing(
+    @Param('churchId') churchId: string,
+    @Body() dto: ConfirmTierCrossingDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.billingService.requestTierCrossing(
+      churchId,
+      user.sub,
+      dto.targetTierId,
+    );
+  }
+
+  @Get('tier-crossing/pending')
+  async getPendingTierCrossing(
+    @Param('churchId') churchId: string,
+    @Res() res: Response,
+  ) {
+    const pending =
+      await this.billingService.getPendingTierCrossingRequest(churchId);
+
+    return res.status(200).json(pending);
+  }
+
+  @Post('tier-crossing/approve')
+  @UseGuards(ChurchOwnerGuard)
+  approveTierCrossing(
+    @Param('churchId') churchId: string,
+    @Body() dto: ConfirmTierCrossingDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.billingService.approveTierCrossingRequest(
+      churchId,
+      user.sub,
+      dto.targetTierId,
+    );
+  }
+
+  @Post('tier-crossing/dismiss')
+  @UseGuards(ChurchOwnerGuard)
+  dismissTierCrossing(
+    @Param('churchId') churchId: string,
+    @Body() dto: ConfirmTierCrossingDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.billingService.dismissTierCrossingRequest(
+      churchId,
+      user.sub,
+      dto.targetTierId,
+    );
+  }
+
+  @Get('tier-crossing/notices')
+  listStaffNotices(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.billingService.listUnreadStaffNotices(churchId, user.sub);
+  }
+
+  @Post('tier-crossing/notices/:noticeId/read')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
+  markStaffNoticeRead(
+    @Param('churchId') churchId: string,
+    @Param('noticeId') noticeId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.billingService.markStaffNoticeRead(
+      churchId,
+      user.sub,
+      noticeId,
     );
   }
 }

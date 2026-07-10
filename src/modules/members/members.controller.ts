@@ -32,18 +32,12 @@ export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 
   @Get()
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(
-    ChurchPermission.members_access,
-    ChurchPermission.members_manage,
-    // Gestores de ministérios precisam listar membros para montar as equipes.
-    ChurchPermission.ministries_manage,
-  )
   findAll(
     @Param('churchId') churchId: string,
     @Query() query: ListMembersQueryDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.membersService.findAll(churchId, query);
+    return this.membersService.findAll(churchId, query, user.sub);
   }
 
   @Get('me')
@@ -128,30 +122,32 @@ export class MembersController {
   }
 
   @Post(':memberId/ministries')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(
-    ChurchPermission.members_manage,
-    ChurchPermission.ministries_manage,
-  )
   assignMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: AssignMemberMinistryDto,
   ) {
-    return this.membersService.assignMinistry(churchId, memberId, dto);
+    return this.membersService.assignMinistry(
+      churchId,
+      memberId,
+      user.sub,
+      dto,
+    );
   }
 
   @Delete(':memberId/ministries/:ministryId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(
-    ChurchPermission.members_manage,
-    ChurchPermission.ministries_manage,
-  )
   removeMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
     @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.membersService.removeMinistry(churchId, memberId, ministryId);
+    return this.membersService.removeMinistry(
+      churchId,
+      memberId,
+      ministryId,
+      user.sub,
+    );
   }
 }

@@ -533,7 +533,7 @@ async function syncChurchMemberCount(prisma: PrismaClient, churchId: string) {
     where: {
       churchId,
       deletedAt: null,
-      status: { in: [MemberStatus.active, MemberStatus.visitor] },
+      status: MemberStatus.active,
     },
   });
 

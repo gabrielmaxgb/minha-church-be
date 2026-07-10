@@ -13,12 +13,21 @@ import {
 import {
   buildPaymentFailedEmailHtml,
   buildPaymentFailedEmailText,
+  buildSubscriptionCancelScheduledEmailHtml,
+  buildSubscriptionCancelScheduledEmailText,
   buildSubscriptionCanceledEmailHtml,
   buildSubscriptionCanceledEmailText,
   buildSubscriptionConfirmedEmailHtml,
   buildSubscriptionConfirmedEmailText,
+  buildTierUpgradeRequestEmailHtml,
+  buildTierUpgradeRequestEmailText,
   type BillingEmailContent,
 } from '../templates/billing-email.template';
+import {
+  buildMemberAccountLinkedEmailHtml,
+  buildMemberAccountLinkedEmailText,
+  type MemberAccountLinkedEmailContent,
+} from '../templates/member-account-linked-email.template';
 
 @Injectable()
 export class EmailService {
@@ -115,6 +124,52 @@ export class EmailService {
       buildSubscriptionCanceledEmailHtml(content),
       buildSubscriptionCanceledEmailText(content),
     );
+  }
+
+  async sendSubscriptionCancelScheduledEmail(
+    to: string,
+    content: BillingEmailContent,
+  ): Promise<void> {
+    await this.sendBillingEmail(
+      to,
+      'Cancelamento agendado — MinhaChurch',
+      buildSubscriptionCancelScheduledEmailHtml(content),
+      buildSubscriptionCancelScheduledEmailText(content),
+    );
+  }
+
+  async sendTierUpgradeRequestEmail(
+    to: string,
+    content: BillingEmailContent,
+  ): Promise<void> {
+    await this.sendBillingEmail(
+      to,
+      'Pedido de mudança de faixa — MinhaChurch',
+      buildTierUpgradeRequestEmailHtml(content),
+      buildTierUpgradeRequestEmailText(content),
+    );
+  }
+
+  async sendMemberAccountLinkedEmail(
+    to: string,
+    content: MemberAccountLinkedEmailContent,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY não configurada — e-mail de vínculo de conta não enviado para ${to}.`,
+      );
+      return;
+    }
+
+    const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      subject: 'Você foi adicionado a uma igreja — MinhaChurch',
+      html: buildMemberAccountLinkedEmailHtml(content),
+      text: buildMemberAccountLinkedEmailText(content),
+    });
   }
 
   private async sendBillingEmail(

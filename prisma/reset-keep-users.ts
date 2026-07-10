@@ -7,7 +7,11 @@ async function syncChurchMemberCounts(prisma: PrismaClient) {
 
   for (const church of churches) {
     const memberCount = await prisma.member.count({
-      where: { churchId: church.id, deletedAt: null },
+      where: {
+        churchId: church.id,
+        deletedAt: null,
+        status: MemberStatus.active,
+      },
     });
 
     await prisma.church.update({

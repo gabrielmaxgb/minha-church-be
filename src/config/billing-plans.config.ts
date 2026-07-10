@@ -82,6 +82,7 @@ export const PRICING_CATALOG = {
   ] satisfies BillingTierCatalogEntry[],
 } as const;
 
+/** Faixa de cobrança a partir da contagem de membros ativos (visitantes/inativos não entram). */
 export function billingTierFromMemberCount(
   memberCount: number,
 ): BillingTierId {

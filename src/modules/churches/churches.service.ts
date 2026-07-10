@@ -1,6 +1,6 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SubscriptionStatus } from '@prisma/client';
+import { MemberStatus, SubscriptionStatus } from '@prisma/client';
 
 import { seedDefaultChurchRoles } from '../../common/permissions/seed-default-church-roles';
 import { canonicalizeEmail } from '../../common/utils/canonicalize-email';
@@ -84,13 +84,20 @@ export class ChurchesService {
 
       await seedDefaultChurchRoles(tx, church.id);
 
+      const ownerName = input.ownerName.trim();
+
       const user = await tx.user.create({
         data: {
           email,
           emailCanonical,
-          name: input.ownerName.trim(),
+          name: ownerName,
           passwordHash: input.passwordHash,
         },
+      });
+
+      const memberRole = await tx.churchRole.findFirst({
+        where: { churchId: church.id, systemKey: 'member' },
+        select: { id: true },
       });
 
       await tx.churchMembership.create({
@@ -98,7 +105,30 @@ export class ChurchesService {
           userId: user.id,
           churchId: church.id,
           isOwner: true,
+          ...(memberRole
+            ? {
+                roleAssignments: {
+                  create: [{ roleId: memberRole.id }],
+                },
+              }
+            : {}),
         },
+      });
+
+      await tx.member.create({
+        data: {
+          churchId: church.id,
+          userId: user.id,
+          name: ownerName,
+          email,
+          status: MemberStatus.active,
+          membershipDate: new Date(),
+        },
+      });
+
+      await tx.church.update({
+        where: { id: church.id },
+        data: { memberCount: 1 },
       });
 
       return {

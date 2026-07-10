@@ -31,6 +31,8 @@
     "db:seed": "prisma db seed",
     "db:seed:billing-tiers": "ts-node --transpile-only prisma/seed-billing-tiers.ts",
     "db:seed:tier-crossing-test": "dotenv -e .env -- ts-node --transpile-only prisma/seed-tier-crossing-test.ts",
+    "db:backfill:stripe-locale": "dotenv -e .env -- ts-node --transpile-only prisma/backfill-stripe-customer-locale.ts",
+    "db:backfill:owner-members": "dotenv -e .env -- ts-node --transpile-only prisma/backfill-owner-member-profiles.ts",
     "db:reset:keep-users": "ts-node --transpile-only prisma/reset-keep-users.ts",
     "db:studio": "prisma studio"
   },

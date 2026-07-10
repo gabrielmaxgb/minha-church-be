@@ -70,11 +70,17 @@ export class MinistriesService {
   ) {}
 
   async findAll(churchId: string, userId: string): Promise<MinistryResponse[]> {
-    const canManageAll = await this.churchPermissions.hasPermission(
-      userId,
-      churchId,
-      ChurchPermission.ministries_manage,
-    );
+    const canManageAll =
+      (await this.churchPermissions.hasPermission(
+        userId,
+        churchId,
+        ChurchPermission.ministries_manage,
+      )) ||
+      (await this.churchPermissions.hasPermission(
+        userId,
+        churchId,
+        ChurchPermission.communication_manage,
+      ));
 
     const ministries = await this.prisma.ministry.findMany({
       where: canManageAll
@@ -258,8 +264,10 @@ export class MinistriesService {
   async createRole(
     churchId: string,
     ministryId: string,
+    userId: string,
     dto: CreateMinistryRoleDto,
   ): Promise<MinistryRoleResponse> {
+    await this.assertCanManageRoles(userId, churchId, ministryId);
     await this.getMinistryOrThrow(churchId, ministryId);
     await this.ensureRoleNameAvailable(ministryId, dto.name);
 
@@ -270,6 +278,9 @@ export class MinistriesService {
         sortOrder: dto.sortOrder ?? 0,
         canManageEvents: dto.canManageEvents ?? false,
         canManageRoster: dto.canManageRoster ?? false,
+        canManageTeam: dto.canManageTeam ?? false,
+        canManageRoles: dto.canManageRoles ?? false,
+        singleHolder: dto.singleHolder ?? false,
       },
     });
 
@@ -280,8 +291,10 @@ export class MinistriesService {
     churchId: string,
     ministryId: string,
     roleId: string,
+    userId: string,
     dto: UpdateMinistryRoleDto,
   ): Promise<MinistryRoleResponse> {
+    await this.assertCanManageRoles(userId, churchId, ministryId);
     await this.getMinistryOrThrow(churchId, ministryId);
     const existing = await this.getRoleOrThrow(ministryId, roleId);
 
@@ -300,6 +313,15 @@ export class MinistriesService {
         ...(dto.canManageRoster !== undefined
           ? { canManageRoster: dto.canManageRoster }
           : {}),
+        ...(dto.canManageTeam !== undefined
+          ? { canManageTeam: dto.canManageTeam }
+          : {}),
+        ...(dto.canManageRoles !== undefined
+          ? { canManageRoles: dto.canManageRoles }
+          : {}),
+        ...(dto.singleHolder !== undefined
+          ? { singleHolder: dto.singleHolder }
+          : {}),
       },
     });
 
@@ -310,7 +332,9 @@ export class MinistriesService {
     churchId: string,
     ministryId: string,
     roleId: string,
+    userId: string,
   ): Promise<void> {
+    await this.assertCanManageRoles(userId, churchId, ministryId);
     await this.getMinistryOrThrow(churchId, ministryId);
     await this.getRoleOrThrow(ministryId, roleId);
 
@@ -1483,6 +1507,24 @@ export class MinistriesService {
     if (!allowed) {
       throw new ForbiddenException(
         'Sem permissão para gerenciar eventos deste ministério.',
+      );
+    }
+  }
+
+  private async assertCanManageRoles(
+    userId: string,
+    churchId: string,
+    ministryId: string,
+  ) {
+    const allowed = await this.churchPermissions.canManageMinistryRoles(
+      userId,
+      churchId,
+      ministryId,
+    );
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Sem permissão para gerenciar cargos deste ministério.',
       );
     }
   }

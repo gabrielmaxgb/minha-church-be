@@ -16,6 +16,9 @@ export interface MinistryRoleResponse {
   sortOrder: number;
   canManageEvents: boolean;
   canManageRoster: boolean;
+  canManageTeam: boolean;
+  canManageRoles: boolean;
+  singleHolder: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -236,6 +239,9 @@ export function toMinistryRoleResponse(
     sortOrder: role.sortOrder,
     canManageEvents: role.canManageEvents,
     canManageRoster: role.canManageRoster,
+    canManageTeam: role.canManageTeam,
+    canManageRoles: role.canManageRoles,
+    singleHolder: role.singleHolder,
     createdAt: role.createdAt.toISOString(),
     updatedAt: role.updatedAt.toISOString(),
   };

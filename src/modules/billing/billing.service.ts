@@ -2,12 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SubscriptionStatus } from '@prisma/client';
+import {
+  BillingTierUpgradeRequestStatus,
+  ChurchPermission,
+  SubscriptionStatus,
+} from '@prisma/client';
 import Stripe from 'stripe';
 
 import {
@@ -20,6 +26,7 @@ import {
   type BillingInterval,
   type BillingTierId,
 } from '../../config/billing-plans.config';
+import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { EmailService } from '../../common/services/email.service';
 import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
@@ -69,6 +76,30 @@ export interface ConfirmTierCrossingResult {
   projectedTierId: BillingTierId;
 }
 
+export interface TierCrossingRequestResult {
+  id: string;
+  status: BillingTierUpgradeRequestStatus;
+  targetTierId: BillingTierId;
+  currentTierId: BillingTierId;
+  currentTierName: string;
+  projectedTierName: string;
+  currentTierMemberRange: string;
+  projectedTierMemberRange: string;
+  currentPrice: number | null;
+  projectedPrice: number | null;
+  interval: BillingInterval | null;
+  hasActiveSubscription: boolean;
+  emailSent: boolean;
+  requestedByName: string | null;
+}
+
+export interface TierCrossingStaffNoticeResult {
+  id: string;
+  tierId: BillingTierId;
+  tierName: string;
+  createdAt: string;
+}
+
 export interface BillingInvoiceResult {
   id: string;
   number: string | null;
@@ -92,6 +123,7 @@ export class BillingService {
     private readonly configService: ConfigService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
     private readonly emailService: EmailService,
+    private readonly churchPermissions: ChurchPermissionsService,
   ) {
     const secretKey = this.configService.get<string>('stripe.secretKey') ?? '';
 
@@ -408,6 +440,347 @@ export class BillingService {
     };
   }
 
+  /**
+   * Bloqueia create/update/receive que aumentariam ativos cruzando faixa
+   * sem acknowledgment prévio.
+   */
+  async assertActiveMemberIncreaseAllowed(
+    churchId: string,
+    projectedActiveCount: number,
+  ): Promise<void> {
+    const preview = await this.previewTierCrossing(
+      churchId,
+      projectedActiveCount,
+    );
+
+    if (!preview.requiresConfirmation) {
+      return;
+    }
+
+    throw new HttpException(
+      {
+        code: 'TIER_UPGRADE_REQUIRED',
+        message:
+          'Esta ação muda a faixa de cobrança da igreja e precisa de autorização do proprietário.',
+        ...preview,
+      },
+      HttpStatus.CONFLICT,
+    );
+  }
+
+  async requestTierCrossing(
+    churchId: string,
+    userId: string,
+    targetTierId: BillingTierId,
+  ): Promise<TierCrossingRequestResult> {
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: {
+        memberCount: true,
+        subscriptionStatus: true,
+        stripeSubscriptionId: true,
+        stripePriceId: true,
+      },
+    });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    const currentTierId = billingTierFromMemberCount(church.memberCount);
+
+    if (!isBillingTierUpgrade(currentTierId, targetTierId)) {
+      throw new BadRequestException(
+        'Esta faixa não corresponde a um upgrade de cobrança neste momento.',
+      );
+    }
+
+    const acknowledgment =
+      await this.prisma.billingTierUpgradeAcknowledgment.findUnique({
+        where: {
+          churchId_tierId: { churchId, tierId: targetTierId },
+        },
+      });
+
+    if (acknowledgment) {
+      throw new ConflictException(
+        'Esta faixa já foi autorizada. Tente adicionar o membro novamente.',
+      );
+    }
+
+    const existing = await this.prisma.billingTierUpgradeRequest.findUnique({
+      where: {
+        churchId_targetTierId: { churchId, targetTierId },
+      },
+    });
+
+    const wasPending = existing?.status === BillingTierUpgradeRequestStatus.pending;
+    let emailSent = false;
+
+    const request = await this.prisma.billingTierUpgradeRequest.upsert({
+      where: {
+        churchId_targetTierId: { churchId, targetTierId },
+      },
+      create: {
+        churchId,
+        targetTierId,
+        requestedByUserId: userId,
+        status: BillingTierUpgradeRequestStatus.pending,
+      },
+      update: {
+        requestedByUserId: userId,
+        status: BillingTierUpgradeRequestStatus.pending,
+        resolvedAt: null,
+        resolvedByUserId: null,
+      },
+      include: {
+        requestedBy: { select: { name: true } },
+      },
+    });
+
+    if (!wasPending) {
+      emailSent = await this.notifyOwnerTierUpgradeRequest(churchId, {
+        requesterName: request.requestedBy.name,
+        currentTierId,
+        targetTierId,
+      });
+    }
+
+    const currentTier = getBillingTierCatalogEntry(currentTierId);
+    const projectedTier = getBillingTierCatalogEntry(targetTierId);
+    const priceMatch = church.stripePriceId
+      ? this.resolveTierAndIntervalFromPriceId(church.stripePriceId)
+      : null;
+    const interval = priceMatch?.interval ?? null;
+    const displayInterval: BillingInterval = interval ?? 'monthly';
+
+    return {
+      id: request.id,
+      status: request.status,
+      targetTierId,
+      currentTierId,
+      currentTierName: currentTier.name,
+      projectedTierName: projectedTier.name,
+      currentTierMemberRange: currentTier.memberRange,
+      projectedTierMemberRange: projectedTier.memberRange,
+      currentPrice:
+        displayInterval === 'yearly'
+          ? currentTier.yearlyPrice
+          : currentTier.monthlyPrice,
+      projectedPrice:
+        displayInterval === 'yearly'
+          ? projectedTier.yearlyPrice
+          : projectedTier.monthlyPrice,
+      interval,
+      hasActiveSubscription:
+        church.subscriptionStatus === SubscriptionStatus.active &&
+        Boolean(church.stripeSubscriptionId),
+      emailSent,
+      requestedByName: request.requestedBy.name,
+    };
+  }
+
+  async getPendingTierCrossingRequest(
+    churchId: string,
+  ): Promise<TierCrossingRequestResult | null> {
+    const request = await this.prisma.billingTierUpgradeRequest.findFirst({
+      where: {
+        churchId,
+        status: BillingTierUpgradeRequestStatus.pending,
+      },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        requestedBy: { select: { name: true } },
+      },
+    });
+
+    if (!request) {
+      return null;
+    }
+
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: {
+        memberCount: true,
+        subscriptionStatus: true,
+        stripeSubscriptionId: true,
+        stripePriceId: true,
+      },
+    });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    const currentTierId = billingTierFromMemberCount(church.memberCount);
+    const targetTierId = request.targetTierId as BillingTierId;
+    const currentTier = getBillingTierCatalogEntry(currentTierId);
+    const projectedTier = getBillingTierCatalogEntry(targetTierId);
+    const priceMatch = church.stripePriceId
+      ? this.resolveTierAndIntervalFromPriceId(church.stripePriceId)
+      : null;
+    const interval = priceMatch?.interval ?? null;
+    const displayInterval: BillingInterval = interval ?? 'monthly';
+
+    return {
+      id: request.id,
+      status: request.status,
+      targetTierId,
+      currentTierId,
+      currentTierName: currentTier.name,
+      projectedTierName: projectedTier.name,
+      currentTierMemberRange: currentTier.memberRange,
+      projectedTierMemberRange: projectedTier.memberRange,
+      currentPrice:
+        displayInterval === 'yearly'
+          ? currentTier.yearlyPrice
+          : currentTier.monthlyPrice,
+      projectedPrice:
+        displayInterval === 'yearly'
+          ? projectedTier.yearlyPrice
+          : projectedTier.monthlyPrice,
+      interval,
+      hasActiveSubscription:
+        church.subscriptionStatus === SubscriptionStatus.active &&
+        Boolean(church.stripeSubscriptionId),
+      emailSent: false,
+      requestedByName: request.requestedBy.name,
+    };
+  }
+
+  async approveTierCrossingRequest(
+    churchId: string,
+    ownerUserId: string,
+    targetTierId: BillingTierId,
+  ): Promise<ConfirmTierCrossingResult> {
+    const request = await this.prisma.billingTierUpgradeRequest.findUnique({
+      where: {
+        churchId_targetTierId: { churchId, targetTierId },
+      },
+    });
+
+    if (!request || request.status !== BillingTierUpgradeRequestStatus.pending) {
+      throw new NotFoundException(
+        'Não há pedido pendente para esta faixa de cobrança.',
+      );
+    }
+
+    const result = await this.confirmTierCrossing(
+      churchId,
+      ownerUserId,
+      targetTierId,
+    );
+
+    await this.prisma.billingTierUpgradeRequest.update({
+      where: { id: request.id },
+      data: {
+        status: BillingTierUpgradeRequestStatus.approved,
+        resolvedAt: new Date(),
+        resolvedByUserId: ownerUserId,
+      },
+    });
+
+    await this.prisma.billingTierUpgradeStaffNotice.create({
+      data: {
+        churchId,
+        tierId: targetTierId,
+      },
+    });
+
+    return result;
+  }
+
+  async dismissTierCrossingRequest(
+    churchId: string,
+    ownerUserId: string,
+    targetTierId: BillingTierId,
+  ): Promise<{ dismissed: true }> {
+    const request = await this.prisma.billingTierUpgradeRequest.findUnique({
+      where: {
+        churchId_targetTierId: { churchId, targetTierId },
+      },
+    });
+
+    if (!request || request.status !== BillingTierUpgradeRequestStatus.pending) {
+      throw new NotFoundException(
+        'Não há pedido pendente para esta faixa de cobrança.',
+      );
+    }
+
+    await this.prisma.billingTierUpgradeRequest.update({
+      where: { id: request.id },
+      data: {
+        status: BillingTierUpgradeRequestStatus.dismissed,
+        resolvedAt: new Date(),
+        resolvedByUserId: ownerUserId,
+      },
+    });
+
+    return { dismissed: true };
+  }
+
+  async listUnreadStaffNotices(
+    churchId: string,
+    userId: string,
+  ): Promise<TierCrossingStaffNoticeResult[]> {
+    const canManage = await this.churchPermissions.hasPermission(
+      userId,
+      churchId,
+      ChurchPermission.members_manage,
+    );
+
+    if (!canManage) {
+      return [];
+    }
+
+    const notices = await this.prisma.billingTierUpgradeStaffNotice.findMany({
+      where: {
+        churchId,
+        reads: {
+          none: { userId },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    return notices.map((notice) => {
+      const tierId = notice.tierId as BillingTierId;
+      const tier = getBillingTierCatalogEntry(tierId);
+
+      return {
+        id: notice.id,
+        tierId,
+        tierName: tier.name,
+        createdAt: notice.createdAt.toISOString(),
+      };
+    });
+  }
+
+  async markStaffNoticeRead(
+    churchId: string,
+    userId: string,
+    noticeId: string,
+  ): Promise<{ read: true }> {
+    const notice = await this.prisma.billingTierUpgradeStaffNotice.findFirst({
+      where: { id: noticeId, churchId },
+    });
+
+    if (!notice) {
+      throw new NotFoundException('Aviso não encontrado.');
+    }
+
+    await this.prisma.billingTierUpgradeStaffNoticeRead.upsert({
+      where: {
+        noticeId_userId: { noticeId, userId },
+      },
+      create: { noticeId, userId },
+      update: {},
+    });
+
+    return { read: true };
+  }
+
   async syncSubscriptionTierForMemberCount(churchId: string): Promise<void> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
@@ -438,6 +811,23 @@ export class BillingService {
       return;
     }
 
+    const acknowledgment =
+      await this.prisma.billingTierUpgradeAcknowledgment.findUnique({
+        where: {
+          churchId_tierId: {
+            churchId,
+            tierId: targetTierId,
+          },
+        },
+      });
+
+    if (!acknowledgment) {
+      this.logger.warn(
+        `Upgrade Stripe bloqueado sem ack para igreja ${churchId} → ${targetTierId}.`,
+      );
+      return;
+    }
+
     try {
       await this.upgradeSubscriptionTier(churchId, targetTierId);
     } catch (error) {
@@ -446,6 +836,44 @@ export class BillingService {
           error instanceof Error ? error.message : 'erro desconhecido'
         }`,
       );
+    }
+  }
+
+  private async notifyOwnerTierUpgradeRequest(
+    churchId: string,
+    details: {
+      requesterName: string;
+      currentTierId: BillingTierId;
+      targetTierId: BillingTierId;
+    },
+  ): Promise<boolean> {
+    const target = await this.getChurchOwnerNotificationTarget(churchId);
+
+    if (!target) {
+      return false;
+    }
+
+    const currentTier = getBillingTierCatalogEntry(details.currentTierId);
+    const projectedTier = getBillingTierCatalogEntry(details.targetTierId);
+
+    try {
+      await this.emailService.sendTierUpgradeRequestEmail(target.email, {
+        ownerName: target.ownerName,
+        churchName: target.churchName,
+        appUrl: target.appUrl,
+        settingsUrl: target.settingsUrl,
+        requesterName: details.requesterName,
+        currentTierName: currentTier.name,
+        projectedTierName: projectedTier.name,
+      });
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de pedido de faixa (${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+      return false;
     }
   }
 
@@ -784,7 +1212,27 @@ export class BillingService {
       return;
     }
 
+    const existing = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { cancelAtPeriodEnd: true },
+    });
+
+    if (!existing) {
+      return;
+    }
+
+    const schedule = this.readStripeSubscriptionSchedule(subscription);
+    const wasCancelScheduled = existing.cancelAtPeriodEnd;
+    const isCancelScheduled = schedule.cancelAtPeriodEnd;
+
     await this.syncSubscriptionToChurch(churchId, subscription);
+
+    if (!wasCancelScheduled && isCancelScheduled) {
+      await this.notifySubscriptionCancelScheduled(
+        churchId,
+        schedule.currentPeriodEnd,
+      );
+    }
   }
 
   private async onSubscriptionDeleted(
@@ -802,6 +1250,7 @@ export class BillingService {
         subscriptionStatus: SubscriptionStatus.canceled,
         stripeSubscriptionId: null,
         stripePriceId: null,
+        cancelAtPeriodEnd: false,
       },
     });
 
@@ -814,6 +1263,7 @@ export class BillingService {
   ): Promise<void> {
     const priceId = subscription.items.data[0]?.price.id ?? null;
     const subscriptionStatus = this.mapStripeStatus(subscription.status);
+    const schedule = this.readStripeSubscriptionSchedule(subscription);
 
     await this.prisma.church.update({
       where: { id: churchId },
@@ -821,6 +1271,7 @@ export class BillingService {
         subscriptionStatus,
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
+        cancelAtPeriodEnd: schedule.cancelAtPeriodEnd,
       },
     });
   }
@@ -1090,6 +1541,45 @@ export class BillingService {
     } catch (error) {
       this.logger.warn(
         `Falha ao enviar e-mail de cancelamento (${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  private async notifySubscriptionCancelScheduled(
+    churchId: string,
+    currentPeriodEnd: string | null,
+  ): Promise<void> {
+    const target = await this.getChurchOwnerNotificationTarget(churchId);
+
+    if (!target) {
+      return;
+    }
+
+    const accessEndsAtLabel = currentPeriodEnd
+      ? new Date(currentPeriodEnd).toLocaleDateString('pt-BR', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          timeZone: 'America/Sao_Paulo',
+        })
+      : undefined;
+
+    try {
+      await this.emailService.sendSubscriptionCancelScheduledEmail(
+        target.email,
+        {
+          ownerName: target.ownerName,
+          churchName: target.churchName,
+          appUrl: target.appUrl,
+          settingsUrl: target.settingsUrl,
+          accessEndsAtLabel,
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de cancelamento agendado (${churchId}): ${
           error instanceof Error ? error.message : 'erro desconhecido'
         }`,
       );

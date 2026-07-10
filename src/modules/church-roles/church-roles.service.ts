@@ -53,6 +53,7 @@ export class ChurchRolesService {
         color: dto.color,
         sortOrder: dto.sortOrder ?? 100,
         isSystem: false,
+        singleHolder: dto.singleHolder ?? false,
         permissions: {
           create: dto.permissions.map((permission) => ({ permission })),
         },
@@ -99,6 +100,25 @@ export class ChurchRolesService {
       );
     }
 
+    if (
+      existing.systemKey === 'member' &&
+      dto.permissions !== undefined &&
+      dto.permissions.length === 0
+    ) {
+      throw new BadRequestException(
+        'O cargo Membro não pode ficar sem permissões.',
+      );
+    }
+
+    if (
+      existing.systemKey === 'member' &&
+      dto.singleHolder === true
+    ) {
+      throw new BadRequestException(
+        'O cargo Membro não pode ser titular único — todos os membros o possuem.',
+      );
+    }
+
     const beforePermissions = existing.permissions.map(
       (entry) => entry.permission,
     );
@@ -125,6 +145,9 @@ export class ChurchRolesService {
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
           ...(dto.color !== undefined ? { color: dto.color } : {}),
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+          ...(dto.singleHolder !== undefined
+            ? { singleHolder: dto.singleHolder }
+            : {}),
         },
         include: { permissions: true },
       });
@@ -191,7 +214,9 @@ export class ChurchRolesService {
 
     if (role.isSystem) {
       throw new BadRequestException(
-        'Cargos padrão do sistema não podem ser removidos.',
+        role.systemKey === 'member'
+          ? 'O cargo Membro é padrão do sistema e não pode ser removido.'
+          : 'Cargos padrão do sistema não podem ser removidos.',
       );
     }
 

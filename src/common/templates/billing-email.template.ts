@@ -15,6 +15,11 @@ export interface BillingEmailContent {
   tierName?: string;
   intervalLabel?: string;
   amountLabel?: string;
+  /** Data formatada de fim de acesso (cancelamento agendado). */
+  accessEndsAtLabel?: string;
+  requesterName?: string;
+  currentTierName?: string;
+  projectedTierName?: string;
 }
 
 function buildBillingEmailShell(
@@ -166,4 +171,126 @@ export function buildSubscriptionCanceledEmailText(
     '',
     '— MinhaChurch',
   ].join('\n');
+}
+
+export function buildSubscriptionCancelScheduledEmailHtml(
+  input: BillingEmailContent,
+): string {
+  const ownerName = escapeHtml(input.ownerName);
+  const churchName = escapeHtml(input.churchName);
+  const settingsUrl = escapeHtml(input.settingsUrl);
+  const accessEndsAtLabel = input.accessEndsAtLabel
+    ? escapeHtml(input.accessEndsAtLabel)
+    : null;
+
+  const accessLine = accessEndsAtLabel
+    ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3d3d38;">O acesso completo permanece até <strong>${accessEndsAtLabel}</strong>. Depois disso, não haverá novas cobranças.</p>`
+    : `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3d3d38;">O acesso completo permanece até o fim do período já pago. Depois disso, não haverá novas cobranças.</p>`;
+
+  return buildBillingEmailShell(
+    'Cancelamento agendado — MinhaChurch',
+    `<h1 style="margin:0 0 16px;font-size:24px;line-height:1.25;font-weight:700;color:#141413;">Cancelamento agendado</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3d3d38;">Olá, ${ownerName}. O cancelamento da assinatura da <strong>${churchName}</strong> foi agendado.</p>
+              ${accessLine}
+              <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#3d3d38;">Se mudou de ideia, você pode reativar a renovação a qualquer momento nas configurações ou no portal de pagamento.</p>
+              <p style="margin:0 0 24px;">
+                <a href="${settingsUrl}" style="display:inline-block;background:#141413;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;">Ver assinatura</a>
+              </p>`,
+    input.appUrl,
+  );
+}
+
+export function buildSubscriptionCancelScheduledEmailText(
+  input: BillingEmailContent,
+): string {
+  const lines = [
+    `Olá, ${input.ownerName}.`,
+    '',
+    `O cancelamento da assinatura da ${input.churchName} foi agendado.`,
+  ];
+
+  if (input.accessEndsAtLabel) {
+    lines.push(
+      '',
+      `O acesso completo permanece até ${input.accessEndsAtLabel}. Depois disso, não haverá novas cobranças.`,
+    );
+  } else {
+    lines.push(
+      '',
+      'O acesso completo permanece até o fim do período já pago. Depois disso, não haverá novas cobranças.',
+    );
+  }
+
+  lines.push(
+    '',
+    'Se mudou de ideia, reative a renovação em Configurações → Assinatura.',
+    '',
+    input.settingsUrl,
+    '',
+    '— MinhaChurch',
+  );
+
+  return lines.join('\n');
+}
+
+export function buildTierUpgradeRequestEmailHtml(
+  input: BillingEmailContent,
+): string {
+  const ownerName = escapeHtml(input.ownerName);
+  const churchName = escapeHtml(input.churchName);
+  const settingsUrl = escapeHtml(input.settingsUrl);
+  const requesterName = input.requesterName
+    ? escapeHtml(input.requesterName)
+    : 'Um administrador';
+  const currentTierName = input.currentTierName
+    ? escapeHtml(input.currentTierName)
+    : null;
+  const projectedTierName = input.projectedTierName
+    ? escapeHtml(input.projectedTierName)
+    : null;
+
+  const tierLine =
+    currentTierName && projectedTierName
+      ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3d3d38;">Faixa <strong>${currentTierName}</strong> → <strong>${projectedTierName}</strong></p>`
+      : '';
+
+  return buildBillingEmailShell(
+    'Pedido de mudança de faixa — MinhaChurch',
+    `<h1 style="margin:0 0 16px;font-size:24px;line-height:1.25;font-weight:700;color:#141413;">Pedido de mudança de faixa</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3d3d38;">Olá, ${ownerName}. <strong>${requesterName}</strong> tentou adicionar ou ativar um membro na <strong>${churchName}</strong>, o que mudaria a faixa de cobrança.</p>
+              ${tierLine}
+              <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#3d3d38;">Somente você pode autorizar essa mudança. Depois da autorização, a equipe poderá tentar de novo o cadastro.</p>
+              <p style="margin:0 0 24px;">
+                <a href="${settingsUrl}" style="display:inline-block;background:#141413;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 20px;border-radius:10px;">Revisar pedido</a>
+              </p>`,
+    input.appUrl,
+  );
+}
+
+export function buildTierUpgradeRequestEmailText(
+  input: BillingEmailContent,
+): string {
+  const lines = [
+    `Olá, ${input.ownerName}.`,
+    '',
+    `${input.requesterName ?? 'Um administrador'} tentou adicionar ou ativar um membro na ${input.churchName}, o que mudaria a faixa de cobrança.`,
+  ];
+
+  if (input.currentTierName && input.projectedTierName) {
+    lines.push(
+      '',
+      `Faixa: ${input.currentTierName} → ${input.projectedTierName}`,
+    );
+  }
+
+  lines.push(
+    '',
+    'Somente você pode autorizar. Depois, a equipe poderá tentar o cadastro novamente.',
+    '',
+    input.settingsUrl,
+    '',
+    '— MinhaChurch',
+  );
+
+  return lines.join('\n');
 }

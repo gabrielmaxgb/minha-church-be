@@ -111,6 +111,8 @@ export class ChurchPermissionsService {
 
     let ministryIds: string[] = [];
     let rosterMinistryIds: string[] = [];
+    let teamMinistryIds: string[] = [];
+    let rolesMinistryIds: string[] = [];
 
     if (canManageChurchEvents) {
       const ministries = await this.prisma.ministry.findMany({
@@ -120,32 +122,11 @@ export class ChurchPermissionsService {
 
       ministryIds = ministries.map((ministry) => ministry.id);
     } else {
-      const member = await this.prisma.member.findFirst({
-        where: {
-          churchId,
-          userId,
-          deletedAt: null,
-        },
-        include: {
-          ministryLinks: {
-            where: {
-              endedAt: null,
-              roleAssignments: {
-                some: {
-                  ministryRole: {
-                    canManageEvents: true,
-                  },
-                },
-              },
-            },
-            select: {
-              ministryId: true,
-            },
-          },
-        },
-      });
-
-      ministryIds = member?.ministryLinks.map((link) => link.ministryId) ?? [];
+      ministryIds = await this.resolveScopedMinistryIds(
+        userId,
+        churchId,
+        'canManageEvents',
+      );
     }
 
     if (granted.has(ChurchPermission.ministries_manage)) {
@@ -153,48 +134,41 @@ export class ChurchPermissionsService {
         where: { churchId, isActive: true },
         select: { id: true },
       });
+      const allIds = ministries.map((ministry) => ministry.id);
 
-      rosterMinistryIds = ministries.map((ministry) => ministry.id);
+      rosterMinistryIds = allIds;
+      teamMinistryIds = allIds;
+      rolesMinistryIds = allIds;
     } else {
-      const member = await this.prisma.member.findFirst({
-        where: {
-          churchId,
-          userId,
-          deletedAt: null,
-        },
-        include: {
-          ministryLinks: {
-            where: {
-              endedAt: null,
-              roleAssignments: {
-                some: {
-                  ministryRole: {
-                    canManageRoster: true,
-                  },
-                },
-              },
-            },
-            include: {
-              ministry: {
-                select: { id: true, isActive: true },
-              },
-            },
-          },
-        },
-      });
+      const [rosterIds, teamIds, rolesIds] = await Promise.all([
+        this.resolveScopedMinistryIds(userId, churchId, 'canManageRoster'),
+        this.resolveScopedMinistryIds(userId, churchId, 'canManageTeam'),
+        this.resolveScopedMinistryIds(userId, churchId, 'canManageRoles'),
+      ]);
 
-      rosterMinistryIds =
-        member?.ministryLinks
-          .filter((link) => link.ministry.isActive)
-          .map((link) => link.ministryId) ?? [];
+      rosterMinistryIds = rosterIds;
+      teamMinistryIds = teamIds;
+      rolesMinistryIds = rolesIds;
+
+      if (granted.has(ChurchPermission.members_manage)) {
+        const ministries = await this.prisma.ministry.findMany({
+          where: { churchId, isActive: true },
+          select: { id: true },
+        });
+        teamMinistryIds = ministries.map((ministry) => ministry.id);
+      }
     }
 
     const membersAccess =
       granted.has(ChurchPermission.members_access) ||
-      granted.has(ChurchPermission.members_manage);
+      granted.has(ChurchPermission.members_manage) ||
+      teamMinistryIds.length > 0;
     const ministriesAccess =
       granted.has(ChurchPermission.ministries_access) ||
-      granted.has(ChurchPermission.ministries_manage);
+      granted.has(ChurchPermission.ministries_manage) ||
+      rosterMinistryIds.length > 0 ||
+      teamMinistryIds.length > 0 ||
+      rolesMinistryIds.length > 0;
     const activitiesAccess =
       granted.has(ChurchPermission.activities_access) ||
       canManageChurchEvents ||
@@ -212,6 +186,8 @@ export class ChurchPermissionsService {
         access: ministriesAccess,
         manage: granted.has(ChurchPermission.ministries_manage),
         rosterMinistryIds,
+        teamMinistryIds,
+        rolesMinistryIds,
       },
       activities: {
         access: activitiesAccess,
@@ -242,52 +218,55 @@ export class ChurchPermissionsService {
     churchId: string,
     ministryId: string,
   ): Promise<boolean> {
-    const access = await this.getMembershipAccess(userId, churchId);
+    return this.canManageMinistryByFlag(
+      userId,
+      churchId,
+      ministryId,
+      'canManageRoster',
+      { ministriesManage: true },
+    );
+  }
 
-    if (!access) {
-      return false;
-    }
+  async canManageMinistryTeam(
+    userId: string,
+    churchId: string,
+    ministryId: string,
+  ): Promise<boolean> {
+    return this.canManageMinistryByFlag(
+      userId,
+      churchId,
+      ministryId,
+      'canManageTeam',
+      { ministriesManage: true, membersManage: true },
+    );
+  }
 
-    if (access.isOwner) {
-      return true;
-    }
+  async canManageMinistryRoles(
+    userId: string,
+    churchId: string,
+    ministryId: string,
+  ): Promise<boolean> {
+    return this.canManageMinistryByFlag(
+      userId,
+      churchId,
+      ministryId,
+      'canManageRoles',
+      { ministriesManage: true },
+    );
+  }
 
-    const ministry = await this.prisma.ministry.findFirst({
-      where: { id: ministryId, churchId, isActive: true },
-    });
+  async canListChurchMembers(
+    userId: string,
+    churchId: string,
+  ): Promise<boolean> {
+    const permissions = await this.getUserPermissions(userId, churchId);
 
-    if (!ministry) {
-      return false;
-    }
-
-    if (access.permissions.has(ChurchPermission.ministries_manage)) {
-      return true;
-    }
-
-    const member = await this.prisma.member.findFirst({
-      where: {
-        churchId,
-        userId,
-        deletedAt: null,
-      },
-      include: {
-        ministryLinks: {
-          where: {
-            ministryId,
-            endedAt: null,
-            roleAssignments: {
-              some: {
-                ministryRole: {
-                  canManageRoster: true,
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    return (member?.ministryLinks.length ?? 0) > 0;
+    return (
+      permissions.members.access ||
+      permissions.members.manage ||
+      permissions.ministries.manage ||
+      permissions.ministries.teamMinistryIds.length > 0
+    );
   }
 
   async canManageMinistryEvents(
@@ -354,6 +333,110 @@ export class ChurchPermissionsService {
     return true;
   }
 
+  private async canManageMinistryByFlag(
+    userId: string,
+    churchId: string,
+    ministryId: string,
+    flag: 'canManageRoster' | 'canManageTeam' | 'canManageRoles',
+    overrides: { ministriesManage?: boolean; membersManage?: boolean },
+  ): Promise<boolean> {
+    const access = await this.getMembershipAccess(userId, churchId);
+
+    if (!access) {
+      return false;
+    }
+
+    if (access.isOwner) {
+      return true;
+    }
+
+    const ministry = await this.prisma.ministry.findFirst({
+      where: { id: ministryId, churchId, isActive: true },
+    });
+
+    if (!ministry) {
+      return false;
+    }
+
+    if (
+      overrides.ministriesManage &&
+      access.permissions.has(ChurchPermission.ministries_manage)
+    ) {
+      return true;
+    }
+
+    if (
+      overrides.membersManage &&
+      access.permissions.has(ChurchPermission.members_manage)
+    ) {
+      return true;
+    }
+
+    const member = await this.prisma.member.findFirst({
+      where: {
+        churchId,
+        userId,
+        deletedAt: null,
+      },
+      include: {
+        ministryLinks: {
+          where: {
+            ministryId,
+            endedAt: null,
+            roleAssignments: {
+              some: {
+                ministryRole: {
+                  [flag]: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return (member?.ministryLinks.length ?? 0) > 0;
+  }
+
+  private async resolveScopedMinistryIds(
+    userId: string,
+    churchId: string,
+    flag: 'canManageEvents' | 'canManageRoster' | 'canManageTeam' | 'canManageRoles',
+  ): Promise<string[]> {
+    const member = await this.prisma.member.findFirst({
+      where: {
+        churchId,
+        userId,
+        deletedAt: null,
+      },
+      include: {
+        ministryLinks: {
+          where: {
+            endedAt: null,
+            roleAssignments: {
+              some: {
+                ministryRole: {
+                  [flag]: true,
+                },
+              },
+            },
+          },
+          include: {
+            ministry: {
+              select: { id: true, isActive: true },
+            },
+          },
+        },
+      },
+    });
+
+    return (
+      member?.ministryLinks
+        .filter((link) => link.ministry.isActive)
+        .map((link) => link.ministryId) ?? []
+    );
+  }
+
   private toAccessContext(membership: {
     id: string;
     userId: string;
@@ -404,7 +487,13 @@ export class ChurchPermissionsService {
     return {
       dashboard: { access: false },
       members: { access: false, manage: false },
-      ministries: { access: false, manage: false, rosterMinistryIds: [] },
+      ministries: {
+        access: false,
+        manage: false,
+        rosterMinistryIds: [],
+        teamMinistryIds: [],
+        rolesMinistryIds: [],
+      },
       activities: { access: false, createChurchWide: false, ministryIds: [] },
       schedules: { access: false },
       finances: { access: false },

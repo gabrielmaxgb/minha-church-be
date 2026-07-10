@@ -42,12 +42,6 @@ export class MinistriesController {
   constructor(private readonly ministriesService: MinistriesService) {}
 
   @Get()
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(
-    ChurchPermission.ministries_access,
-    ChurchPermission.ministries_manage,
-    ChurchPermission.communication_manage,
-  )
   findAll(
     @Param('churchId') churchId: string,
     @CurrentUser() user: JwtPayload,
@@ -56,11 +50,6 @@ export class MinistriesController {
   }
 
   @Get(':ministryId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(
-    ChurchPermission.ministries_access,
-    ChurchPermission.ministries_manage,
-  )
   findOne(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
@@ -107,38 +96,51 @@ export class MinistriesController {
   }
 
   @Post(':ministryId/roles')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.ministries_manage)
   createRole(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: CreateMinistryRoleDto,
   ) {
-    return this.ministriesService.createRole(churchId, ministryId, dto);
+    return this.ministriesService.createRole(
+      churchId,
+      ministryId,
+      user.sub,
+      dto,
+    );
   }
 
   @Patch(':ministryId/roles/:roleId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.ministries_manage)
   updateRole(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
     @Param('roleId') roleId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateMinistryRoleDto,
   ) {
-    return this.ministriesService.updateRole(churchId, ministryId, roleId, dto);
+    return this.ministriesService.updateRole(
+      churchId,
+      ministryId,
+      roleId,
+      user.sub,
+      dto,
+    );
   }
 
   @Delete(':ministryId/roles/:roleId')
   @HttpCode(204)
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.ministries_manage)
   async removeRole(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
     @Param('roleId') roleId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    await this.ministriesService.removeRole(churchId, ministryId, roleId);
+    await this.ministriesService.removeRole(
+      churchId,
+      ministryId,
+      roleId,
+      user.sub,
+    );
   }
 
   @Get(':ministryId/members')

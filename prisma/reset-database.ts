@@ -1,4 +1,5 @@
 import { seedBillingTierChurches } from './seed-billing-tiers';
+import { seedTierCrossingTestChurch } from './seed-tier-crossing-test';
 import { seedDatabase } from './seed';
 import {
   applyMigrationsWithPg,
@@ -17,10 +18,12 @@ async function main() {
     const { prisma } = createPrismaWithPg(pool);
     await seedDatabase(prisma);
     await seedBillingTierChurches(prisma);
+    await seedTierCrossingTestChurch(prisma);
     console.log('Seed concluído: contas demo do login / senha123');
     console.log('  - Perfis: owner, admin, pastor, secretary, treasurer, leader, member');
     console.log('  - +20 membros mock na Igreja Batista Central');
     console.log('  - 4 igrejas faixa Stripe (trial expirado)');
+    console.log('  - Igreja teste faixa (99 membros) — owner-tier-crossing@billing.test');
 
     await prisma.$disconnect();
   } finally {
