@@ -44,6 +44,13 @@ enum ChurchPlanTier {
   enterprise
 }
 
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  canceled
+}
+
 enum MemberStatus {
   visitor
   active
@@ -77,38 +84,47 @@ enum EventRecurrenceFrequency {
 }
 
 model User {
-  id                 String   @id @default(cuid())
-  email              String   @unique
-  cpf                String?  @unique
-  passwordHash       String   @map("password_hash")
-  name               String
-  avatarUrl          String?  @map("avatar_url")
-  mustChangePassword Boolean  @default(false) @map("must_change_password")
-  temporaryPasswordEnc String? @map("temporary_password_enc")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  emailCanonical       String    @unique @map("email_canonical")
+  cpf                  String?   @unique
+  passwordHash         String    @map("password_hash")
+  name                 String
+  avatarUrl            String?   @map("avatar_url")
+  mustChangePassword   Boolean   @default(false) @map("must_change_password")
+  temporaryPasswordEnc String?   @map("temporary_password_enc")
+  emailVerifiedAt      DateTime? @map("email_verified_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   memberships                   ChurchMembership[]
   memberProfiles                Member[]
   ministryEvents                MinistryEvent[]    @relation("EventCreatedBy")
   auditLogs                     AuditLog[]
   passwordResetTokens           PasswordResetToken[]
+  emailVerificationTokens       EmailVerificationToken[]
   passwordResetRequests         PasswordResetRequest[]
   resolvedPasswordResetRequests PasswordResetRequest[] @relation("ResolvedPasswordResetRequests")
   announcements                 Announcement[]     @relation("AnnouncementAuthor")
   announcementReads             AnnouncementRead[]
+  billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
 
   @@map("users")
 }
 
 model Church {
-  id          String         @id @default(cuid())
-  name        String
-  slug        String         @unique
-  memberCount Int            @default(0) @map("member_count")
-  planTier    ChurchPlanTier @default(starter) @map("plan_tier")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+  id                     String               @id @default(cuid())
+  name                   String
+  slug                   String               @unique
+  memberCount            Int                  @default(0) @map("member_count")
+  planTier               ChurchPlanTier         @default(starter) @map("plan_tier")
+  subscriptionStatus     SubscriptionStatus   @default(trialing) @map("subscription_status")
+  trialEndsAt            DateTime?            @map("trial_ends_at")
+  stripeCustomerId       String?              @unique @map("stripe_customer_id")
+  stripeSubscriptionId   String?              @map("stripe_subscription_id")
+  stripePriceId          String?              @map("stripe_price_id")
+  createdAt              DateTime             @default(now()) @map("created_at")
+  updatedAt              DateTime             @updatedAt @map("updated_at")
 
   memberships           ChurchMembership[]
   members               Member[]
@@ -118,7 +134,30 @@ model Church {
   passwordResetRequests PasswordResetRequest[]
   announcements         Announcement[]
 
+  billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
+
   @@map("churches")
+}
+
+model BillingTierUpgradeAcknowledgment {
+  id        String   @id @default(cuid())
+  churchId  String   @map("church_id")
+  tierId    String   @map("tier_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([churchId, tierId])
+  @@map("billing_tier_upgrade_acknowledgments")
+}
+
+model StripeWebhookEvent {
+  id          String   @id
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("stripe_webhook_events")
 }
 
 model ChurchRole {
@@ -474,6 +513,20 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
 }
 
 model PasswordResetRequest {

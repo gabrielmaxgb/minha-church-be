@@ -9,6 +9,7 @@ import { MemberStatus, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { generateTemporaryPassword } from '../../common/utils/credentials';
+import { canonicalizeEmail } from '../../common/utils/canonicalize-email';
 import { encryptSecret } from '../../common/utils/secret-encryption';
 import {
   cpfToInternalEmail,
@@ -17,6 +18,7 @@ import {
   normalizeCpf,
 } from '../../common/utils/cpf';
 import { PrismaService } from '../../database/prisma.service';
+import { BillingService } from '../billing/billing.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
@@ -60,6 +62,7 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly billingService: BillingService,
   ) {}
 
   async findAll(
@@ -764,11 +767,13 @@ export class MembersService {
     const user = await tx.user.create({
       data: {
         email: userEmail,
+        emailCanonical: canonicalizeEmail(userEmail),
         cpf,
         name: member.name,
         passwordHash,
         mustChangePassword: true,
         temporaryPasswordEnc,
+        emailVerifiedAt: new Date(),
       },
     });
 
@@ -872,6 +877,8 @@ export class MembersService {
       where: { id: churchId },
       data: { memberCount: count },
     });
+
+    await this.billingService.syncSubscriptionTierForMemberCount(churchId);
   }
 
   /**

@@ -246,6 +246,7 @@ export class UsersService {
     name: string;
     avatarUrl: string | null;
     mustChangePassword: boolean;
+    emailVerifiedAt?: Date | null;
   }): UserRecord {
     return {
       id: user.id,
@@ -255,6 +256,7 @@ export class UsersService {
       name: user.name,
       avatarUrl: user.avatarUrl ?? undefined,
       mustChangePassword: user.mustChangePassword,
+      emailVerifiedAt: user.emailVerifiedAt ?? null,
     };
   }
 }

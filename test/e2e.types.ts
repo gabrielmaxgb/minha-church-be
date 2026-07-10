@@ -5,8 +5,14 @@ export interface E2eMembershipItem {
 }
 
 export interface E2eLoginResponse {
-  user: { email: string };
-  church: { id: string; slug?: string };
+  user: { email: string; isOwner?: boolean };
+  church: {
+    id: string;
+    slug?: string;
+    subscriptionStatus?: string;
+    trialEndsAt?: string | null;
+    featuresLocked?: boolean;
+  };
   tokens: { expiresIn: number; accessToken?: string };
   permissions?: {
     members: { manage: boolean };

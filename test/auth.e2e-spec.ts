@@ -90,10 +90,53 @@ describe('Auth (e2e)', () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({
-        email: 'pastor@igreja.com.br',
+        identifier: 'pastor@igreja.com.br',
         password: 'senha-errada',
       })
       .expect(401);
+  });
+
+  it('POST /auth/register-church creates church with trial and owner session', async () => {
+    const email = `owner-${Date.now()}@register.test`;
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Igreja Teste Registro',
+        ownerName: 'Owner Teste',
+        ownerEmail: email,
+        password: 'senha12345',
+        acceptTerms: true,
+      })
+      .expect(200);
+
+    const body = response.body as
+      | E2eLoginResponse
+      | { requiresEmailVerification: true; email: string };
+
+    if ('requiresEmailVerification' in body && body.requiresEmailVerification) {
+      expect(body.email).toBe(email);
+      return;
+    }
+
+    expect(body.user.email).toBe(email);
+    expect(body.user.isOwner).toBe(true);
+    expect(body.church.subscriptionStatus).toBe('trialing');
+    expect(body.church.trialEndsAt).toBeTruthy();
+    expect(body.church.featuresLocked).toBe(false);
+  });
+
+  it('POST /auth/register-church rejects duplicate email', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Outra Igreja',
+        ownerName: 'Duplicado',
+        ownerEmail: 'pastor@igreja.com.br',
+        password: 'senha12345',
+        acceptTerms: true,
+      })
+      .expect(409);
   });
 
   it('POST /auth/logout clears cookies', async () => {

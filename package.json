@@ -29,6 +29,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
+    "db:seed:billing-tiers": "ts-node --transpile-only prisma/seed-billing-tiers.ts",
+    "db:seed:tier-crossing-test": "dotenv -e .env -- ts-node --transpile-only prisma/seed-tier-crossing-test.ts",
     "db:reset:keep-users": "ts-node --transpile-only prisma/reset-keep-users.ts",
     "db:studio": "prisma studio"
   },
@@ -52,7 +54,8 @@
     "prisma": "^6.19.3",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.16.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "stripe": "^22.3.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

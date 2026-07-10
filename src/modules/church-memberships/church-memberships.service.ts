@@ -16,6 +16,7 @@ import {
 } from '../../common/audit/audit.constants';
 import { formatCpf } from '../../common/utils/cpf';
 import { isInternalLoginEmail } from '../../common/utils/login-email';
+import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
 import { decryptSecret } from '../../common/utils/secret-encryption';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchRolesService } from '../church-roles/church-roles.service';
@@ -41,6 +42,7 @@ const membershipInclude = {
           id: true,
           name: true,
           churchId: true,
+          email: true,
           deletedAt: true,
         },
       },
@@ -380,6 +382,10 @@ export class ChurchMembershipsService {
       throw new NotFoundException('Usuário não encontrado nesta igreja.');
     }
 
+    if (dto.isOwner === true && !membership.isOwner) {
+      this.assertCanReceiveOwnership(membership, churchId);
+    }
+
     const targetPermissions = new Set<ChurchPermission>();
     for (const assignment of membership.roleAssignments) {
       for (const entry of assignment.role.permissions) {
@@ -552,6 +558,10 @@ export class ChurchMembershipsService {
       targetUserId,
     );
 
+    if (ownerChanged && response.isOwner) {
+      await this.requireOwnerVerificationOnPromotion(targetUserId);
+    }
+
     return response;
   }
 
@@ -600,6 +610,8 @@ export class ChurchMembershipsService {
         'Este usuário já é proprietário da igreja.',
       );
     }
+
+    this.assertCanReceiveOwnership(targetMembership, churchId);
 
     const memberRole = await this.prisma.churchRole.findFirst({
       where: { churchId, systemKey: 'member' },
@@ -669,7 +681,56 @@ export class ChurchMembershipsService {
       targetUserId,
     );
 
+    await this.requireOwnerVerificationOnPromotion(targetUserId);
+
     return response;
+  }
+
+  private assertCanReceiveOwnership(
+    membership: {
+      user: {
+        email: string;
+        memberProfiles: Array<{
+          churchId: string;
+          email: string | null;
+          deletedAt: Date | null;
+        }>;
+      };
+    },
+    churchId: string,
+  ): void {
+    const memberProfile =
+      membership.user.memberProfiles.find(
+        (profile) =>
+          profile.churchId === churchId && profile.deletedAt === null,
+      ) ?? null;
+
+    const contactEmail = resolveUserContactEmail(
+      membership.user.email,
+      memberProfile?.email,
+    );
+
+    if (!contactEmail) {
+      throw new BadRequestException(
+        'A propriedade só pode ser transferida para quem tem e-mail cadastrado no membro.',
+      );
+    }
+  }
+
+  private async requireOwnerVerificationOnPromotion(
+    userId: string,
+  ): Promise<void> {
+    const verificationRequired =
+      this.config.get<boolean>('email.verificationRequired') ?? false;
+
+    if (!verificationRequired) {
+      return;
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { emailVerifiedAt: null },
+    });
   }
 
   private async ensureAnotherOwnerRemains(
@@ -707,6 +768,7 @@ export class ChurchMembershipsService {
           id: string;
           name: string;
           churchId: string;
+          email: string | null;
           deletedAt: Date | null;
         }>;
       };
@@ -739,6 +801,12 @@ export class ChurchMembershipsService {
       userId: membership.userId,
       churchId: membership.churchId,
       isOwner: membership.isOwner,
+      canReceiveOwnership: Boolean(
+        resolveUserContactEmail(
+          membership.user.email,
+          memberProfile?.email,
+        ),
+      ),
       roles: roles.map((role) => ({
         id: role.id,
         name: role.name,

@@ -89,6 +89,7 @@ export class EventsService {
       myAvailabilityStatus: 'available' | 'unavailable' | null;
       myRoleLabels: string[];
       needsRosterFunctions: boolean;
+      canRespondToAvailability: boolean;
     }
   > {
     const [event, viewContext, viewerMember] = await Promise.all([
@@ -144,28 +145,37 @@ export class EventsService {
 
     let myRoleLabels = myAvailability?.roleLabels ?? [];
     let needsRosterFunctionsFlag = false;
+    let canRespondToAvailability = false;
 
-    if (event.ministryId && viewerMember) {
-      const [memberLink, serviceFunctions] = await Promise.all([
-        this.prisma.memberMinistry.findFirst({
-          where: {
-            ministryId: event.ministryId,
-            memberId: viewerMember.id,
-            endedAt: null,
-          },
-          select: { instruments: true },
-        }),
-        this.prisma.ministryServiceFunction.findMany({
-          where: { ministryId: event.ministryId },
-          select: { id: true },
-        }),
-      ]);
+    if (viewerMember) {
+      if (!event.ministryId) {
+        canRespondToAvailability = true;
+      } else {
+        const [memberLink, serviceFunctions] = await Promise.all([
+          this.prisma.memberMinistry.findFirst({
+            where: {
+              ministryId: event.ministryId,
+              memberId: viewerMember.id,
+              endedAt: null,
+            },
+            select: { instruments: true },
+          }),
+          this.prisma.ministryServiceFunction.findMany({
+            where: { ministryId: event.ministryId },
+            select: { id: true },
+          }),
+        ]);
 
-      myRoleLabels = memberLink?.instruments ?? [];
-      needsRosterFunctionsFlag = memberNeedsServiceFunctions(
-        memberLink?.instruments ?? [],
-        serviceFunctions,
-      );
+        canRespondToAvailability = memberLink !== null;
+
+        if (memberLink) {
+          myRoleLabels = memberLink.instruments;
+          needsRosterFunctionsFlag = memberNeedsServiceFunctions(
+            memberLink.instruments,
+            serviceFunctions,
+          );
+        }
+      }
     }
 
     return {
@@ -177,6 +187,7 @@ export class EventsService {
       myAvailabilityStatus: myAvailability?.status ?? null,
       myRoleLabels,
       needsRosterFunctions: needsRosterFunctionsFlag,
+      canRespondToAvailability,
     };
   }
 

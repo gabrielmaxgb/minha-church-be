@@ -6,6 +6,10 @@ import {
   buildPasswordResetEmailHtml,
   buildPasswordResetEmailText,
 } from '../templates/password-reset-email.template';
+import {
+  buildEmailVerificationEmailHtml,
+  buildEmailVerificationEmailText,
+} from '../templates/email-verification-email.template';
 
 @Injectable()
 export class EmailService {
@@ -40,6 +44,31 @@ export class EmailService {
       subject: 'Redefinir sua senha — MinhaChurch',
       html: buildPasswordResetEmailHtml(emailContent),
       text: buildPasswordResetEmailText(emailContent),
+    });
+  }
+
+  async sendEmailVerificationEmail(
+    to: string,
+    verifyUrl: string,
+    userName: string,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY não configurada — e-mail de verificação não enviado para ${to}. URL: ${verifyUrl}`,
+      );
+      return;
+    }
+
+    const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+    const appUrl = this.config.getOrThrow<string>('appUrl');
+    const emailContent = { userName, verifyUrl, appUrl };
+
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      subject: 'Confirme seu e-mail — MinhaChurch',
+      html: buildEmailVerificationEmailHtml(emailContent),
+      text: buildEmailVerificationEmailText(emailContent),
     });
   }
 }
