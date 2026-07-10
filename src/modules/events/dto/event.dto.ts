@@ -7,6 +7,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -141,6 +142,17 @@ export class UpdateChurchEventDto {
   @IsOptional()
   @IsBoolean()
   visibleToChurch?: boolean;
+
+  /**
+   * Atualiza a regra de recorrência (estilo Google Agenda).
+   * `null` remove a repetição no escopo informado.
+   * Omitir deixa a série como está.
+   */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @ValidateNested()
+  @Type(() => EventRecurrenceDto)
+  recurrence?: EventRecurrenceDto | null;
 
   /** Escopo da edição em eventos recorrentes (padrão: só esta ocorrência). */
   @IsOptional()

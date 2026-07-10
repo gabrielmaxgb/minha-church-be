@@ -132,6 +132,8 @@ model Church {
 
   memberships           ChurchMembership[]
   members               Member[]
+  families              Family[]
+  memberRelations       MemberRelation[]
   ministries            Ministry[]
   roles                 ChurchRole[]
   auditLogs             AuditLog[]
@@ -276,9 +278,25 @@ model ChurchMembershipRole {
   @@map("church_membership_roles")
 }
 
+model Family {
+  id        String   @id @default(cuid())
+  churchId  String   @map("church_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  church  Church   @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  members Member[]
+
+  @@unique([churchId, name])
+  @@index([churchId])
+  @@map("families")
+}
+
 model Member {
   id                 String         @id @default(cuid())
   churchId           String         @map("church_id")
+  familyId           String?        @map("family_id")
   name               String
   email              String?
   cpf                String?
@@ -305,17 +323,44 @@ model Member {
   updatedAt          DateTime       @updatedAt @map("updated_at")
 
   church         Church              @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  family         Family?             @relation(fields: [familyId], references: [id], onDelete: SetNull)
   user           User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
   ministryLinks  MemberMinistry[]
   availabilities EventAvailability[]
   eventRoleProfiles MemberEventRoleProfile[]
   rosterAssignments EventRosterAssignment[]
+  relationsFrom  MemberRelation[]    @relation("RelationFrom")
+  relationsTo    MemberRelation[]    @relation("RelationTo")
 
   @@unique([churchId, email])
   @@unique([churchId, cpf])
   @@unique([churchId, userId])
   @@index([churchId, status])
+  @@index([churchId, familyId])
   @@map("members")
+}
+
+enum MemberRelationType {
+  spouse
+  parent
+}
+
+model MemberRelation {
+  id           String             @id @default(cuid())
+  churchId     String             @map("church_id")
+  fromMemberId String             @map("from_member_id")
+  toMemberId   String             @map("to_member_id")
+  type         MemberRelationType
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  church     Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  fromMember Member @relation("RelationFrom", fields: [fromMemberId], references: [id], onDelete: Cascade)
+  toMember   Member @relation("RelationTo", fields: [toMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([fromMemberId, toMemberId, type])
+  @@index([churchId])
+  @@index([toMemberId])
+  @@map("member_relations")
 }
 
 enum EventAvailabilityStatus {

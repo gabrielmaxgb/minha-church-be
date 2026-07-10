@@ -41,13 +41,17 @@ import {
   parseOptionalDate,
   toMemberResponse,
   type CreateMemberResponse,
+  type FamilyGraphResponse,
+  type FamilyResponse,
   type MemberAccountCredentials,
+  type MemberRelationResponse,
   type MemberResponse,
   type ReceiveMemberResponse,
   type UpdateMemberResponse,
 } from './members.types';
 
 const memberInclude = {
+  family: true,
   ministryLinks: {
     where: { endedAt: null },
     include: {
@@ -97,6 +101,11 @@ export class MembersService {
       churchId,
       deletedAt: null,
       ...(query.status ? { status: query.status } : {}),
+      ...(query.familyId === 'none'
+        ? { familyId: null }
+        : query.familyId
+          ? { familyId: query.familyId }
+          : {}),
       ...(query.search
         ? {
             OR: [
@@ -265,6 +274,8 @@ export class MembersService {
       await this.assertActiveMemberTierAllowed(churchId);
     }
 
+    const familyId = await this.resolveFamilyId(churchId, dto.familyId);
+
     const visitorSince =
       parseOptionalDate(dto.visitorSince) ??
       (status === MemberStatus.visitor ? new Date() : null);
@@ -274,6 +285,7 @@ export class MembersService {
 
     const memberData = {
       churchId,
+      familyId,
       name: dto.name.trim(),
       email,
       cpf,
@@ -407,6 +419,11 @@ export class MembersService {
     const previousStatus = existing.status;
     let account: MemberAccountCredentials | undefined;
 
+    const nextFamilyId =
+      dto.familyId !== undefined
+        ? await this.resolveFamilyId(churchId, dto.familyId)
+        : undefined;
+
     const member = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.member.update({
       where: { id: memberId },
@@ -456,6 +473,7 @@ export class MembersService {
         ...(dto.membershipDate !== undefined
           ? { membershipDate: parseOptionalDate(dto.membershipDate) }
           : {}),
+        ...(nextFamilyId !== undefined ? { familyId: nextFamilyId } : {}),
         ...(nextStatus === MemberStatus.active && previousStatus !== MemberStatus.active
           ? { membershipDate: new Date(), visitorSince: null }
           : {}),
@@ -1384,5 +1402,269 @@ export class MembersService {
     }
 
     await this.ensureMembershipWithMemberRole(this.prisma, churchId, userId);
+  }
+
+  async listFamilies(
+    churchId: string,
+    userId: string,
+  ): Promise<FamilyResponse[]> {
+    const canList = await this.churchPermissions.canListChurchMembers(
+      userId,
+      churchId,
+    );
+
+    if (!canList) {
+      throw new ForbiddenException('Permissão insuficiente.');
+    }
+
+    const families = await this.prisma.family.findMany({
+      where: { churchId },
+      include: {
+        _count: {
+          select: {
+            members: { where: { deletedAt: null } },
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return families.map((family) => ({
+      id: family.id,
+      churchId: family.churchId,
+      name: family.name,
+      memberCount: family._count.members,
+      createdAt: family.createdAt.toISOString(),
+      updatedAt: family.updatedAt.toISOString(),
+    }));
+  }
+
+  async createFamily(
+    churchId: string,
+    name: string,
+  ): Promise<FamilyResponse> {
+    const trimmed = name.trim();
+
+    if (trimmed.length < 2) {
+      throw new BadRequestException('Informe um nome de família com pelo menos 2 caracteres.');
+    }
+
+    try {
+      const family = await this.prisma.family.create({
+        data: {
+          churchId,
+          name: trimmed,
+        },
+      });
+
+      return {
+        id: family.id,
+        churchId: family.churchId,
+        name: family.name,
+        memberCount: 0,
+        createdAt: family.createdAt.toISOString(),
+        updatedAt: family.updatedAt.toISOString(),
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Já existe uma família com esse nome.');
+      }
+
+      throw error;
+    }
+  }
+
+  private async resolveFamilyId(
+    churchId: string,
+    familyId?: string | null,
+  ): Promise<string | null | undefined> {
+    if (familyId === undefined) {
+      return undefined;
+    }
+
+    if (familyId === null || familyId === '') {
+      return null;
+    }
+
+    const family = await this.prisma.family.findFirst({
+      where: { id: familyId, churchId },
+      select: { id: true },
+    });
+
+    if (!family) {
+      throw new BadRequestException('Família não encontrada nesta igreja.');
+    }
+
+    return family.id;
+  }
+
+  async getFamilyGraph(
+    churchId: string,
+    familyId: string,
+    userId: string,
+  ): Promise<FamilyGraphResponse> {
+    const canList = await this.churchPermissions.canListChurchMembers(
+      userId,
+      churchId,
+    );
+
+    if (!canList) {
+      throw new ForbiddenException('Permissão insuficiente.');
+    }
+
+    const family = await this.prisma.family.findFirst({
+      where: { id: familyId, churchId },
+    });
+
+    if (!family) {
+      throw new NotFoundException('Família não encontrada.');
+    }
+
+    const members = await this.prisma.member.findMany({
+      where: { churchId, familyId, deletedAt: null },
+      select: { id: true, name: true, status: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const memberIds = members.map((member) => member.id);
+
+    const relations =
+      memberIds.length === 0
+        ? []
+        : await this.prisma.memberRelation.findMany({
+            where: {
+              churchId,
+              fromMemberId: { in: memberIds },
+              toMemberId: { in: memberIds },
+            },
+            orderBy: { createdAt: 'asc' },
+          });
+
+    return {
+      family: { id: family.id, name: family.name },
+      members,
+      relations: relations.map((relation) => ({
+        id: relation.id,
+        fromMemberId: relation.fromMemberId,
+        toMemberId: relation.toMemberId,
+        type: relation.type,
+        createdAt: relation.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  async createMemberRelation(
+    churchId: string,
+    familyId: string,
+    dto: { fromMemberId: string; toMemberId: string; type: 'spouse' | 'parent' },
+  ): Promise<MemberRelationResponse> {
+    if (dto.fromMemberId === dto.toMemberId) {
+      throw new BadRequestException('Escolha duas pessoas diferentes.');
+    }
+
+    const family = await this.prisma.family.findFirst({
+      where: { id: familyId, churchId },
+      select: { id: true },
+    });
+
+    if (!family) {
+      throw new NotFoundException('Família não encontrada.');
+    }
+
+    const members = await this.prisma.member.findMany({
+      where: {
+        churchId,
+        familyId,
+        deletedAt: null,
+        id: { in: [dto.fromMemberId, dto.toMemberId] },
+      },
+      select: { id: true },
+    });
+
+    if (members.length !== 2) {
+      throw new BadRequestException(
+        'As duas pessoas precisam pertencer a esta família.',
+      );
+    }
+
+    let fromMemberId = dto.fromMemberId;
+    let toMemberId = dto.toMemberId;
+
+    // Cônjuge: guarda uma aresta canônica (ordem estável) e impede duplicata invertida.
+    if (dto.type === 'spouse') {
+      const ordered = [dto.fromMemberId, dto.toMemberId].sort();
+      fromMemberId = ordered[0];
+      toMemberId = ordered[1];
+
+      const existingSpouse = await this.prisma.memberRelation.findFirst({
+        where: {
+          churchId,
+          type: 'spouse',
+          OR: [
+            { fromMemberId, toMemberId },
+            { fromMemberId: toMemberId, toMemberId: fromMemberId },
+          ],
+        },
+      });
+
+      if (existingSpouse) {
+        throw new ConflictException('Essas pessoas já estão como cônjuges.');
+      }
+    }
+
+    try {
+      const relation = await this.prisma.memberRelation.create({
+        data: {
+          churchId,
+          fromMemberId,
+          toMemberId,
+          type: dto.type,
+        },
+      });
+
+      return {
+        id: relation.id,
+        fromMemberId: relation.fromMemberId,
+        toMemberId: relation.toMemberId,
+        type: relation.type,
+        createdAt: relation.createdAt.toISOString(),
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Esse vínculo já existe.');
+      }
+
+      throw error;
+    }
+  }
+
+  async deleteMemberRelation(
+    churchId: string,
+    familyId: string,
+    relationId: string,
+  ): Promise<void> {
+    const relation = await this.prisma.memberRelation.findFirst({
+      where: { id: relationId, churchId },
+      include: {
+        fromMember: { select: { familyId: true } },
+        toMember: { select: { familyId: true } },
+      },
+    });
+
+    if (
+      !relation ||
+      relation.fromMember.familyId !== familyId ||
+      relation.toMember.familyId !== familyId
+    ) {
+      throw new NotFoundException('Vínculo não encontrado nesta família.');
+    }
+
+    await this.prisma.memberRelation.delete({ where: { id: relationId } });
   }
 }
