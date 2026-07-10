@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChurchPermission } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { AuditService } from '../../common/services/audit.service';
@@ -604,11 +605,30 @@ export class ChurchMembershipsService {
     churchId: string,
     targetUserId: string,
     actorUserId: string,
+    password: string,
   ): Promise<ChurchMembershipResponse> {
     if (targetUserId === actorUserId) {
       throw new BadRequestException(
         'Escolha outra pessoa para receber a propriedade.',
       );
+    }
+
+    const actorUser = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { passwordHash: true },
+    });
+
+    if (!actorUser) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      password,
+      actorUser.passwordHash,
+    );
+
+    if (!passwordMatches) {
+      throw new BadRequestException('Senha incorreta.');
     }
 
     const actorAccess = await this.churchPermissions.getMembershipAccess(
