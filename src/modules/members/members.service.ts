@@ -425,6 +425,19 @@ export class MembersService {
         : undefined;
 
     const member = await this.prisma.$transaction(async (tx) => {
+      if (
+        nextFamilyId !== undefined &&
+        existing.familyId &&
+        nextFamilyId !== existing.familyId
+      ) {
+        await tx.memberRelation.deleteMany({
+          where: {
+            churchId,
+            OR: [{ fromMemberId: memberId }, { toMemberId: memberId }],
+          },
+        });
+      }
+
       const updated = await tx.member.update({
       where: { id: memberId },
       data: {
