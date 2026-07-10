@@ -1,3 +1,3 @@
 export { ChurchAccessGuard, PermissionsGuard } from './church-access.guard';
-export { ActivePlanGuard } from './active-plan.guard';
-export { TrialWriteGuard } from './trial-write.guard';
+export { ChurchOwnerGuard } from './church-owner.guard';
+export { SubscriptionWriteGuard } from './subscription-write.guard';

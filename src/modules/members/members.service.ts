@@ -9,6 +9,7 @@ import { MemberStatus, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { generateTemporaryPassword } from '../../common/utils/credentials';
+import { canonicalizeEmail } from '../../common/utils/canonicalize-email';
 import { encryptSecret } from '../../common/utils/secret-encryption';
 import {
   cpfToInternalEmail,
@@ -16,10 +17,8 @@ import {
   isValidCpf,
   normalizeCpf,
 } from '../../common/utils/cpf';
-import { resolveEmailCanonical } from '../../common/utils/canonical-email';
 import { PrismaService } from '../../database/prisma.service';
-import { OnboardingPolicyService } from '../../common/services/onboarding-policy.service';
-import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
+import { BillingService } from '../billing/billing.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
@@ -63,8 +62,7 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly onboardingPolicy: OnboardingPolicyService,
-    private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly billingService: BillingService,
   ) {}
 
   async findAll(
@@ -223,8 +221,6 @@ export class MembersService {
     churchId: string,
     dto: CreateMemberDto,
   ): Promise<CreateMemberResponse> {
-    await this.onboardingPolicy.assertCanAddMember(churchId);
-
     const email = dto.email?.trim().toLowerCase() || null;
     const cpf = dto.cpf ? normalizeCpf(dto.cpf) : null;
     const status = dto.status ?? MemberStatus.visitor;
@@ -298,8 +294,6 @@ export class MembersService {
 
     let account: MemberAccountCredentials;
 
-    await this.subscriptionPolicy.assertCanProvisionMemberAccess(churchId);
-
     const member = await this.prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
         data: memberData,
@@ -371,14 +365,6 @@ export class MembersService {
     const maritalStatus = dto.maritalStatus ?? existing.maritalStatus;
     const previousStatus = existing.status;
     let account: MemberAccountCredentials | undefined;
-
-    if (
-      nextStatus === MemberStatus.active &&
-      previousStatus !== MemberStatus.active &&
-      !existing.userId
-    ) {
-      await this.subscriptionPolicy.assertCanProvisionMemberAccess(churchId);
-    }
 
     const member = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.member.update({
@@ -490,10 +476,6 @@ export class MembersService {
       throw new BadRequestException(
         'Cadastre e-mail ou CPF antes de receber como membro.',
       );
-    }
-
-    if (!member.userId) {
-      await this.subscriptionPolicy.assertCanProvisionMemberAccess(churchId);
     }
 
     let account: MemberAccountCredentials | undefined;
@@ -785,16 +767,13 @@ export class MembersService {
     const user = await tx.user.create({
       data: {
         email: userEmail,
-        emailCanonical: resolveEmailCanonical(
-          userEmail,
-          this.onboardingPolicy.isCanonicalEmailEnforced(),
-        ),
-        emailVerifiedAt: new Date(),
+        emailCanonical: canonicalizeEmail(userEmail),
         cpf,
         name: member.name,
         passwordHash,
         mustChangePassword: true,
         temporaryPasswordEnc,
+        emailVerifiedAt: new Date(),
       },
     });
 
@@ -898,6 +877,8 @@ export class MembersService {
       where: { id: churchId },
       data: { memberCount: count },
     });
+
+    await this.billingService.syncSubscriptionTierForMemberCount(churchId);
   }
 
   /**

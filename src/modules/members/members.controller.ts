@@ -13,8 +13,7 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import { AllowWhenTrialExpired } from '../../common/decorators/allow-when-trial-expired.decorator';
-import { ChurchAccessGuard, PermissionsGuard, TrialWriteGuard } from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
@@ -28,7 +27,7 @@ import {
 import { MembersService } from './members.service';
 
 @Controller('churches/:churchId/members')
-@UseGuards(JwtAuthGuard, ChurchAccessGuard, TrialWriteGuard)
+@UseGuards(JwtAuthGuard, ChurchAccessGuard)
 export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 
@@ -64,7 +63,6 @@ export class MembersController {
   }
 
   @Post('me/ministry-notifications/ack-catalog')
-  @AllowWhenTrialExpired()
   ackMinistryCatalogNotifications(
     @Param('churchId') churchId: string,
     @CurrentUser() user: JwtPayload,
@@ -93,7 +91,6 @@ export class MembersController {
   @Post()
   @UseGuards(PermissionsGuard)
   @RequirePermission(ChurchPermission.members_manage)
-  @AllowWhenTrialExpired()
   create(@Param('churchId') churchId: string, @Body() dto: CreateMemberDto) {
     return this.membersService.create(churchId, dto);
   }
@@ -101,7 +98,6 @@ export class MembersController {
   @Patch(':memberId')
   @UseGuards(PermissionsGuard)
   @RequirePermission(ChurchPermission.members_manage)
-  @AllowWhenTrialExpired()
   update(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,

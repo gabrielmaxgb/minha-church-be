@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 
 import { isInternalLoginEmail } from '../../common/utils/login-email';
-import { resolveEmailCanonical } from '../../common/utils/canonical-email';
 import { normalizeCpf } from '../../common/utils/cpf';
 import { PrismaService } from '../../database/prisma.service';
 import type { ChurchMembershipRecord, UserRecord } from './users.types';

@@ -8,3 +8,15 @@ export interface ChurchRecord {
   subscriptionStatus: SubscriptionStatus;
   trialEndsAt: Date | null;
 }
+
+export interface RegisterChurchInput {
+  churchName: string;
+  ownerName: string;
+  ownerEmail: string;
+  passwordHash: string;
+}
+
+export interface RegisterChurchResult {
+  churchId: string;
+  userId: string;
+}

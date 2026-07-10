@@ -1,119 +1,95 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SubscriptionStatus } from '@prisma/client';
+import { SubscriptionStatus, type Church } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_TRIAL_DAYS = 30;
-
-/** Mensagem exibida quando o trial expira e alterações são bloqueadas. */
-export const TRIAL_FEATURE_LOCKED_MESSAGE =
-  'Seu período de teste terminou. Você pode continuar consultando o painel e cadastrando membros. Para editar ministérios, atividades, comunicados e configurações da igreja, assine um plano.';
-
-/** Mensagem ao tentar liberar acesso/login de membro com trial expirado. */
-export const TRIAL_MEMBER_ACCESS_LOCKED_MESSAGE =
-  'Seu período de teste terminou. Você pode cadastrar e editar membros, mas liberar acesso ao sistema exige um plano ativo.';
-
-export interface SubscriptionSnapshot {
-  status: SubscriptionStatus;
-  trialEndsAt: Date | null;
-}
-
-export interface SubscriptionState {
-  status: SubscriptionStatus;
+export interface ChurchSubscriptionSummary {
+  subscriptionStatus: SubscriptionStatus;
   trialEndsAt: string | null;
   trialDaysRemaining: number | null;
-  hasFullAccess: boolean;
   featuresLocked: boolean;
 }
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class SubscriptionPolicyService {
   constructor(
-    private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
   ) {}
 
-  getTrialDays(): number {
-    const value = this.config.get<number>('subscription.trialDays');
-
-    return Number.isFinite(value) && (value ?? 0) > 0
-      ? (value as number)
-      : DEFAULT_TRIAL_DAYS;
+  isTrialEnforcementEnabled(): boolean {
+    return this.configService.get<boolean>('trial.enforcement') ?? false;
   }
 
-  isEnforced(): boolean {
-    return this.config.get<boolean>('subscription.enforcement') ?? false;
-  }
-
-  /** Data de término do trial para uma igreja criada agora. */
-  buildTrialEndsAt(from = new Date()): Date {
-    return new Date(from.getTime() + this.getTrialDays() * DAY_IN_MS);
-  }
-
-  /** Avaliação pura (sem I/O) do estado da assinatura de uma igreja. */
-  evaluate(snapshot: SubscriptionSnapshot, now = new Date()): SubscriptionState {
-    const isActivePlan = snapshot.status === SubscriptionStatus.active;
-    const trialEndsAt = snapshot.trialEndsAt;
-    const isTrialing = snapshot.status === SubscriptionStatus.trialing;
-    const trialValid =
-      isTrialing && trialEndsAt !== null && trialEndsAt.getTime() > now.getTime();
-
-    const hasFullAccess = isActivePlan || trialValid;
-    const featuresLocked = this.isEnforced() && !hasFullAccess;
-
-    let trialDaysRemaining: number | null = null;
-
-    if (isTrialing && trialEndsAt) {
-      const diffMs = trialEndsAt.getTime() - now.getTime();
-      trialDaysRemaining = Math.max(0, Math.ceil(diffMs / DAY_IN_MS));
-    }
+  buildSummary(church: Pick<
+    Church,
+    'subscriptionStatus' | 'trialEndsAt'
+  >): ChurchSubscriptionSummary {
+    const now = Date.now();
+    const trialEndsAt = church.trialEndsAt?.toISOString() ?? null;
+    const trialDaysRemaining =
+      church.subscriptionStatus === SubscriptionStatus.trialing &&
+      church.trialEndsAt
+        ? Math.max(
+            0,
+            Math.ceil((church.trialEndsAt.getTime() - now) / MS_PER_DAY),
+          )
+        : null;
 
     return {
-      status: snapshot.status,
-      trialEndsAt: trialEndsAt ? trialEndsAt.toISOString() : null,
+      subscriptionStatus: church.subscriptionStatus,
+      trialEndsAt,
       trialDaysRemaining,
-      hasFullAccess,
-      featuresLocked,
+      featuresLocked: this.isFeaturesLocked(church),
     };
   }
 
-  async getState(churchId: string): Promise<SubscriptionState> {
+  isFeaturesLocked(
+    church: Pick<Church, 'subscriptionStatus' | 'trialEndsAt'>,
+  ): boolean {
+    if (!this.isTrialEnforcementEnabled()) {
+      return false;
+    }
+
+    if (church.subscriptionStatus === SubscriptionStatus.active) {
+      return false;
+    }
+
+    if (church.subscriptionStatus === SubscriptionStatus.trialing) {
+      if (!church.trialEndsAt) {
+        return this.isTrialEnforcementEnabled();
+      }
+
+      return church.trialEndsAt.getTime() <= Date.now();
+    }
+
+    return true;
+  }
+
+  async assertCanUseGatedFeature(churchId: string): Promise<void> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
-      select: { subscriptionStatus: true, trialEndsAt: true },
+      select: {
+        subscriptionStatus: true,
+        trialEndsAt: true,
+      },
     });
 
-    return this.evaluate({
-      status: church?.subscriptionStatus ?? SubscriptionStatus.trialing,
-      trialEndsAt: church?.trialEndsAt ?? null,
-    });
-  }
-
-  /** Bloqueia alterações de gestão quando o trial expira (leitura continua liberada). */
-  async assertCanUseGatedFeature(churchId: string): Promise<void> {
-    if (!this.isEnforced()) {
-      return;
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
     }
 
-    const state = await this.getState(churchId);
-
-    if (state.featuresLocked) {
-      throw new ForbiddenException(TRIAL_FEATURE_LOCKED_MESSAGE);
-    }
-  }
-
-  /** Bloqueia provisionamento de login/acesso para membros. */
-  async assertCanProvisionMemberAccess(churchId: string): Promise<void> {
-    if (!this.isEnforced()) {
-      return;
-    }
-
-    const state = await this.getState(churchId);
-
-    if (state.featuresLocked) {
-      throw new ForbiddenException(TRIAL_MEMBER_ACCESS_LOCKED_MESSAGE);
+    if (this.isFeaturesLocked(church)) {
+      throw new ForbiddenException(
+        'Seu período de teste terminou. Assine para continuar editando.',
+      );
     }
   }
 }

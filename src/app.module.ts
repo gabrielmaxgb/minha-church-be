@@ -1,11 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 
 import configuration from './config/configuration';
 import { CommonModule } from './common/common.module';
+import { SubscriptionWriteGuard } from './common/guards/subscription-write.guard';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MembersModule } from './modules/members/members.module';
 import { MinistriesModule } from './modules/ministries/ministries.module';
@@ -27,6 +30,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     DatabaseModule,
     CommonModule,
     AuthModule,
+    BillingModule,
     DashboardModule,
     MembersModule,
     MinistriesModule,
@@ -35,6 +39,12 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     ChurchRolesModule,
     AuditLogsModule,
     AnnouncementsModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: SubscriptionWriteGuard,
+    },
   ],
 })
 export class AppModule {}

@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 
-import { ChurchRegistrationService } from './church-registration.service';
 import { ChurchesService } from './churches.service';
 
 @Module({
-  providers: [ChurchesService, ChurchRegistrationService],
-  exports: [ChurchesService, ChurchRegistrationService],
+  imports: [ConfigModule],
+  providers: [ChurchesService],
+  exports: [ChurchesService],
 })
 export class ChurchesModule {}

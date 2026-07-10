@@ -1,6 +1,7 @@
-import { MemberStatus, PrismaClient, SubscriptionStatus } from '@prisma/client';
+import { MemberStatus, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+import { canonicalizeEmail } from '../src/common/utils/canonicalize-email';
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
 import { createPgPool, createPrismaWithPg } from './pg-prisma';
 
@@ -220,19 +221,22 @@ async function ensureChurch(
   prisma: PrismaClient,
   church: (typeof DEMO_CHURCHES)[number],
 ) {
+  const trialEndsAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
   await prisma.church.upsert({
     where: { id: church.id },
     update: {
       name: church.name,
       slug: church.slug,
-      subscriptionStatus: SubscriptionStatus.active,
+      trialEndsAt,
     },
     create: {
       id: church.id,
       name: church.name,
       slug: church.slug,
       memberCount: 0,
-      subscriptionStatus: SubscriptionStatus.active,
+      subscriptionStatus: 'trialing',
+      trialEndsAt,
     },
   });
 
@@ -244,22 +248,20 @@ async function upsertDemoUser(
   demoUser: (typeof DEMO_USERS)[number],
   passwordHash: string,
 ) {
-  const email = demoUser.email.trim().toLowerCase();
-
   return prisma.user.upsert({
     where: { email: demoUser.email },
     update: {
       name: demoUser.name,
       passwordHash,
-      emailCanonical: email,
+      emailCanonical: canonicalizeEmail(demoUser.email),
       emailVerifiedAt: new Date(),
     },
     create: {
       email: demoUser.email,
-      emailCanonical: email,
-      emailVerifiedAt: new Date(),
+      emailCanonical: canonicalizeEmail(demoUser.email),
       name: demoUser.name,
       passwordHash,
+      emailVerifiedAt: new Date(),
     },
   });
 }
@@ -496,22 +498,20 @@ async function upsertMockMemberWithLogin(
   passwordHash: string,
   mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
 ) {
-  const email = mockMember.email.trim().toLowerCase();
-
   const user = await prisma.user.upsert({
     where: { email: mockMember.email },
     update: {
       name: mockMember.name,
       passwordHash,
-      emailCanonical: email,
+      emailCanonical: canonicalizeEmail(mockMember.email),
       emailVerifiedAt: new Date(),
     },
     create: {
       email: mockMember.email,
-      emailCanonical: email,
-      emailVerifiedAt: new Date(),
+      emailCanonical: canonicalizeEmail(mockMember.email),
       name: mockMember.name,
       passwordHash,
+      emailVerifiedAt: new Date(),
     },
   });
 

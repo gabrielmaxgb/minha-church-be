@@ -6,17 +6,12 @@ import {
 } from '@nestjs/common';
 
 import type { JwtPayload } from '../../modules/auth/auth.types';
-import { SubscriptionPolicyService } from '../services/subscription-policy.service';
+import { ChurchPermissionsService } from '../services/church-permissions.service';
 
-/**
- * Bloqueia recursos de gestão/crescimento (criar ministérios, atividades e
- * escalas) quando o período de teste da igreja expira. Aplicar após
- * `ChurchAccessGuard` para garantir que o usuário pertence à igreja.
- */
 @Injectable()
-export class ActivePlanGuard implements CanActivate {
+export class ChurchOwnerGuard implements CanActivate {
   constructor(
-    private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly churchPermissions: ChurchPermissionsService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -24,13 +19,23 @@ export class ActivePlanGuard implements CanActivate {
       user?: JwtPayload;
       params?: { churchId?: string };
     }>();
+    const user = request.user;
     const churchId = request.params?.churchId;
 
-    if (!churchId) {
+    if (!user || !churchId) {
       throw new ForbiddenException('Acesso negado.');
     }
 
-    await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
+    const access = await this.churchPermissions.getMembershipAccess(
+      user.sub,
+      churchId,
+    );
+
+    if (!access?.isOwner) {
+      throw new ForbiddenException(
+        'Somente o proprietário da igreja pode gerenciar a assinatura.',
+      );
+    }
 
     return true;
   }

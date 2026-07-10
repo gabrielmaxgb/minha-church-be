@@ -12,7 +12,7 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import { ChurchAccessGuard, PermissionsGuard, TrialWriteGuard } from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
@@ -23,7 +23,7 @@ import {
 import { ChurchRolesService } from './church-roles.service';
 
 @Controller('churches/:churchId/roles')
-@UseGuards(JwtAuthGuard, ChurchAccessGuard, PermissionsGuard, TrialWriteGuard)
+@UseGuards(JwtAuthGuard, ChurchAccessGuard, PermissionsGuard)
 @RequirePermission(ChurchPermission.roles_manage)
 export class ChurchRolesController {
   constructor(private readonly churchRolesService: ChurchRolesService) {}

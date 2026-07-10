@@ -10,6 +10,15 @@ import {
   buildEmailVerificationEmailHtml,
   buildEmailVerificationEmailText,
 } from '../templates/email-verification-email.template';
+import {
+  buildPaymentFailedEmailHtml,
+  buildPaymentFailedEmailText,
+  buildSubscriptionCanceledEmailHtml,
+  buildSubscriptionCanceledEmailText,
+  buildSubscriptionConfirmedEmailHtml,
+  buildSubscriptionConfirmedEmailText,
+  type BillingEmailContent,
+} from '../templates/billing-email.template';
 
 @Injectable()
 export class EmailService {
@@ -28,9 +37,8 @@ export class EmailService {
     userName: string,
   ): Promise<void> {
     if (!this.resend) {
-      this.logDevEmailLink('reset de senha', to, resetUrl);
       this.logger.warn(
-        `RESEND_API_KEY não configurada — e-mail de reset não enviado para ${to}.`,
+        `RESEND_API_KEY não configurada — e-mail de reset não enviado para ${to}. URL: ${resetUrl}`,
       );
       return;
     }
@@ -46,8 +54,6 @@ export class EmailService {
       html: buildPasswordResetEmailHtml(emailContent),
       text: buildPasswordResetEmailText(emailContent),
     });
-
-    this.logDevEmailLink('reset de senha', to, resetUrl);
   }
 
   async sendEmailVerificationEmail(
@@ -56,9 +62,8 @@ export class EmailService {
     userName: string,
   ): Promise<void> {
     if (!this.resend) {
-      this.logDevEmailLink('verificação de e-mail', to, verifyUrl);
       this.logger.warn(
-        `RESEND_API_KEY não configurada — e-mail de verificação não enviado para ${to}.`,
+        `RESEND_API_KEY não configurada — e-mail de verificação não enviado para ${to}. URL: ${verifyUrl}`,
       );
       return;
     }
@@ -67,30 +72,72 @@ export class EmailService {
     const appUrl = this.config.getOrThrow<string>('appUrl');
     const emailContent = { userName, verifyUrl, appUrl };
 
-    try {
-      await this.resend.emails.send({
-        from: fromEmail,
-        to,
-        subject: 'Confirme seu e-mail — MinhaChurch',
-        html: buildEmailVerificationEmailHtml(emailContent),
-        text: buildEmailVerificationEmailText(emailContent),
-      });
-
-      this.logDevEmailLink('verificação de e-mail', to, verifyUrl);
-    } catch (error) {
-      this.logDevEmailLink('verificação de e-mail (falhou — use o link)', to, verifyUrl);
-      this.logger.error(
-        `Falha ao enviar verificação para ${to} via Resend`,
-        error instanceof Error ? error.stack : undefined,
-      );
-    }
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      subject: 'Confirme seu e-mail — MinhaChurch',
+      html: buildEmailVerificationEmailHtml(emailContent),
+      text: buildEmailVerificationEmailText(emailContent),
+    });
   }
 
-  private logDevEmailLink(kind: string, to: string, url: string): void {
-    if (this.config.get<string>('nodeEnv') !== 'development') {
+  async sendSubscriptionConfirmedEmail(
+    to: string,
+    content: BillingEmailContent,
+  ): Promise<void> {
+    await this.sendBillingEmail(
+      to,
+      'Assinatura confirmada — MinhaChurch',
+      buildSubscriptionConfirmedEmailHtml(content),
+      buildSubscriptionConfirmedEmailText(content),
+    );
+  }
+
+  async sendPaymentFailedEmail(
+    to: string,
+    content: BillingEmailContent,
+  ): Promise<void> {
+    await this.sendBillingEmail(
+      to,
+      'Falha no pagamento — MinhaChurch',
+      buildPaymentFailedEmailHtml(content),
+      buildPaymentFailedEmailText(content),
+    );
+  }
+
+  async sendSubscriptionCanceledEmail(
+    to: string,
+    content: BillingEmailContent,
+  ): Promise<void> {
+    await this.sendBillingEmail(
+      to,
+      'Assinatura encerrada — MinhaChurch',
+      buildSubscriptionCanceledEmailHtml(content),
+      buildSubscriptionCanceledEmailText(content),
+    );
+  }
+
+  private async sendBillingEmail(
+    to: string,
+    subject: string,
+    html: string,
+    text: string,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY não configurada — e-mail de billing não enviado para ${to}. Assunto: ${subject}`,
+      );
       return;
     }
 
-    this.logger.log(`[dev] Link de ${kind} para ${to}: ${url}`);
+    const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      subject,
+      html,
+      text,
+    });
   }
 }

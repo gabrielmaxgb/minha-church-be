@@ -1,5 +1,6 @@
-const SLUG_FALLBACK = 'igreja';
-const MAX_SLUG_LENGTH = 60;
+import type { Prisma, PrismaClient } from '@prisma/client';
+
+type SlugLookupClient = PrismaClient | Prisma.TransactionClient;
 
 export function slugifyChurchName(name: string): string {
   const slug = name
@@ -9,18 +10,23 @@ export function slugifyChurchName(name: string): string {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, MAX_SLUG_LENGTH);
+    .slice(0, 80);
 
-  return slug || SLUG_FALLBACK;
+  return slug.length > 0 ? slug : 'igreja';
 }
 
-export function buildUniqueChurchSlug(baseSlug: string, suffix: number): string {
-  if (suffix <= 1) {
-    return baseSlug;
+export async function generateUniqueChurchSlug(
+  prisma: SlugLookupClient,
+  churchName: string,
+): Promise<string> {
+  const base = slugifyChurchName(churchName);
+  let slug = base;
+  let suffix = 0;
+
+  while (await prisma.church.findUnique({ where: { slug }, select: { id: true } })) {
+    suffix += 1;
+    slug = `${base}-${suffix}`;
   }
 
-  const suffixPart = `-${suffix}`;
-  const trimmedBase = baseSlug.slice(0, Math.max(1, MAX_SLUG_LENGTH - suffixPart.length));
-
-  return `${trimmedBase}${suffixPart}`;
+  return slug;
 }
