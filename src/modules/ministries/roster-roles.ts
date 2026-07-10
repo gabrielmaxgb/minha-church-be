@@ -12,6 +12,18 @@ export const ROSTER_ROLE_PRESETS = [
   { id: CHURCH_WIDE_DEFAULT_ROSTER_ROLE, label: 'Voluntário' },
   { id: 'reception', label: 'Recepção' },
   { id: 'media', label: 'Mídia' },
+  { id: 'children', label: 'Infantil' },
+  { id: 'intercession', label: 'Intercessão' },
+  { id: 'hospitality', label: 'Hospitalidade' },
+  { id: 'diaconia', label: 'Diaconia' },
+  { id: 'evangelism', label: 'Evangelismo' },
+  { id: 'security', label: 'Segurança' },
+  { id: 'coordination', label: 'Coordenação' },
+  { id: 'support', label: 'Apoio geral' },
+  { id: 'other', label: 'Outro' },
+] as const;
+
+export const ROSTER_ROLE_LEGACY_LABELS = [
   { id: 'vocal', label: 'Vocal' },
   { id: 'backing_vocal', label: 'Backing vocal' },
   { id: 'acoustic_guitar', label: 'Violão' },
@@ -22,11 +34,23 @@ export const ROSTER_ROLE_PRESETS = [
   { id: 'pads', label: 'Pads / loops' },
   { id: 'violin', label: 'Violino' },
   { id: 'saxophone', label: 'Saxofone' },
-  { id: 'other', label: 'Outro' },
 ] as const;
 
+function allKnownRosterRoles() {
+  const seen = new Set<string>();
+
+  return [...ROSTER_ROLE_PRESETS, ...ROSTER_ROLE_LEGACY_LABELS].filter((item) => {
+    if (seen.has(item.id)) {
+      return false;
+    }
+
+    seen.add(item.id);
+    return true;
+  });
+}
+
 export function formatRosterRole(value: string): string {
-  const preset = ROSTER_ROLE_PRESETS.find((item) => item.id === value);
+  const preset = allKnownRosterRoles().find((item) => item.id === value);
   return preset?.label ?? value;
 }
 
@@ -37,7 +61,7 @@ export function normalizeRosterRoleValue(value: string): string {
     return '';
   }
 
-  const preset = ROSTER_ROLE_PRESETS.find(
+  const preset = allKnownRosterRoles().find(
     (item) =>
       item.id === trimmed ||
       item.id === trimmed.toLowerCase() ||

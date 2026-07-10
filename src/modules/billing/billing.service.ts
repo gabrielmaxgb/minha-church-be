@@ -21,6 +21,8 @@ import {
   type BillingTierId,
 } from '../../config/billing-plans.config';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
+import { EmailService } from '../../common/services/email.service';
+import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
 import { PrismaService } from '../../database/prisma.service';
 
 export interface CheckoutConfirmResult {
@@ -67,6 +69,19 @@ export interface ConfirmTierCrossingResult {
   projectedTierId: BillingTierId;
 }
 
+export interface BillingInvoiceResult {
+  id: string;
+  number: string | null;
+  status: string;
+  amountPaid: number;
+  currency: string;
+  createdAt: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdf: string | null;
+}
+
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
@@ -76,6 +91,7 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly emailService: EmailService,
   ) {
     const secretKey = this.configService.get<string>('stripe.secretKey') ?? '';
 
@@ -526,6 +542,36 @@ export class BillingService {
     return { url: session.url };
   }
 
+  async listInvoices(churchId: string): Promise<BillingInvoiceResult[]> {
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { stripeCustomerId: true },
+    });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    if (!church.stripeCustomerId) {
+      return [];
+    }
+
+    const secretKey = this.configService.get<string>('stripe.secretKey');
+
+    if (!secretKey) {
+      return [];
+    }
+
+    await this.ensureStripeCustomerLocale(church.stripeCustomerId);
+
+    const invoices = await this.stripe.invoices.list({
+      customer: church.stripeCustomerId,
+      limit: 24,
+    });
+
+    return invoices.data.map((invoice) => this.toBillingInvoiceResult(invoice));
+  }
+
   async handleWebhook(rawBody: Buffer, signature: string | undefined) {
     this.assertStripeConfigured();
 
@@ -572,7 +618,7 @@ export class BillingService {
   private async dispatchWebhookEvent(event: Stripe.Event): Promise<void> {
     switch (event.type) {
       case 'checkout.session.completed':
-        await this.syncFromCompletedCheckoutSession(event.data.object);
+        await this.onCheckoutSessionCompleted(event.data.object);
         break;
       case 'customer.subscription.updated':
         await this.onSubscriptionUpdated(event.data.object);
@@ -663,6 +709,40 @@ export class BillingService {
     }
 
     await this.syncSubscriptionToChurch(churchId, subscription);
+    await this.notifyPaymentFailed(churchId);
+  }
+
+  private async onCheckoutSessionCompleted(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    await this.syncFromCompletedCheckoutSession(session);
+
+    const churchId = session.metadata?.churchId;
+
+    if (!churchId || session.mode !== 'subscription') {
+      return;
+    }
+
+    const tierId = session.metadata?.tierId as BillingTierId | undefined;
+    const interval =
+      session.metadata?.interval === 'yearly' ? 'yearly' : 'monthly';
+    const tier = tierId ? getBillingTierCatalogEntry(tierId) : null;
+    const amount =
+      interval === 'yearly' ? tier?.yearlyPrice : tier?.monthlyPrice;
+    const intervalLabel = interval === 'yearly' ? 'Anual' : 'Mensal';
+    const amountLabel =
+      amount != null
+        ? new Intl.NumberFormat('pt-BR', {
+            style: 'currency',
+            currency: 'BRL',
+          }).format(amount) + (interval === 'yearly' ? '/ano' : '/mês')
+        : undefined;
+
+    await this.notifySubscriptionConfirmed(churchId, {
+      tierName: tier?.name,
+      intervalLabel,
+      amountLabel,
+    });
   }
 
   private async syncFromCompletedCheckoutSession(
@@ -724,6 +804,8 @@ export class BillingService {
         stripePriceId: null,
       },
     });
+
+    await this.notifySubscriptionCanceled(churchId);
   }
 
   private async syncSubscriptionToChurch(
@@ -809,6 +891,7 @@ export class BillingService {
     });
 
     if (church?.stripeCustomerId) {
+      await this.ensureStripeCustomerLocale(church.stripeCustomerId);
       return church.stripeCustomerId;
     }
 
@@ -824,6 +907,37 @@ export class BillingService {
     });
 
     return customer.id;
+  }
+
+  private async ensureStripeCustomerLocale(customerId: string): Promise<void> {
+    try {
+      await this.stripe.customers.update(customerId, {
+        preferred_locales: ['pt-BR'],
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao definir locale pt-BR no cliente Stripe ${customerId}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  private localizeStripeHostedUrl(
+    url: string | null | undefined,
+    locale = 'pt-BR',
+  ): string | null {
+    if (!url) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.set('locale', locale);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
   }
 
   private resolveTierAndIntervalFromPriceId(
@@ -876,5 +990,165 @@ export class BillingService {
         'Pagamentos ainda não configurados no servidor.',
       );
     }
+  }
+
+  private toBillingInvoiceResult(
+    invoice: Stripe.Invoice,
+  ): BillingInvoiceResult {
+    return {
+      id: invoice.id,
+      number: invoice.number,
+      status: invoice.status ?? 'unknown',
+      amountPaid: invoice.amount_paid,
+      currency: invoice.currency,
+      createdAt: new Date(invoice.created * 1000).toISOString(),
+      periodStart:
+        invoice.period_start != null
+          ? new Date(invoice.period_start * 1000).toISOString()
+          : null,
+      periodEnd:
+        invoice.period_end != null
+          ? new Date(invoice.period_end * 1000).toISOString()
+          : null,
+      hostedInvoiceUrl: this.localizeStripeHostedUrl(
+        invoice.hosted_invoice_url,
+      ),
+      invoicePdf: invoice.invoice_pdf ?? null,
+    };
+  }
+
+  private async notifySubscriptionConfirmed(
+    churchId: string,
+    details: {
+      tierName?: string;
+      intervalLabel?: string;
+      amountLabel?: string;
+    },
+  ): Promise<void> {
+    const target = await this.getChurchOwnerNotificationTarget(churchId);
+
+    if (!target) {
+      return;
+    }
+
+    try {
+      await this.emailService.sendSubscriptionConfirmedEmail(target.email, {
+        ownerName: target.ownerName,
+        churchName: target.churchName,
+        appUrl: target.appUrl,
+        settingsUrl: target.settingsUrl,
+        tierName: details.tierName,
+        intervalLabel: details.intervalLabel,
+        amountLabel: details.amountLabel,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de assinatura confirmada (${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  private async notifyPaymentFailed(churchId: string): Promise<void> {
+    const target = await this.getChurchOwnerNotificationTarget(churchId);
+
+    if (!target) {
+      return;
+    }
+
+    try {
+      await this.emailService.sendPaymentFailedEmail(target.email, {
+        ownerName: target.ownerName,
+        churchName: target.churchName,
+        appUrl: target.appUrl,
+        settingsUrl: target.settingsUrl,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de pagamento recusado (${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  private async notifySubscriptionCanceled(churchId: string): Promise<void> {
+    const target = await this.getChurchOwnerNotificationTarget(churchId);
+
+    if (!target) {
+      return;
+    }
+
+    try {
+      await this.emailService.sendSubscriptionCanceledEmail(target.email, {
+        ownerName: target.ownerName,
+        churchName: target.churchName,
+        appUrl: target.appUrl,
+        settingsUrl: target.settingsUrl,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de cancelamento (${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  private async getChurchOwnerNotificationTarget(churchId: string): Promise<{
+    email: string;
+    ownerName: string;
+    churchName: string;
+    appUrl: string;
+    settingsUrl: string;
+  } | null> {
+    const [church, ownerMembership] = await Promise.all([
+      this.prisma.church.findUnique({
+        where: { id: churchId },
+        select: { name: true },
+      }),
+      this.prisma.churchMembership.findFirst({
+        where: { churchId, isOwner: true },
+        include: {
+          user: {
+            select: {
+              name: true,
+              email: true,
+              memberProfiles: {
+                where: { churchId, deletedAt: null },
+                select: { email: true },
+                take: 1,
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    if (!church || !ownerMembership) {
+      return null;
+    }
+
+    const memberProfileEmail =
+      ownerMembership.user.memberProfiles[0]?.email ?? null;
+    const email = resolveUserContactEmail(
+      ownerMembership.user.email,
+      memberProfileEmail,
+    );
+
+    if (!email) {
+      return null;
+    }
+
+    const appUrl = this.configService.getOrThrow<string>('appUrl');
+
+    return {
+      email,
+      ownerName: ownerMembership.user.name,
+      churchName: church.name,
+      appUrl,
+      settingsUrl: `${appUrl}/app/configuracoes?section=subscription`,
+    };
   }
 }

@@ -49,6 +49,11 @@ export class BillingController {
     return this.billingService.getSubscriptionSummary(churchId);
   }
 
+  @Get('invoices')
+  listInvoices(@Param('churchId') churchId: string) {
+    return this.billingService.listInvoices(churchId);
+  }
+
   @Post('portal')
   createPortal(@Param('churchId') churchId: string) {
     return this.billingService.createPortalSession(churchId);
