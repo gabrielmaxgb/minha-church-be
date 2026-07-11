@@ -4,6 +4,10 @@ import * as bcrypt from 'bcrypt';
 import { canonicalizeEmail } from '../src/common/utils/canonicalize-email';
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
 import { createPgPool, createPrismaWithPg } from './pg-prisma';
+import {
+  completePastoralProfileForIndex,
+  shouldHaveCompleteProfile,
+} from './seed-member-profile';
 
 const DEMO_CHURCH_ID = 'church_demo';
 
@@ -324,8 +328,13 @@ async function upsertMemberProfile(
     userId: string;
     name: string;
     email: string;
+    profileIndex?: number;
   },
 ) {
+  const complete = completePastoralProfileForIndex(input.profileIndex ?? 0, {
+    phone: '(11) 99999-0000',
+  });
+
   await prisma.member.upsert({
     where: {
       churchId_email: {
@@ -339,6 +348,7 @@ async function upsertMemberProfile(
       status: MemberStatus.active,
       membershipDate: new Date('2024-01-01'),
       deletedAt: null,
+      ...complete,
     },
     create: {
       churchId: input.churchId,
@@ -347,6 +357,7 @@ async function upsertMemberProfile(
       email: input.email,
       status: MemberStatus.active,
       membershipDate: new Date('2024-01-01'),
+      ...complete,
     },
   });
 }
@@ -388,11 +399,25 @@ async function upsertMockMemberPastoralOnly(
   prisma: PrismaClient,
   churchId: string,
   mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
+  memberIndex: number,
 ) {
   const membershipDate =
     mockMember.status === MemberStatus.active ? new Date('2023-06-15') : null;
   const visitorSince =
     mockMember.status === MemberStatus.visitor ? new Date('2025-11-01') : null;
+  const complete = shouldHaveCompleteProfile(
+    memberIndex,
+    CENTRAL_MOCK_MEMBERS.length,
+  )
+    ? completePastoralProfileForIndex(memberIndex, {
+        phone: mockMember.phone,
+        city: mockMember.city ?? 'São Paulo',
+      })
+    : {
+        phone: mockMember.phone,
+        city: mockMember.city ?? 'São Paulo',
+        state: 'SP' as const,
+      };
 
   await removeChurchAppAccess(prisma, churchId, mockMember.email);
 
@@ -406,24 +431,22 @@ async function upsertMockMemberPastoralOnly(
     update: {
       userId: null,
       name: mockMember.name,
-      phone: mockMember.phone,
-      city: mockMember.city ?? 'São Paulo',
-      state: 'SP',
       status: mockMember.status,
       membershipDate,
       visitorSince,
       deletedAt: null,
+      state: 'SP',
+      ...complete,
     },
     create: {
       churchId,
       name: mockMember.name,
       email: mockMember.email,
-      phone: mockMember.phone,
-      city: mockMember.city ?? 'São Paulo',
-      state: 'SP',
       status: mockMember.status,
       membershipDate,
       visitorSince,
+      state: 'SP',
+      ...complete,
     },
   });
 }
@@ -433,13 +456,25 @@ async function upsertCentralMockMember(
   churchId: string,
   passwordHash: string,
   mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
+  memberIndex: number,
 ) {
   if (mockMember.status === MemberStatus.active) {
-    await upsertMockMemberWithLogin(prisma, churchId, passwordHash, mockMember);
+    await upsertMockMemberWithLogin(
+      prisma,
+      churchId,
+      passwordHash,
+      mockMember,
+      memberIndex,
+    );
     return;
   }
 
-  await upsertMockMemberPastoralOnly(prisma, churchId, mockMember);
+  await upsertMockMemberPastoralOnly(
+    prisma,
+    churchId,
+    mockMember,
+    memberIndex,
+  );
 }
 
 async function upsertMockMember(
@@ -452,12 +487,26 @@ async function upsertMockMember(
     phone: string;
     status: MemberStatus;
     city?: string;
+    memberIndex: number;
   },
 ) {
   const membershipDate =
     input.status === MemberStatus.active ? new Date('2023-06-15') : null;
   const visitorSince =
     input.status === MemberStatus.visitor ? new Date('2025-11-01') : null;
+  const complete = shouldHaveCompleteProfile(
+    input.memberIndex,
+    CENTRAL_MOCK_MEMBERS.length,
+  )
+    ? completePastoralProfileForIndex(input.memberIndex, {
+        phone: input.phone,
+        city: input.city ?? 'São Paulo',
+      })
+    : {
+        phone: input.phone,
+        city: input.city ?? 'São Paulo',
+        state: 'SP' as const,
+      };
 
   await prisma.member.upsert({
     where: {
@@ -469,25 +518,23 @@ async function upsertMockMember(
     update: {
       userId: input.userId,
       name: input.name,
-      phone: input.phone,
-      city: input.city ?? 'São Paulo',
-      state: 'SP',
       status: input.status,
       membershipDate,
       visitorSince,
       deletedAt: null,
+      state: 'SP',
+      ...complete,
     },
     create: {
       churchId: input.churchId,
       userId: input.userId,
       name: input.name,
       email: input.email,
-      phone: input.phone,
-      city: input.city ?? 'São Paulo',
-      state: 'SP',
       status: input.status,
       membershipDate,
       visitorSince,
+      state: 'SP',
+      ...complete,
     },
   });
 }
@@ -497,6 +544,7 @@ async function upsertMockMemberWithLogin(
   churchId: string,
   passwordHash: string,
   mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
+  memberIndex: number,
 ) {
   const user = await prisma.user.upsert({
     where: { email: mockMember.email },
@@ -524,6 +572,7 @@ async function upsertMockMemberWithLogin(
   await upsertMockMember(prisma, {
     churchId,
     userId: user.id,
+    memberIndex,
     ...mockMember,
   });
 }
@@ -558,7 +607,7 @@ async function seedCentralChurchUsers(prisma: PrismaClient, passwordHash: string
     });
   }
 
-  for (const demoUser of DEMO_USERS) {
+  for (const [index, demoUser] of DEMO_USERS.entries()) {
     const user = await upsertDemoUser(prisma, demoUser, passwordHash);
 
     await upsertChurchMembership(prisma, {
@@ -573,15 +622,17 @@ async function seedCentralChurchUsers(prisma: PrismaClient, passwordHash: string
       userId: user.id,
       name: demoUser.name,
       email: demoUser.email,
+      profileIndex: index,
     });
   }
 
-  for (const mockMember of CENTRAL_MOCK_MEMBERS) {
+  for (const [index, mockMember] of CENTRAL_MOCK_MEMBERS.entries()) {
     await upsertCentralMockMember(
       prisma,
       DEMO_CHURCH_ID,
       passwordHash,
       mockMember,
+      index,
     );
   }
 
@@ -667,6 +718,7 @@ async function main() {
       console.log('Seed concluído: contas demo *@igreja.com.br / senha123');
       console.log('  - Igreja Batista Central: owner, admin, pastor, secretary, treasurer, leader, member');
       console.log('  - Igreja Batista Central: +20 membros mock no cadastro pastoral');
+      console.log('  - Pelo menos metade dos membros da Central com cadastro pastoral completo');
       console.log('  - Igreja Batista do Norte: pastor.norte@igreja.com.br');
       console.log('  - Comunidade da Graça: pastor.sul@igreja.com.br');
       console.log('  - owner@igreja.com.br tem acesso às 3 igrejas');

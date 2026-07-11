@@ -21,6 +21,7 @@ export const ADMIN_ACTION_PERMISSIONS: readonly ChurchPermission[] = [
   ChurchPermission.communication_manage,
   ChurchPermission.roles_manage,
   ChurchPermission.memberships_manage,
+  ChurchPermission.counseling_receive,
 ] as const;
 
 export const ALL_CHURCH_PERMISSIONS: readonly ChurchPermission[] = [
@@ -80,6 +81,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
         ChurchPermission.events_create_church_wide,
         ChurchPermission.communication_manage,
         ChurchPermission.memberships_manage,
+        ChurchPermission.counseling_receive,
       ],
     },
     {
@@ -139,6 +141,7 @@ export const PERMISSION_TO_USER_PERMISSIONS_KEY: Record<
   [ChurchPermission.settings_access]: 'settings',
   [ChurchPermission.roles_manage]: 'roles',
   [ChurchPermission.memberships_manage]: 'memberships',
+  [ChurchPermission.counseling_receive]: 'counseling',
 };
 
 export const CHURCH_PERMISSION_LABELS: Record<ChurchPermission, string> = {
@@ -158,4 +161,6 @@ export const CHURCH_PERMISSION_LABELS: Record<ChurchPermission, string> = {
   [ChurchPermission.communication_manage]: 'Gerenciar comunicados',
   [ChurchPermission.roles_manage]: 'Gerenciar cargos da igreja',
   [ChurchPermission.memberships_manage]: 'Atribuir cargos a usuários',
+  [ChurchPermission.counseling_receive]:
+    'Receber pedidos de aconselhamento e visitas',
 };

@@ -281,22 +281,15 @@ export class MembersService {
 
     // Pré-checagens independentes rodam em paralelo (cada uma é ~1 RTT ao Neon).
     // `allSettled` preserva a ordem de prioridade das mensagens de erro.
+    // Login/vínculo multi-igreja fica em syncMemberAppAccess → provisionMemberLogin
+    // (mesmo caminho de update/receive) — não duplicar regra aqui.
     const settled = await Promise.allSettled([
       email ? this.ensureEmailAvailable(churchId, email) : Promise.resolve(),
       cpf ? this.ensureCpfAvailable(churchId, cpf) : Promise.resolve(),
       isActive
-        ? this.ensureUserCredentialsAvailable(email, cpf)
-        : Promise.resolve(),
-      isActive
         ? this.assertActiveMemberTierAllowed(churchId)
         : Promise.resolve(),
       this.resolveFamilyId(churchId, dto.familyId),
-      isActive
-        ? this.prisma.churchRole.findFirst({
-            where: { churchId, systemKey: 'member' },
-            select: { id: true },
-          })
-        : Promise.resolve(null),
     ] as const);
 
     for (const result of settled) {
@@ -306,10 +299,7 @@ export class MembersService {
     }
 
     const familyId = (
-      settled[4] as PromiseFulfilledResult<string | null | undefined>
-    ).value;
-    const memberRole = (
-      settled[5] as PromiseFulfilledResult<{ id: string } | null>
+      settled[3] as PromiseFulfilledResult<string | null | undefined>
     ).value;
 
     const visitorSince =
@@ -358,68 +348,41 @@ export class MembersService {
       return toCreatedMemberResponse(member);
     }
 
-    // Membro ativo com login novo. As credenciais já foram validadas como
-    // inexistentes acima, então provisionamos direto — sem reconsultar o
-    // usuário e com o hash de senha calculado fora da transaction.
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
-    const temporaryPasswordEnc = encryptSecret(
-      temporaryPassword,
-      this.config.get<string>('jwt.secret') ?? '',
-    );
-    const userEmail = email ?? cpfToInternalEmail(cpf!);
-    const loginIdentifier = email ?? formatCpf(cpf!);
-
-    const member = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email: userEmail,
-          emailCanonical: canonicalizeEmail(userEmail),
-          cpf,
-          name: memberData.name,
-          passwordHash,
-          mustChangePassword: true,
-          temporaryPasswordEnc,
-          emailVerifiedAt: new Date(),
-        },
-        select: { id: true },
-      });
-
+    // Membro ativo: criar cadastro pastoral e provisionar login pelo MESMO
+    // caminho de update/receive (link de conta existente ou User novo).
+    // Evita regressão de regra de negócio espalhada em dois fluxos.
+    const { member, account } = await this.prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
-        data: { ...memberData, userId: user.id },
+        data: memberData,
         include: memberCreateInclude,
       });
 
-      await tx.churchMembership.create({
-        data: {
-          userId: user.id,
-          churchId,
-          isOwner: false,
-          ...(memberRole
-            ? {
-                roleAssignments: {
-                  create: [{ roleId: memberRole.id }],
-                },
-              }
-            : {}),
-        },
+      const provisioned = await this.syncMemberAppAccess(tx, churchId, {
+        id: created.id,
+        name: created.name,
+        email: created.email,
+        cpf: created.cpf,
+        userId: created.userId,
+        status: created.status,
       });
 
-      return created;
+      const refreshed = await tx.member.findFirstOrThrow({
+        where: { id: created.id },
+        include: memberCreateInclude,
+      });
+
+      return { member: refreshed, account: provisioned };
     });
 
     await this.syncMemberCount(churchId);
 
-    const account: MemberAccountCredentials = {
-      kind: 'created',
-      login: loginIdentifier,
-      temporaryPassword,
-      mustChangePassword: true,
-    };
+    if (account?.kind === 'linked') {
+      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    }
 
     return {
       ...toCreatedMemberResponse(member),
-      account,
+      ...(account ? { account } : {}),
     };
   }
 
@@ -1004,7 +967,7 @@ export class MembersService {
   }
 
   private async findExistingUserForLogin(
-    tx: Prisma.TransactionClient,
+    tx: Prisma.TransactionClient | PrismaService,
     email: string | null,
     cpf: string | null,
   ): Promise<{

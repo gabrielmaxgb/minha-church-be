@@ -4,16 +4,43 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Gender, MaritalStatus, Prisma } from '@prisma/client';
 
 import { isInternalLoginEmail } from '../../common/utils/login-email';
 import { normalizeCpf } from '../../common/utils/cpf';
 import { PrismaService } from '../../database/prisma.service';
+import { parseOptionalDate } from '../members/members.types';
 import type { ChurchMembershipRecord, UserRecord } from './users.types';
 
 export interface UpdateProfileInput {
   name?: string;
   email?: string | null;
   phone?: string | null;
+  phoneSecondary?: string | null;
+  birthDate?: string | null;
+  gender?: Gender | null;
+  maritalStatus?: MaritalStatus | null;
+  weddingAnniversary?: string | null;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zipCode?: string | null;
+}
+
+function nullableTrimmed(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 @Injectable()
@@ -201,11 +228,7 @@ export class UsersService {
       });
 
       if (member) {
-        const memberData: {
-          name?: string;
-          email?: string | null;
-          phone?: string | null;
-        } = {};
+        const memberData: Prisma.MemberUpdateInput = {};
 
         if (input.name !== undefined) {
           memberData.name = input.name.trim();
@@ -221,7 +244,67 @@ export class UsersService {
         }
 
         if (input.phone !== undefined) {
-          memberData.phone = input.phone?.trim() || null;
+          memberData.phone = nullableTrimmed(input.phone) ?? null;
+        }
+
+        if (input.phoneSecondary !== undefined) {
+          memberData.phoneSecondary =
+            nullableTrimmed(input.phoneSecondary) ?? null;
+        }
+
+        if (input.birthDate !== undefined) {
+          memberData.birthDate = parseOptionalDate(input.birthDate) ?? null;
+        }
+
+        if (input.gender !== undefined) {
+          memberData.gender = input.gender || null;
+        }
+
+        if (input.maritalStatus !== undefined) {
+          memberData.maritalStatus = input.maritalStatus || null;
+        }
+
+        if (input.weddingAnniversary !== undefined) {
+          memberData.weddingAnniversary =
+            input.maritalStatus === MaritalStatus.married ||
+            (input.maritalStatus === undefined &&
+              member.maritalStatus === MaritalStatus.married)
+              ? (parseOptionalDate(input.weddingAnniversary) ?? null)
+              : null;
+        } else if (
+          input.maritalStatus !== undefined &&
+          input.maritalStatus !== MaritalStatus.married
+        ) {
+          memberData.weddingAnniversary = null;
+        }
+
+        if (input.street !== undefined) {
+          memberData.street = nullableTrimmed(input.street) ?? null;
+        }
+
+        if (input.number !== undefined) {
+          memberData.number = nullableTrimmed(input.number) ?? null;
+        }
+
+        if (input.complement !== undefined) {
+          memberData.complement = nullableTrimmed(input.complement) ?? null;
+        }
+
+        if (input.neighborhood !== undefined) {
+          memberData.neighborhood = nullableTrimmed(input.neighborhood) ?? null;
+        }
+
+        if (input.city !== undefined) {
+          memberData.city = nullableTrimmed(input.city) ?? null;
+        }
+
+        if (input.state !== undefined) {
+          const state = nullableTrimmed(input.state);
+          memberData.state = state ? state.toUpperCase() : null;
+        }
+
+        if (input.zipCode !== undefined) {
+          memberData.zipCode = nullableTrimmed(input.zipCode) ?? null;
         }
 
         if (Object.keys(memberData).length > 0) {

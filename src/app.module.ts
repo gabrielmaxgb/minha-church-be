@@ -18,6 +18,7 @@ import { ChurchMembershipsModule } from './modules/church-memberships/church-mem
 import { ChurchRolesModule } from './modules/church-roles/church-roles.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
+import { CareRequestsModule } from './modules/care-requests/care-requests.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     ChurchRolesModule,
     AuditLogsModule,
     AnnouncementsModule,
+    CareRequestsModule,
   ],
   providers: [
     {

@@ -3,6 +3,10 @@ import * as bcrypt from 'bcrypt';
 
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
 import { createPgPool, createPrismaWithPg } from './pg-prisma';
+import {
+  completePastoralProfileForIndex,
+  shouldHaveCompleteProfile,
+} from './seed-member-profile';
 
 const PASSWORD = 'senha123';
 
@@ -109,6 +113,7 @@ async function upsertOwner(prisma: PrismaClient, passwordHash: string) {
       status: MemberStatus.active,
       membershipDate: new Date('2024-01-01'),
       deletedAt: null,
+      ...completePastoralProfileForIndex(0),
     },
     create: {
       churchId: TIER_CROSSING_TEST_CHURCH.id,
@@ -117,6 +122,7 @@ async function upsertOwner(prisma: PrismaClient, passwordHash: string) {
       email: TIER_CROSSING_TEST_CHURCH.ownerEmail,
       status: MemberStatus.active,
       membershipDate: new Date('2024-01-01'),
+      ...completePastoralProfileForIndex(0),
     },
   });
 
@@ -146,6 +152,13 @@ async function seedMembers(prisma: PrismaClient) {
     await prisma.member.createMany({
       data: Array.from({ length: size }, (_, index) => {
         const memberNumber = offset + index + 1;
+        const memberIndex = memberNumber - 1;
+        const complete = shouldHaveCompleteProfile(
+          memberIndex,
+          placeholderCount,
+        )
+          ? completePastoralProfileForIndex(memberIndex)
+          : {};
 
         return {
           churchId: TIER_CROSSING_TEST_CHURCH.id,
@@ -153,6 +166,7 @@ async function seedMembers(prisma: PrismaClient) {
           email: `${emailPrefix}-${memberNumber}@billing.test`,
           status: MemberStatus.active,
           membershipDate: new Date('2024-06-01'),
+          ...complete,
         };
       }),
     });

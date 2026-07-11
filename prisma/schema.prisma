@@ -23,6 +23,17 @@ enum ChurchPermission {
   roles_manage
   memberships_manage
   communication_manage
+  counseling_receive
+}
+
+enum CareRequestType {
+  counseling
+  visit
+}
+
+enum CareRequestStatus {
+  pending
+  viewed
 }
 
 enum AnnouncementPriority {
@@ -139,6 +150,7 @@ model Church {
   auditLogs             AuditLog[]
   passwordResetRequests PasswordResetRequest[]
   announcements         Announcement[]
+  careRequests          CareRequest[]
 
   billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
   billingTierUpgradeRequests        BillingTierUpgradeRequest[]
@@ -331,6 +343,8 @@ model Member {
   rosterAssignments EventRosterAssignment[]
   relationsFrom  MemberRelation[]    @relation("RelationFrom")
   relationsTo    MemberRelation[]    @relation("RelationTo")
+  careRequestsSent     CareRequest[] @relation("CareRequestRequester")
+  careRequestsReceived CareRequest[] @relation("CareRequestRecipient")
 
   @@unique([churchId, email])
   @@unique([churchId, cpf])
@@ -338,6 +352,27 @@ model Member {
   @@index([churchId, status])
   @@index([churchId, familyId])
   @@map("members")
+}
+
+model CareRequest {
+  id                 String            @id @default(cuid())
+  churchId           String            @map("church_id")
+  type               CareRequestType
+  requesterMemberId  String            @map("requester_member_id")
+  recipientMemberId  String            @map("recipient_member_id")
+  message            String?
+  status             CareRequestStatus @default(pending)
+  viewedAt           DateTime?         @map("viewed_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  church    Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  requester Member @relation("CareRequestRequester", fields: [requesterMemberId], references: [id], onDelete: Cascade)
+  recipient Member @relation("CareRequestRecipient", fields: [recipientMemberId], references: [id], onDelete: Cascade)
+
+  @@index([churchId, recipientMemberId, status])
+  @@index([churchId, requesterMemberId])
+  @@map("care_requests")
 }
 
 enum MemberRelationType {

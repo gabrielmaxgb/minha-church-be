@@ -237,14 +237,15 @@ export class MinistriesController {
   }
 
   @Put(':ministryId/roster/events/:eventId/availability')
-  updateMyEventAvailability(
+  @HttpCode(204)
+  async updateMyEventAvailability(
     @Param('churchId') churchId: string,
     @Param('ministryId') ministryId: string,
     @Param('eventId') eventId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateEventAvailabilityDto,
-  ) {
-    return this.ministriesService.updateMyEventAvailability(
+  ): Promise<void> {
+    await this.ministriesService.updateMyEventAvailability(
       churchId,
       ministryId,
       eventId,

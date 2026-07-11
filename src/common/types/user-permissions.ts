@@ -20,4 +20,5 @@ export interface UserPermissions {
   settings: { access: boolean };
   roles: { manage: boolean };
   memberships: { manage: boolean };
+  counseling: { receive: boolean };
 }
