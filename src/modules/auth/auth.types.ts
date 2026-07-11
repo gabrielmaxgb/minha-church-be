@@ -1,4 +1,5 @@
 import type { UserPermissions } from '../../common/types/user-permissions';
+import type { SubscriptionStatus } from '@prisma/client';
 
 export interface JwtPayload {
   sub: string;
@@ -22,6 +23,24 @@ export interface AuthUserResponse {
   roles: AuthUserRoleResponse[];
   avatarUrl?: string;
   mustChangePassword: boolean;
+  emailVerified: boolean;
+}
+
+export interface RegisterChurchPendingResponse {
+  requiresEmailVerification: true;
+  message: string;
+  email: string;
+}
+
+export type RegisterChurchResponse = AuthResponse | RegisterChurchPendingResponse;
+
+export function isRegisterChurchPendingResponse(
+  response: RegisterChurchResponse,
+): response is RegisterChurchPendingResponse {
+  return (
+    'requiresEmailVerification' in response &&
+    response.requiresEmailVerification === true
+  );
 }
 
 export interface AuthChurchResponse {
@@ -29,6 +48,10 @@ export interface AuthChurchResponse {
   name: string;
   slug: string;
   memberCount?: number;
+  subscriptionStatus?: SubscriptionStatus;
+  trialEndsAt?: string | null;
+  trialDaysRemaining?: number | null;
+  featuresLocked?: boolean;
 }
 
 export interface AuthTokensResponse {

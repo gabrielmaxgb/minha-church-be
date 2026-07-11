@@ -13,13 +13,13 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import {
-  ChurchAccessGuard,
-  PermissionsGuard,
-} from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/auth.types';
 import {
   AssignMemberMinistryDto,
+  AckMinistryCatalogNotificationsDto,
   CreateMemberDto,
   ListMembersQueryDto,
   UpdateMemberDto,
@@ -35,11 +35,46 @@ export class MembersController {
   findAll(
     @Param('churchId') churchId: string,
     @Query() query: ListMembersQueryDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.membersService.findAll(churchId, query);
+    return this.membersService.findAll(churchId, query, user.sub);
+  }
+
+  @Get('me')
+  findMine(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.membersService.findMine(user.sub, churchId);
+  }
+
+  @Get('me/ministry-notifications')
+  findMyMinistryNotifications(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.membersService.findMyMinistryNotifications(user.sub, churchId);
+  }
+
+  @Post('me/ministry-notifications/ack-catalog')
+  ackMinistryCatalogNotifications(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: AckMinistryCatalogNotificationsDto,
+  ) {
+    return this.membersService.ackMinistryCatalogNotifications(
+      user.sub,
+      churchId,
+      dto.ministryIds,
+    );
   }
 
   @Get(':memberId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.members_access,
+    ChurchPermission.members_manage,
+  )
   findOne(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
@@ -87,24 +122,32 @@ export class MembersController {
   }
 
   @Post(':memberId/ministries')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.members_manage)
   assignMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: AssignMemberMinistryDto,
   ) {
-    return this.membersService.assignMinistry(churchId, memberId, dto);
+    return this.membersService.assignMinistry(
+      churchId,
+      memberId,
+      user.sub,
+      dto,
+    );
   }
 
   @Delete(':memberId/ministries/:ministryId')
-  @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.members_manage)
   removeMinistry(
     @Param('churchId') churchId: string,
     @Param('memberId') memberId: string,
     @Param('ministryId') ministryId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.membersService.removeMinistry(churchId, memberId, ministryId);
+    return this.membersService.removeMinistry(
+      churchId,
+      memberId,
+      ministryId,
+      user.sub,
+    );
   }
 }

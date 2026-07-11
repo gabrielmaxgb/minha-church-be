@@ -8,7 +8,9 @@ import { AUTH_COOKIE } from '../../../common/constants/cookies';
 import type { JwtPayload } from '../auth.types';
 
 function extractAccessTokenFromCookie(request: Request): string | null {
-  const token = request.cookies?.[AUTH_COOKIE];
+  const cookies = request.cookies as
+    Partial<Record<string, string>> | undefined;
+  const token = cookies?.[AUTH_COOKIE];
 
   return typeof token === 'string' && token.length > 0 ? token : null;
 }
@@ -16,11 +18,15 @@ function extractAccessTokenFromCookie(request: Request): string | null {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
+    const isProduction = configService.get<string>('nodeEnv') === 'production';
+    const tokenExtractors = [extractAccessTokenFromCookie];
+
+    if (!isProduction) {
+      tokenExtractors.push(ExtractJwt.fromAuthHeaderAsBearerToken());
+    }
+
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        extractAccessTokenFromCookie,
-        ExtractJwt.fromAuthHeaderAsBearerToken(),
-      ]),
+      jwtFromRequest: ExtractJwt.fromExtractors(tokenExtractors),
       ignoreExpiration: false,
       secretOrKey: configService.getOrThrow<string>('jwt.secret'),
     });

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -43,7 +44,9 @@ export class CreateMemberDto {
   @IsEnum(MaritalStatus)
   maritalStatus?: MaritalStatus;
 
-  @ValidateIf((dto: CreateMemberDto) => dto.maritalStatus === MaritalStatus.married)
+  @ValidateIf(
+    (dto: CreateMemberDto) => dto.maritalStatus === MaritalStatus.married,
+  )
   @IsOptional()
   @IsDateString()
   weddingAnniversary?: string;
@@ -91,6 +94,10 @@ export class CreateMemberDto {
   @IsOptional()
   @IsDateString()
   membershipDate?: string;
+
+  @IsOptional()
+  @IsString()
+  familyId?: string;
 }
 
 export class UpdateMemberDto {
@@ -174,6 +181,10 @@ export class UpdateMemberDto {
   @IsOptional()
   @IsDateString()
   membershipDate?: string | null;
+
+  @IsOptional()
+  @IsString()
+  familyId?: string | null;
 }
 
 export class AssignMemberMinistryDto {
@@ -181,12 +192,19 @@ export class AssignMemberMinistryDto {
   ministryId: string;
 
   @IsOptional()
-  @IsString()
-  ministryRoleId?: string;
+  @IsArray()
+  @IsString({ each: true })
+  ministryRoleIds?: string[];
 
   @IsOptional()
   @IsDateString()
   startedAt?: string;
+}
+
+export class AckMinistryCatalogNotificationsDto {
+  @IsArray()
+  @IsString({ each: true })
+  ministryIds: string[];
 }
 
 export class ListMembersQueryDto {
@@ -198,6 +216,11 @@ export class ListMembersQueryDto {
   @IsString()
   search?: string;
 
+  /** Filtra por família. Use "none" para membros sem família. */
+  @IsOptional()
+  @IsString()
+  familyId?: string;
+
   @IsOptional()
   @Type(() => Number)
   page?: number;
@@ -205,4 +228,21 @@ export class ListMembersQueryDto {
   @IsOptional()
   @Type(() => Number)
   limit?: number;
+}
+
+export class CreateFamilyDto {
+  @IsString()
+  @MinLength(2)
+  name: string;
+}
+
+export class CreateMemberRelationDto {
+  @IsString()
+  fromMemberId: string;
+
+  @IsString()
+  toMemberId: string;
+
+  @IsEnum(['spouse', 'parent'] as const)
+  type: 'spouse' | 'parent';
 }

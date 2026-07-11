@@ -14,7 +14,10 @@ import { CHURCH_PERMISSION_LABELS } from '../../common/permissions/church-permis
 import { createCustomChurchRoleId } from '../../common/permissions/seed-default-church-roles';
 import { AuditService } from '../../common/services/audit.service';
 import { PrismaService } from '../../database/prisma.service';
-import type { CreateChurchRoleDto, UpdateChurchRoleDto } from './dto/church-role.dto';
+import type {
+  CreateChurchRoleDto,
+  UpdateChurchRoleDto,
+} from './dto/church-role.dto';
 import {
   toChurchRoleResponse,
   type ChurchRoleResponse,
@@ -50,6 +53,7 @@ export class ChurchRolesService {
         color: dto.color,
         sortOrder: dto.sortOrder ?? 100,
         isSystem: false,
+        singleHolder: dto.singleHolder ?? false,
         permissions: {
           create: dto.permissions.map((permission) => ({ permission })),
         },
@@ -96,6 +100,25 @@ export class ChurchRolesService {
       );
     }
 
+    if (
+      existing.systemKey === 'member' &&
+      dto.permissions !== undefined &&
+      dto.permissions.length === 0
+    ) {
+      throw new BadRequestException(
+        'O cargo Membro não pode ficar sem permissões.',
+      );
+    }
+
+    if (
+      existing.systemKey === 'member' &&
+      dto.singleHolder === true
+    ) {
+      throw new BadRequestException(
+        'O cargo Membro não pode ser titular único — todos os membros o possuem.',
+      );
+    }
+
     const beforePermissions = existing.permissions.map(
       (entry) => entry.permission,
     );
@@ -122,13 +145,19 @@ export class ChurchRolesService {
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
           ...(dto.color !== undefined ? { color: dto.color } : {}),
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+          ...(dto.singleHolder !== undefined
+            ? { singleHolder: dto.singleHolder }
+            : {}),
         },
         include: { permissions: true },
       });
     });
 
     const afterPermissions = role.permissions.map((entry) => entry.permission);
-    const permissionDiff = diffStringArrays(beforePermissions, afterPermissions);
+    const permissionDiff = diffStringArrays(
+      beforePermissions,
+      afterPermissions,
+    );
     const nameChanged =
       dto.name !== undefined && dto.name.trim() !== existing.name;
 
@@ -185,19 +214,18 @@ export class ChurchRolesService {
 
     if (role.isSystem) {
       throw new BadRequestException(
-        'Cargos padrão do sistema não podem ser removidos.',
+        role.systemKey === 'member'
+          ? 'O cargo Membro é padrão do sistema e não pode ser removido.'
+          : 'Cargos padrão do sistema não podem ser removidos.',
       );
     }
 
-    const assignmentCount = await this.prisma.churchMembershipRole.count({
+    // O vínculo em church_membership_roles tem onDelete: Cascade, então a
+    // exclusão remove o cargo de todos os usuários automaticamente. Contamos
+    // apenas para registrar o impacto na auditoria.
+    const affectedMembers = await this.prisma.churchMembershipRole.count({
       where: { roleId },
     });
-
-    if (assignmentCount > 0) {
-      throw new BadRequestException(
-        'Remova este cargo de todos os usuários antes de excluí-lo.',
-      );
-    }
 
     await this.prisma.churchRole.delete({
       where: { id: roleId },
@@ -212,7 +240,7 @@ export class ChurchRolesService {
       targetType: AUDIT_TARGET_TYPES.churchRole,
       targetId: roleId,
       summary: `${actorName} excluiu o cargo ${role.name}`,
-      metadata: { roleName: role.name },
+      metadata: { roleName: role.name, affectedMembers },
     });
   }
 

@@ -8,47 +8,48 @@ function createRoleId(churchId: string, systemKey: string): string {
   return `crole_${churchId}_${systemKey}`;
 }
 
+/**
+ * Cria/atualiza os cargos padrão da igreja com poucos round-trips.
+ * A versão anterior fazia upsert + delete + createMany por cargo (~18 queries)
+ * e estourava o timeout da transaction interativa no Railway→Neon
+ * ("Transaction not found").
+ */
 export async function seedDefaultChurchRoles(
   prisma: PrismaClient | Prisma.TransactionClient,
   churchId: string,
 ): Promise<void> {
-  for (const template of DEFAULT_CHURCH_ROLE_TEMPLATES) {
-    const roleId = createRoleId(churchId, template.systemKey);
+  const roles = DEFAULT_CHURCH_ROLE_TEMPLATES.map((template) => ({
+    id: createRoleId(churchId, template.systemKey),
+    churchId,
+    name: template.name,
+    sortOrder: template.sortOrder,
+    isSystem: true,
+    systemKey: template.systemKey,
+  }));
 
-    await prisma.churchRole.upsert({
-      where: { id: roleId },
-      update: {
-        name: template.name,
-        sortOrder: template.sortOrder,
-        isSystem: true,
-        systemKey: template.systemKey,
-      },
-      create: {
-        id: roleId,
-        churchId,
-        name: template.name,
-        sortOrder: template.sortOrder,
-        isSystem: true,
-        systemKey: template.systemKey,
-        permissions: {
-          create: template.permissions.map((permission) => ({ permission })),
-        },
-      },
+  await prisma.churchRole.createMany({
+    data: roles,
+    skipDuplicates: true,
+  });
+
+  const roleIds = roles.map((role) => role.id);
+
+  await prisma.churchRolePermission.deleteMany({
+    where: { roleId: { in: roleIds } },
+  });
+
+  const permissions = DEFAULT_CHURCH_ROLE_TEMPLATES.flatMap((template) =>
+    template.permissions.map((permission) => ({
+      roleId: createRoleId(churchId, template.systemKey),
+      permission,
+    })),
+  );
+
+  if (permissions.length > 0) {
+    await prisma.churchRolePermission.createMany({
+      data: permissions,
+      skipDuplicates: true,
     });
-
-    await prisma.churchRolePermission.deleteMany({
-      where: { roleId },
-    });
-
-    if (template.permissions.length > 0) {
-      await prisma.churchRolePermission.createMany({
-        data: template.permissions.map((permission) => ({
-          roleId,
-          permission,
-        })),
-        skipDuplicates: true,
-      });
-    }
   }
 }
 

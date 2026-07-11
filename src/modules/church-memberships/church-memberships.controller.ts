@@ -10,14 +10,12 @@ import {
 import { ChurchPermission } from '@prisma/client';
 
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
-import {
-  ChurchAccessGuard,
-  PermissionsGuard,
-} from '../../common/guards';
+import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
+import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { ChurchMembershipsService } from './church-memberships.service';
 
 @Controller('churches/:churchId/memberships')
@@ -64,6 +62,21 @@ export class ChurchMembershipsController {
       churchId,
       userId,
       actor.sub,
+    );
+  }
+
+  @Post(':userId/transfer-ownership')
+  transferOwnership(
+    @Param('churchId') churchId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() actor: JwtPayload,
+    @Body() dto: TransferOwnershipDto,
+  ) {
+    return this.churchMembershipsService.transferOwnership(
+      churchId,
+      userId,
+      actor.sub,
+      dto.password,
     );
   }
 

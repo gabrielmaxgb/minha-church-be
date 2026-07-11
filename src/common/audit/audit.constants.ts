@@ -1,14 +1,17 @@
 export const AUDIT_ACTIONS = {
+  churchRegistered: 'church.registered',
   churchRoleCreated: 'church_role.created',
   churchRoleUpdated: 'church_role.updated',
   churchRoleDeleted: 'church_role.deleted',
   membershipUpdated: 'membership.updated',
   membershipPasswordReset: 'membership.password_reset',
+  termsAccepted: 'terms.accepted',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
 export const AUDIT_TARGET_TYPES = {
+  church: 'church',
   churchRole: 'church_role',
   membership: 'membership',
   user: 'user',

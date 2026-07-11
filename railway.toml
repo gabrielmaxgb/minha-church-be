@@ -2,4 +2,5 @@
 buildCommand = "npm run build"
 
 [deploy]
-startCommand = "npm run start:prod"
+# Aplica migrations pendentes no Neon deste ambiente antes de subir a API.
+startCommand = "npm run start:release"

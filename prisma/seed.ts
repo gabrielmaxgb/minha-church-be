@@ -1,11 +1,9 @@
-import {
-  PrismaClient,
-  MemberStatus,
-  MaritalStatus,
-} from '@prisma/client';
+import { MemberStatus, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+import { canonicalizeEmail } from '../src/common/utils/canonicalize-email';
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
+import { createPgPool, createPrismaWithPg } from './pg-prisma';
 
 const DEMO_CHURCH_ID = 'church_demo';
 
@@ -70,21 +68,175 @@ const DEMO_USERS: Array<{
   },
 ];
 
+const CENTRAL_MOCK_MEMBERS: Array<{
+  name: string;
+  email: string;
+  phone: string;
+  status: MemberStatus;
+  city?: string;
+}> = [
+  {
+    name: 'Ana Carolina Mendes',
+    email: 'ana.mendes@batistacentral.demo',
+    phone: '(11) 98765-1001',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Bruno Henrique Silva',
+    email: 'bruno.silva@batistacentral.demo',
+    phone: '(11) 98765-1002',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Camila Fernandes',
+    email: 'camila.fernandes@batistacentral.demo',
+    phone: '(11) 98765-1003',
+    status: MemberStatus.active,
+    city: 'Guarulhos',
+  },
+  {
+    name: 'Daniel Oliveira',
+    email: 'daniel.oliveira@batistacentral.demo',
+    phone: '(11) 98765-1004',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Eduarda Costa',
+    email: 'eduarda.costa@batistacentral.demo',
+    phone: '(11) 98765-1005',
+    status: MemberStatus.visitor,
+    city: 'Osasco',
+  },
+  {
+    name: 'Felipe Rodrigues',
+    email: 'felipe.rodrigues@batistacentral.demo',
+    phone: '(11) 98765-1006',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Gabriela Almeida',
+    email: 'gabriela.almeida@batistacentral.demo',
+    phone: '(11) 98765-1007',
+    status: MemberStatus.active,
+    city: 'Santo André',
+  },
+  {
+    name: 'Henrique Barbosa',
+    email: 'henrique.barbosa@batistacentral.demo',
+    phone: '(11) 98765-1008',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Isabela Martins',
+    email: 'isabela.martins@batistacentral.demo',
+    phone: '(11) 98765-1009',
+    status: MemberStatus.visitor,
+    city: 'São Bernardo do Campo',
+  },
+  {
+    name: 'João Pedro Lima',
+    email: 'joao.lima@batistacentral.demo',
+    phone: '(11) 98765-1010',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Karina Souza',
+    email: 'karina.souza@batistacentral.demo',
+    phone: '(11) 98765-1011',
+    status: MemberStatus.active,
+    city: 'Diadema',
+  },
+  {
+    name: 'Lucas Pereira',
+    email: 'lucas.pereira@batistacentral.demo',
+    phone: '(11) 98765-1012',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Mariana Ribeiro',
+    email: 'mariana.ribeiro@batistacentral.demo',
+    phone: '(11) 98765-1013',
+    status: MemberStatus.active,
+    city: 'Mauá',
+  },
+  {
+    name: 'Nicolas Gomes',
+    email: 'nicolas.gomes@batistacentral.demo',
+    phone: '(11) 98765-1014',
+    status: MemberStatus.visitor,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Olívia Carvalho',
+    email: 'olivia.carvalho@batistacentral.demo',
+    phone: '(11) 98765-1015',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Paulo César Nunes',
+    email: 'paulo.nunes@batistacentral.demo',
+    phone: '(11) 98765-1016',
+    status: MemberStatus.active,
+    city: 'Barueri',
+  },
+  {
+    name: 'Rafaela Dias',
+    email: 'rafaela.dias@batistacentral.demo',
+    phone: '(11) 98765-1017',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Samuel Teixeira',
+    email: 'samuel.teixeira@batistacentral.demo',
+    phone: '(11) 98765-1018',
+    status: MemberStatus.active,
+    city: 'Carapicuíba',
+  },
+  {
+    name: 'Tatiane Freitas',
+    email: 'tatiane.freitas@batistacentral.demo',
+    phone: '(11) 98765-1019',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+  {
+    name: 'Vinícius Araújo',
+    email: 'vinicius.araujo@batistacentral.demo',
+    phone: '(11) 98765-1020',
+    status: MemberStatus.active,
+    city: 'São Paulo',
+  },
+];
+
 async function ensureChurch(
   prisma: PrismaClient,
   church: (typeof DEMO_CHURCHES)[number],
 ) {
+  const trialEndsAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+
   await prisma.church.upsert({
     where: { id: church.id },
     update: {
       name: church.name,
       slug: church.slug,
+      trialEndsAt,
     },
     create: {
       id: church.id,
       name: church.name,
       slug: church.slug,
       memberCount: 0,
+      subscriptionStatus: 'trialing',
+      trialEndsAt,
     },
   });
 
@@ -101,11 +253,15 @@ async function upsertDemoUser(
     update: {
       name: demoUser.name,
       passwordHash,
+      emailCanonical: canonicalizeEmail(demoUser.email),
+      emailVerifiedAt: new Date(),
     },
     create: {
       email: demoUser.email,
+      emailCanonical: canonicalizeEmail(demoUser.email),
       name: demoUser.name,
       passwordHash,
+      emailVerifiedAt: new Date(),
     },
   });
 }
@@ -161,12 +317,223 @@ async function upsertChurchMembership(
   return membership;
 }
 
+async function upsertMemberProfile(
+  prisma: PrismaClient,
+  input: {
+    churchId: string;
+    userId: string;
+    name: string;
+    email: string;
+  },
+) {
+  await prisma.member.upsert({
+    where: {
+      churchId_email: {
+        churchId: input.churchId,
+        email: input.email,
+      },
+    },
+    update: {
+      name: input.name,
+      userId: input.userId,
+      status: MemberStatus.active,
+      membershipDate: new Date('2024-01-01'),
+      deletedAt: null,
+    },
+    create: {
+      churchId: input.churchId,
+      userId: input.userId,
+      name: input.name,
+      email: input.email,
+      status: MemberStatus.active,
+      membershipDate: new Date('2024-01-01'),
+    },
+  });
+}
+
+async function removeChurchAppAccess(
+  prisma: PrismaClient,
+  churchId: string,
+  email: string,
+) {
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  if (!user) {
+    return;
+  }
+
+  const membership = await prisma.churchMembership.findUnique({
+    where: {
+      userId_churchId: {
+        userId: user.id,
+        churchId,
+      },
+    },
+  });
+
+  if (!membership || membership.isOwner) {
+    return;
+  }
+
+  await prisma.churchMembershipRole.deleteMany({
+    where: { membershipId: membership.id },
+  });
+
+  await prisma.churchMembership.delete({
+    where: { id: membership.id },
+  });
+}
+
+async function upsertMockMemberPastoralOnly(
+  prisma: PrismaClient,
+  churchId: string,
+  mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
+) {
+  const membershipDate =
+    mockMember.status === MemberStatus.active ? new Date('2023-06-15') : null;
+  const visitorSince =
+    mockMember.status === MemberStatus.visitor ? new Date('2025-11-01') : null;
+
+  await removeChurchAppAccess(prisma, churchId, mockMember.email);
+
+  await prisma.member.upsert({
+    where: {
+      churchId_email: {
+        churchId,
+        email: mockMember.email,
+      },
+    },
+    update: {
+      userId: null,
+      name: mockMember.name,
+      phone: mockMember.phone,
+      city: mockMember.city ?? 'São Paulo',
+      state: 'SP',
+      status: mockMember.status,
+      membershipDate,
+      visitorSince,
+      deletedAt: null,
+    },
+    create: {
+      churchId,
+      name: mockMember.name,
+      email: mockMember.email,
+      phone: mockMember.phone,
+      city: mockMember.city ?? 'São Paulo',
+      state: 'SP',
+      status: mockMember.status,
+      membershipDate,
+      visitorSince,
+    },
+  });
+}
+
+async function upsertCentralMockMember(
+  prisma: PrismaClient,
+  churchId: string,
+  passwordHash: string,
+  mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
+) {
+  if (mockMember.status === MemberStatus.active) {
+    await upsertMockMemberWithLogin(prisma, churchId, passwordHash, mockMember);
+    return;
+  }
+
+  await upsertMockMemberPastoralOnly(prisma, churchId, mockMember);
+}
+
+async function upsertMockMember(
+  prisma: PrismaClient,
+  input: {
+    churchId: string;
+    userId: string;
+    name: string;
+    email: string;
+    phone: string;
+    status: MemberStatus;
+    city?: string;
+  },
+) {
+  const membershipDate =
+    input.status === MemberStatus.active ? new Date('2023-06-15') : null;
+  const visitorSince =
+    input.status === MemberStatus.visitor ? new Date('2025-11-01') : null;
+
+  await prisma.member.upsert({
+    where: {
+      churchId_email: {
+        churchId: input.churchId,
+        email: input.email,
+      },
+    },
+    update: {
+      userId: input.userId,
+      name: input.name,
+      phone: input.phone,
+      city: input.city ?? 'São Paulo',
+      state: 'SP',
+      status: input.status,
+      membershipDate,
+      visitorSince,
+      deletedAt: null,
+    },
+    create: {
+      churchId: input.churchId,
+      userId: input.userId,
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      city: input.city ?? 'São Paulo',
+      state: 'SP',
+      status: input.status,
+      membershipDate,
+      visitorSince,
+    },
+  });
+}
+
+async function upsertMockMemberWithLogin(
+  prisma: PrismaClient,
+  churchId: string,
+  passwordHash: string,
+  mockMember: (typeof CENTRAL_MOCK_MEMBERS)[number],
+) {
+  const user = await prisma.user.upsert({
+    where: { email: mockMember.email },
+    update: {
+      name: mockMember.name,
+      passwordHash,
+      emailCanonical: canonicalizeEmail(mockMember.email),
+      emailVerifiedAt: new Date(),
+    },
+    create: {
+      email: mockMember.email,
+      emailCanonical: canonicalizeEmail(mockMember.email),
+      name: mockMember.name,
+      passwordHash,
+      emailVerifiedAt: new Date(),
+    },
+  });
+
+  await upsertChurchMembership(prisma, {
+    userId: user.id,
+    churchId,
+    systemKey: 'member',
+  });
+
+  await upsertMockMember(prisma, {
+    churchId,
+    userId: user.id,
+    ...mockMember,
+  });
+}
+
 async function syncChurchMemberCount(prisma: PrismaClient, churchId: string) {
   const memberCount = await prisma.member.count({
     where: {
       churchId,
       deletedAt: null,
-      status: { in: [MemberStatus.active, MemberStatus.visitor] },
+      status: MemberStatus.active,
     },
   });
 
@@ -176,7 +543,7 @@ async function syncChurchMemberCount(prisma: PrismaClient, churchId: string) {
   });
 }
 
-async function seedCentralChurch(prisma: PrismaClient, passwordHash: string) {
+async function seedCentralChurchUsers(prisma: PrismaClient, passwordHash: string) {
   const legacyDemo = await prisma.user.findUnique({
     where: { email: 'demo@igreja.com.br' },
   });
@@ -200,318 +567,32 @@ async function seedCentralChurch(prisma: PrismaClient, passwordHash: string) {
       isOwner: demoUser.isOwner,
       systemKey: demoUser.systemKey,
     });
+
+    await upsertMemberProfile(prisma, {
+      churchId: DEMO_CHURCH_ID,
+      userId: user.id,
+      name: demoUser.name,
+      email: demoUser.email,
+    });
   }
 
-  const pastorUser = await prisma.user.findUniqueOrThrow({
-    where: { email: 'pastor@igreja.com.br' },
-  });
-
-  const leaderUser = await prisma.user.findUniqueOrThrow({
-    where: { email: 'leader@igreja.com.br' },
-  });
-
-  const worshipMinistry = await prisma.ministry.upsert({
-    where: {
-      churchId_name: {
-        churchId: DEMO_CHURCH_ID,
-        name: 'Louvor',
-      },
-    },
-    update: {
-      description: 'Ministério de louvor e adoração',
-      isActive: true,
-    },
-    create: {
-      churchId: DEMO_CHURCH_ID,
-      name: 'Louvor',
-      description: 'Ministério de louvor e adoração',
-    },
-  });
-
-  const worshipLeaderRole = await prisma.ministryRole.upsert({
-    where: {
-      ministryId_name: {
-        ministryId: worshipMinistry.id,
-        name: 'Regente',
-      },
-    },
-    update: {
-      canManageEvents: true,
-      sortOrder: 1,
-    },
-    create: {
-      ministryId: worshipMinistry.id,
-      name: 'Regente',
-      canManageEvents: true,
-      sortOrder: 1,
-    },
-  });
-
-  await prisma.ministryRole.upsert({
-    where: {
-      ministryId_name: {
-        ministryId: worshipMinistry.id,
-        name: 'Vocalista',
-      },
-    },
-    update: { sortOrder: 2 },
-    create: {
-      ministryId: worshipMinistry.id,
-      name: 'Vocalista',
-      sortOrder: 2,
-    },
-  });
-
-  const cellsMinistry = await prisma.ministry.upsert({
-    where: {
-      churchId_name: {
-        churchId: DEMO_CHURCH_ID,
-        name: 'Células',
-      },
-    },
-    update: { isActive: true },
-    create: {
-      churchId: DEMO_CHURCH_ID,
-      name: 'Células',
-      description: 'Ministério de células e discipulado',
-    },
-  });
-
-  await prisma.ministryRole.upsert({
-    where: {
-      ministryId_name: {
-        ministryId: cellsMinistry.id,
-        name: 'Líder de célula',
-      },
-    },
-    update: { canManageEvents: true, sortOrder: 1 },
-    create: {
-      ministryId: cellsMinistry.id,
-      name: 'Líder de célula',
-      canManageEvents: true,
-      sortOrder: 1,
-    },
-  });
-
-  const memberAna = await prisma.member.upsert({
-    where: {
-      churchId_email: {
-        churchId: DEMO_CHURCH_ID,
-        email: 'ana.silva@igreja.com.br',
-      },
-    },
-    update: {
-      name: 'Ana Silva',
-      status: MemberStatus.active,
-      maritalStatus: MaritalStatus.married,
-      weddingAnniversary: new Date('2018-06-15'),
-      membershipDate: new Date('2021-03-10'),
-    },
-    create: {
-      churchId: DEMO_CHURCH_ID,
-      name: 'Ana Silva',
-      email: 'ana.silva@igreja.com.br',
-      phone: '11999990001',
-      status: MemberStatus.active,
-      maritalStatus: MaritalStatus.married,
-      weddingAnniversary: new Date('2018-06-15'),
-      membershipDate: new Date('2021-03-10'),
-      baptismDate: new Date('2020-11-20'),
-    },
-  });
-
-  const memberCarlos = await prisma.member.upsert({
-    where: {
-      churchId_email: {
-        churchId: DEMO_CHURCH_ID,
-        email: 'carlos.mendes@igreja.com.br',
-      },
-    },
-    update: {
-      name: 'Carlos Mendes',
-      status: MemberStatus.active,
-      membershipDate: new Date('2019-01-08'),
-    },
-    create: {
-      churchId: DEMO_CHURCH_ID,
-      name: 'Carlos Mendes',
-      email: 'carlos.mendes@igreja.com.br',
-      phone: '11999990002',
-      status: MemberStatus.active,
-      membershipDate: new Date('2019-01-08'),
-    },
-  });
-
-  await prisma.member.upsert({
-    where: {
-      churchId_email: {
-        churchId: DEMO_CHURCH_ID,
-        email: 'maria.visitante@igreja.com.br',
-      },
-    },
-    update: {
-      name: 'Maria Santos',
-      status: MemberStatus.visitor,
-      visitorSince: new Date('2025-12-01'),
-    },
-    create: {
-      churchId: DEMO_CHURCH_ID,
-      name: 'Maria Santos',
-      email: 'maria.visitante@igreja.com.br',
-      phone: '11999990003',
-      status: MemberStatus.visitor,
-      visitorSince: new Date('2025-12-01'),
-    },
-  });
-
-  await prisma.memberMinistry.upsert({
-    where: {
-      memberId_ministryId: {
-        memberId: memberAna.id,
-        ministryId: worshipMinistry.id,
-      },
-    },
-    update: {
-      ministryRoleId: worshipLeaderRole.id,
-      endedAt: null,
-    },
-    create: {
-      memberId: memberAna.id,
-      ministryId: worshipMinistry.id,
-      ministryRoleId: worshipLeaderRole.id,
-      startedAt: new Date('2021-04-01'),
-    },
-  });
-
-  await prisma.memberMinistry.upsert({
-    where: {
-      memberId_ministryId: {
-        memberId: memberCarlos.id,
-        ministryId: cellsMinistry.id,
-      },
-    },
-    update: { endedAt: null },
-    create: {
-      memberId: memberCarlos.id,
-      ministryId: cellsMinistry.id,
-      startedAt: new Date('2019-02-01'),
-    },
-  });
-
-  const leaderMember = await prisma.member.upsert({
-    where: {
-      churchId_email: {
-        churchId: DEMO_CHURCH_ID,
-        email: 'leader@igreja.com.br',
-      },
-    },
-    update: {
-      name: 'Líder Demo',
-      userId: leaderUser.id,
-      status: MemberStatus.active,
-      membershipDate: new Date('2022-01-15'),
-    },
-    create: {
-      churchId: DEMO_CHURCH_ID,
-      userId: leaderUser.id,
-      name: 'Líder Demo',
-      email: 'leader@igreja.com.br',
-      status: MemberStatus.active,
-      membershipDate: new Date('2022-01-15'),
-    },
-  });
-
-  await prisma.memberMinistry.upsert({
-    where: {
-      memberId_ministryId: {
-        memberId: leaderMember.id,
-        ministryId: worshipMinistry.id,
-      },
-    },
-    update: {
-      ministryRoleId: worshipLeaderRole.id,
-      endedAt: null,
-    },
-    create: {
-      memberId: leaderMember.id,
-      ministryId: worshipMinistry.id,
-      ministryRoleId: worshipLeaderRole.id,
-      startedAt: new Date('2022-02-01'),
-    },
-  });
-
-  const nextMonth = new Date();
-  nextMonth.setMonth(nextMonth.getMonth() + 1);
-  nextMonth.setHours(19, 0, 0, 0);
-
-  await prisma.ministryEvent.upsert({
-    where: { id: 'event_demo_louvorzao' },
-    update: {
-      name: 'Louvorzão',
-      description: 'Noite especial de adoração com toda a igreja',
-      location: 'Templo principal',
-      startsAt: nextMonth,
-      deletedAt: null,
-    },
-    create: {
-      id: 'event_demo_louvorzao',
-      churchId: DEMO_CHURCH_ID,
-      ministryId: worshipMinistry.id,
-      name: 'Louvorzão',
-      description: 'Noite especial de adoração com toda a igreja',
-      location: 'Templo principal',
-      startsAt: nextMonth,
-      createdByUserId: pastorUser.id,
-    },
-  });
-
-  const conferenceDate = new Date();
-  conferenceDate.setDate(conferenceDate.getDate() + 14);
-  conferenceDate.setHours(10, 0, 0, 0);
-
-  await prisma.ministryEvent.upsert({
-    where: { id: 'event_demo_conferencia' },
-    update: {
-      name: 'Conferência da Família',
-      description: 'Encontro especial para toda a igreja — destaque no painel',
-      location: 'Auditório principal',
-      startsAt: conferenceDate,
-      ministryId: null,
-      deletedAt: null,
-    },
-    create: {
-      id: 'event_demo_conferencia',
-      churchId: DEMO_CHURCH_ID,
-      ministryId: null,
-      name: 'Conferência da Família',
-      description: 'Encontro especial para toda a igreja — destaque no painel',
-      location: 'Auditório principal',
-      startsAt: conferenceDate,
-      createdByUserId: pastorUser.id,
-    },
-  });
+  for (const mockMember of CENTRAL_MOCK_MEMBERS) {
+    await upsertCentralMockMember(
+      prisma,
+      DEMO_CHURCH_ID,
+      passwordHash,
+      mockMember,
+    );
+  }
 
   await syncChurchMemberCount(prisma, DEMO_CHURCH_ID);
 }
 
-async function seedSatelliteChurch(
+async function seedSatelliteChurchAccess(
   prisma: PrismaClient,
-  church: (typeof DEMO_CHURCHES)[number],
+  churchId: string,
   passwordHash: string,
-  config: {
-    pastorEmail: string;
-    pastorName: string;
-    members: Array<{
-      email: string;
-      name: string;
-      phone: string;
-      status?: MemberStatus;
-    }>;
-    ministryName: string;
-    ministryDescription: string;
-    eventId: string;
-    eventName: string;
-  },
+  pastor: { email: string; name: string },
 ) {
   const owner = await prisma.user.findUniqueOrThrow({
     where: { email: 'owner@igreja.com.br' },
@@ -519,95 +600,41 @@ async function seedSatelliteChurch(
 
   await upsertChurchMembership(prisma, {
     userId: owner.id,
-    churchId: church.id,
+    churchId,
     isOwner: true,
   });
 
-  const pastor = await upsertDemoUser(
+  await upsertMemberProfile(prisma, {
+    churchId,
+    userId: owner.id,
+    name: owner.name,
+    email: owner.email,
+  });
+
+  const pastorUser = await upsertDemoUser(
     prisma,
     {
-      email: config.pastorEmail,
-      name: config.pastorName,
+      email: pastor.email,
+      name: pastor.name,
       systemKey: 'pastor',
     },
     passwordHash,
   );
 
   await upsertChurchMembership(prisma, {
-    userId: pastor.id,
-    churchId: church.id,
+    userId: pastorUser.id,
+    churchId,
     systemKey: 'pastor',
   });
 
-  const ministry = await prisma.ministry.upsert({
-    where: {
-      churchId_name: {
-        churchId: church.id,
-        name: config.ministryName,
-      },
-    },
-    update: {
-      description: config.ministryDescription,
-      isActive: true,
-    },
-    create: {
-      churchId: church.id,
-      name: config.ministryName,
-      description: config.ministryDescription,
-    },
+  await upsertMemberProfile(prisma, {
+    churchId,
+    userId: pastorUser.id,
+    name: pastor.name,
+    email: pastor.email,
   });
 
-  for (const memberData of config.members) {
-    await prisma.member.upsert({
-      where: {
-        churchId_email: {
-          churchId: church.id,
-          email: memberData.email,
-        },
-      },
-      update: {
-        name: memberData.name,
-        phone: memberData.phone,
-        status: memberData.status ?? MemberStatus.active,
-      },
-      create: {
-        churchId: church.id,
-        name: memberData.name,
-        email: memberData.email,
-        phone: memberData.phone,
-        status: memberData.status ?? MemberStatus.active,
-        membershipDate: new Date('2023-01-01'),
-      },
-    });
-  }
-
-  const eventDate = new Date();
-  eventDate.setDate(eventDate.getDate() + 21);
-  eventDate.setHours(19, 30, 0, 0);
-
-  await prisma.ministryEvent.upsert({
-    where: { id: config.eventId },
-    update: {
-      name: config.eventName,
-      description: `Evento de demonstração da ${church.name}`,
-      location: 'Templo',
-      startsAt: eventDate,
-      ministryId: ministry.id,
-      deletedAt: null,
-    },
-    create: {
-      id: config.eventId,
-      churchId: church.id,
-      ministryId: ministry.id,
-      name: config.eventName,
-      description: `Evento de demonstração da ${church.name}`,
-      location: 'Templo',
-      startsAt: eventDate,
-      createdByUserId: pastor.id,
-    },
-  });
-
-  await syncChurchMemberCount(prisma, church.id);
+  await syncChurchMemberCount(prisma, churchId);
 }
 
 export async function seedDatabase(prisma = new PrismaClient()) {
@@ -617,86 +644,37 @@ export async function seedDatabase(prisma = new PrismaClient()) {
     await ensureChurch(prisma, church);
   }
 
-  await seedCentralChurch(prisma, passwordHash);
+  await seedCentralChurchUsers(prisma, passwordHash);
 
-  await seedSatelliteChurch(prisma, DEMO_CHURCHES[1], passwordHash, {
-    pastorEmail: 'pastor.norte@igreja.com.br',
-    pastorName: 'Pastor do Norte',
-    members: [
-      {
-        email: 'joao.norte@igreja.com.br',
-        name: 'João Ferreira',
-        phone: '11988880001',
-      },
-      {
-        email: 'lucia.norte@igreja.com.br',
-        name: 'Lúcia Almeida',
-        phone: '11988880002',
-      },
-      {
-        email: 'pedro.visitante.norte@igreja.com.br',
-        name: 'Pedro Rocha',
-        phone: '11988880003',
-        status: MemberStatus.visitor,
-      },
-    ],
-    ministryName: 'Louvor',
-    ministryDescription: 'Equipe de louvor da unidade Norte',
-    eventId: 'event_demo_norte_culto',
-    eventName: 'Culto de Celebração',
+  await seedSatelliteChurchAccess(prisma, DEMO_CHURCHES[1].id, passwordHash, {
+    email: 'pastor.norte@igreja.com.br',
+    name: 'Pastor do Norte',
   });
 
-  await seedSatelliteChurch(prisma, DEMO_CHURCHES[2], passwordHash, {
-    pastorEmail: 'pastor.sul@igreja.com.br',
-    pastorName: 'Pastor do Sul',
-    members: [
-      {
-        email: 'rafael.sul@igreja.com.br',
-        name: 'Rafael Costa',
-        phone: '11977770001',
-      },
-      {
-        email: 'beatriz.sul@igreja.com.br',
-        name: 'Beatriz Lima',
-        phone: '11977770002',
-      },
-      {
-        email: 'camila.sul@igreja.com.br',
-        name: 'Camila Duarte',
-        phone: '11977770003',
-      },
-    ],
-    ministryName: 'Jovens',
-    ministryDescription: 'Ministério de jovens e adolescentes',
-    eventId: 'event_demo_sul_encontro',
-    eventName: 'Encontro de Jovens',
+  await seedSatelliteChurchAccess(prisma, DEMO_CHURCHES[2].id, passwordHash, {
+    email: 'pastor.sul@igreja.com.br',
+    name: 'Pastor do Sul',
   });
 }
 
 async function main() {
-  const prisma = new PrismaClient();
+  const pool = createPgPool();
+  const { prisma } = createPrismaWithPg(pool);
 
   try {
     await seedDatabase(prisma);
     if (require.main === module) {
-      console.log(
-        'Seed concluído: 3 igrejas demo + contas *@igreja.com.br / senha123',
-      );
-      console.log(
-        '  - Igreja Batista Central (completa)',
-      );
-      console.log(
-        '  - Igreja Batista do Norte (pastor.norte@igreja.com.br)',
-      );
-      console.log(
-        '  - Comunidade da Graça (pastor.sul@igreja.com.br)',
-      );
-      console.log(
-        '  - owner@igreja.com.br tem acesso às 3 igrejas',
-      );
+      console.log('Seed concluído: contas demo *@igreja.com.br / senha123');
+      console.log('  - Igreja Batista Central: owner, admin, pastor, secretary, treasurer, leader, member');
+      console.log('  - Igreja Batista Central: +20 membros mock no cadastro pastoral');
+      console.log('  - Igreja Batista do Norte: pastor.norte@igreja.com.br');
+      console.log('  - Comunidade da Graça: pastor.sul@igreja.com.br');
+      console.log('  - owner@igreja.com.br tem acesso às 3 igrejas');
+      console.log('  - Cada conta demo também aparece no cadastro pastoral (tabela members)');
     }
   } finally {
     await prisma.$disconnect();
+    await pool.end();
   }
 }
 

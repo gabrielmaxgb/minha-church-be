@@ -6,6 +6,7 @@ import { App } from 'supertest/types';
 
 import { AppModule } from '../src/app.module';
 import { seedDatabase } from '../prisma/seed';
+import type { E2eMembershipItem } from './e2e.types';
 
 describe('Church memberships (e2e)', () => {
   let app: INestApplication<App>;
@@ -54,13 +55,12 @@ describe('Church memberships (e2e)', () => {
       .get('/api/v1/churches/church_demo/memberships')
       .expect(200);
 
-    expect(Array.isArray(response.body)).toBe(true);
-    expect(response.body.length).toBeGreaterThanOrEqual(7);
+    const memberships = response.body as E2eMembershipItem[];
+
+    expect(Array.isArray(memberships)).toBe(true);
+    expect(memberships.length).toBeGreaterThanOrEqual(7);
     expect(
-      response.body.some(
-        (item: { user: { email: string } }) =>
-          item.user.email === 'treasurer@igreja.com.br',
-      ),
+      memberships.some((item) => item.user.email === 'treasurer@igreja.com.br'),
     ).toBe(true);
   });
 
@@ -71,15 +71,13 @@ describe('Church memberships (e2e)', () => {
       await pastorAgent
         .get('/api/v1/churches/church_demo/memberships')
         .expect(200)
-    ).body;
+    ).body as E2eMembershipItem[];
 
     const treasurerMembership = memberships.find(
-      (item: { user: { email: string } }) =>
-        item.user.email === 'treasurer@igreja.com.br',
+      (item) => item.user.email === 'treasurer@igreja.com.br',
     );
     const memberMembership = memberships.find(
-      (item: { user: { email: string } }) =>
-        item.user.email === 'member@igreja.com.br',
+      (item) => item.user.email === 'member@igreja.com.br',
     );
 
     expect(treasurerMembership).toBeDefined();
@@ -113,30 +111,29 @@ describe('Church memberships (e2e)', () => {
       await pastorAgent
         .get('/api/v1/churches/church_demo/memberships')
         .expect(200)
-    ).body;
+    ).body as E2eMembershipItem[];
 
     const adminMembership = memberships.find(
-      (item: { user: { email: string } }) =>
-        item.user.email === 'admin@igreja.com.br',
+      (item) => item.user.email === 'admin@igreja.com.br',
     );
     const memberMembership = memberships.find(
-      (item: { user: { email: string } }) =>
-        item.user.email === 'member@igreja.com.br',
+      (item) => item.user.email === 'member@igreja.com.br',
     );
+
+    expect(adminMembership).toBeDefined();
+    expect(memberMembership?.roles[0]).toBeDefined();
 
     await pastorAgent
       .patch(
-        `/api/v1/churches/church_demo/memberships/${adminMembership.userId}`,
+        `/api/v1/churches/church_demo/memberships/${adminMembership!.userId}`,
       )
-      .send({ roleIds: [memberMembership.roles[0].id] })
+      .send({ roleIds: [memberMembership!.roles[0].id] })
       .expect(403);
   });
 
   it('member cannot list memberships', async () => {
     const agent = await loginAs('member@igreja.com.br');
 
-    await agent
-      .get('/api/v1/churches/church_demo/memberships')
-      .expect(403);
+    await agent.get('/api/v1/churches/church_demo/memberships').expect(403);
   });
 });

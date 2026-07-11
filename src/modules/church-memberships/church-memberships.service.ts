@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChurchPermission } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { AuditService } from '../../common/services/audit.service';
@@ -14,11 +15,14 @@ import {
   AUDIT_ACTIONS,
   AUDIT_TARGET_TYPES,
 } from '../../common/audit/audit.constants';
+import { invalidateMembershipAccessCache } from '../../common/perf/perf-request-context';
 import { formatCpf } from '../../common/utils/cpf';
 import { isInternalLoginEmail } from '../../common/utils/login-email';
+import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
 import { decryptSecret } from '../../common/utils/secret-encryption';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchRolesService } from '../church-roles/church-roles.service';
+import { MembersService } from '../members/members.service';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
 import type { ChurchMembershipResponse } from './church-memberships.types';
 import type { PendingAccessUserResponse } from './pending-access.types';
@@ -34,11 +38,13 @@ const membershipInclude = {
       name: true,
       email: true,
       avatarUrl: true,
-      memberProfile: {
+      memberProfiles: {
+        where: { deletedAt: null },
         select: {
           id: true,
           name: true,
           churchId: true,
+          email: true,
           deletedAt: true,
         },
       },
@@ -52,6 +58,7 @@ const membershipInclude = {
           name: true,
           color: true,
           isSystem: true,
+          systemKey: true,
           sortOrder: true,
           permissions: true,
         },
@@ -69,6 +76,7 @@ export class ChurchMembershipsService {
     private readonly auditService: AuditService,
     private readonly config: ConfigService,
     private readonly passwordCredentials: PasswordCredentialsService,
+    private readonly membersService: MembersService,
   ) {}
 
   async findAll(churchId: string): Promise<ChurchMembershipResponse[]> {
@@ -78,7 +86,9 @@ export class ChurchMembershipsService {
       orderBy: { user: { name: 'asc' } },
     });
 
-    return memberships.map((membership) => this.toResponse(membership, churchId));
+    return memberships.map((membership) =>
+      this.toResponse(membership, churchId),
+    );
   }
 
   async findPendingAccessUsers(
@@ -93,7 +103,8 @@ export class ChurchMembershipsService {
         memberships: { some: { churchId } },
       },
       include: {
-        memberProfile: {
+        memberProfiles: {
+          where: { churchId, deletedAt: null },
           select: {
             name: true,
             email: true,
@@ -101,6 +112,7 @@ export class ChurchMembershipsService {
             churchId: true,
             deletedAt: true,
           },
+          take: 1,
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -120,16 +132,11 @@ export class ChurchMembershipsService {
         return [];
       }
 
-      const member =
-        user.memberProfile?.churchId === churchId &&
-        user.memberProfile.deletedAt === null
-          ? user.memberProfile
-          : null;
+      const member = user.memberProfiles[0] ?? null;
 
       const login = user.cpf ? formatCpf(user.cpf) : user.email;
       const email =
-        member?.email ??
-        (isInternalLoginEmail(user.email) ? null : user.email);
+        member?.email ?? (isInternalLoginEmail(user.email) ? null : user.email);
 
       return [
         {
@@ -154,7 +161,8 @@ export class ChurchMembershipsService {
       include: {
         user: {
           include: {
-            memberProfile: {
+            memberProfiles: {
+              where: { churchId, deletedAt: null },
               select: {
                 name: true,
                 email: true,
@@ -162,6 +170,7 @@ export class ChurchMembershipsService {
                 churchId: true,
                 deletedAt: true,
               },
+              take: 1,
             },
           },
         },
@@ -172,15 +181,10 @@ export class ChurchMembershipsService {
 
     return requests.map((request) => {
       const user = request.user;
-      const member =
-        user.memberProfile?.churchId === churchId &&
-        user.memberProfile.deletedAt === null
-          ? user.memberProfile
-          : null;
+      const member = user.memberProfiles[0] ?? null;
       const login = user.cpf ? formatCpf(user.cpf) : user.email;
       const email =
-        member?.email ??
-        (isInternalLoginEmail(user.email) ? null : user.email);
+        member?.email ?? (isInternalLoginEmail(user.email) ? null : user.email);
 
       return {
         id: request.id,
@@ -216,7 +220,8 @@ export class ChurchMembershipsService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        memberProfile: {
+        memberProfiles: {
+          where: { churchId, deletedAt: null },
           select: {
             name: true,
             email: true,
@@ -224,6 +229,7 @@ export class ChurchMembershipsService {
             churchId: true,
             deletedAt: true,
           },
+          take: 1,
         },
       },
     });
@@ -244,14 +250,9 @@ export class ChurchMembershipsService {
       },
     });
 
-    const member =
-      user.memberProfile?.churchId === churchId &&
-      user.memberProfile.deletedAt === null
-        ? user.memberProfile
-        : null;
+    const member = user.memberProfiles[0] ?? null;
     const email =
-      member?.email ??
-      (isInternalLoginEmail(user.email) ? null : user.email);
+      member?.email ?? (isInternalLoginEmail(user.email) ? null : user.email);
 
     const actor = await this.prisma.user.findUnique({
       where: { id: actorUserId },
@@ -291,6 +292,7 @@ export class ChurchMembershipsService {
       name: string;
       color?: string;
       isSystem: boolean;
+      systemKey?: string;
       sortOrder: number;
     }>
   > {
@@ -322,18 +324,20 @@ export class ChurchMembershipsService {
       : actorAccess.permissions;
 
     return roles
-      .filter((role) =>
-        actorAccess.isOwner ||
-        this.churchPermissions.permissionsAreSubsetOf(
-          role.permissions.map((entry) => entry.permission),
-          actorPermissions,
-        ),
+      .filter(
+        (role) =>
+          actorAccess.isOwner ||
+          this.churchPermissions.permissionsAreSubsetOf(
+            role.permissions.map((entry) => entry.permission),
+            actorPermissions,
+          ),
       )
       .map((role) => ({
         id: role.id,
         name: role.name,
         color: role.color ?? undefined,
         isSystem: role.isSystem,
+        systemKey: role.systemKey ?? undefined,
         sortOrder: role.sortOrder,
       }));
   }
@@ -383,6 +387,10 @@ export class ChurchMembershipsService {
       throw new NotFoundException('Usuário não encontrado nesta igreja.');
     }
 
+    if (dto.isOwner === true && !membership.isOwner) {
+      this.assertCanReceiveOwnership(membership, churchId);
+    }
+
     const targetPermissions = new Set<ChurchPermission>();
     for (const assignment of membership.roleAssignments) {
       for (const entry of assignment.role.permissions) {
@@ -419,9 +427,23 @@ export class ChurchMembershipsService {
     }
 
     if (dto.roleIds !== undefined) {
-      const uniqueRoleIds = [...new Set(dto.roleIds)];
+      const memberRole = await this.prisma.churchRole.findFirst({
+        where: { churchId, systemKey: 'member' },
+        select: { id: true },
+      });
 
-      if (uniqueRoleIds.length === 0 && !membership.isOwner && dto.isOwner !== true) {
+      const uniqueRoleIds = [
+        ...new Set([
+          ...dto.roleIds,
+          ...(memberRole ? [memberRole.id] : []),
+        ]),
+      ];
+
+      if (
+        uniqueRoleIds.length === 0 &&
+        !membership.isOwner &&
+        dto.isOwner !== true
+      ) {
         throw new BadRequestException(
           'O usuário precisa ter pelo menos um cargo ou ser proprietário.',
         );
@@ -454,6 +476,9 @@ export class ChurchMembershipsService {
           'Você não pode atribuir cargos com permissões superiores às suas.',
         );
       }
+
+      // Persist the forced member role for the transaction below.
+      dto.roleIds = uniqueRoleIds;
     }
 
     const beforeRoleNames = membership.roleAssignments
@@ -470,6 +495,25 @@ export class ChurchMembershipsService {
       }
 
       if (dto.roleIds !== undefined) {
+        const singleHolderRoles = await tx.churchRole.findMany({
+          where: {
+            churchId,
+            id: { in: dto.roleIds },
+            singleHolder: true,
+          },
+          select: { id: true },
+        });
+
+        for (const role of singleHolderRoles) {
+          await tx.churchMembershipRole.deleteMany({
+            where: {
+              roleId: role.id,
+              membershipId: { not: membership.id },
+              membership: { churchId },
+            },
+          });
+        }
+
         await tx.churchMembershipRole.deleteMany({
           where: { membershipId: membership.id },
         });
@@ -489,6 +533,8 @@ export class ChurchMembershipsService {
         include: membershipInclude,
       });
     });
+
+    invalidateMembershipAccessCache(membership.userId, churchId);
 
     const response = this.toResponse(updated, churchId);
     const afterRoleNames = response.roles.map((role) => role.name).sort();
@@ -546,7 +592,206 @@ export class ChurchMembershipsService {
       });
     }
 
+    await this.membersService.ensurePastoralRecordForUser(
+      churchId,
+      targetUserId,
+    );
+
+    if (ownerChanged && response.isOwner) {
+      await this.requireOwnerVerificationOnPromotion(targetUserId);
+    }
+
     return response;
+  }
+
+  async transferOwnership(
+    churchId: string,
+    targetUserId: string,
+    actorUserId: string,
+    password: string,
+  ): Promise<ChurchMembershipResponse> {
+    if (targetUserId === actorUserId) {
+      throw new BadRequestException(
+        'Escolha outra pessoa para receber a propriedade.',
+      );
+    }
+
+    const actorUser = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { passwordHash: true },
+    });
+
+    if (!actorUser) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      password,
+      actorUser.passwordHash,
+    );
+
+    if (!passwordMatches) {
+      throw new BadRequestException('Senha incorreta.');
+    }
+
+    const actorAccess = await this.churchPermissions.getMembershipAccess(
+      actorUserId,
+      churchId,
+    );
+
+    if (!actorAccess?.isOwner) {
+      throw new ForbiddenException(
+        'Somente o proprietário pode transferir a propriedade.',
+      );
+    }
+
+    const [actorMembership, targetMembership] = await Promise.all([
+      this.prisma.churchMembership.findUnique({
+        where: {
+          userId_churchId: { userId: actorUserId, churchId },
+        },
+      }),
+      this.prisma.churchMembership.findUnique({
+        where: {
+          userId_churchId: { userId: targetUserId, churchId },
+        },
+        include: membershipInclude,
+      }),
+    ]);
+
+    if (!actorMembership || !targetMembership) {
+      throw new NotFoundException('Usuário não encontrado nesta igreja.');
+    }
+
+    if (targetMembership.isOwner) {
+      throw new BadRequestException(
+        'Este usuário já é proprietário da igreja.',
+      );
+    }
+
+    this.assertCanReceiveOwnership(targetMembership, churchId);
+
+    const memberRole = await this.prisma.churchRole.findFirst({
+      where: { churchId, systemKey: 'member' },
+      select: { id: true, name: true },
+    });
+
+    if (!memberRole) {
+      throw new BadRequestException(
+        'Cargo de membro não encontrado nesta igreja.',
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.churchMembership.update({
+        where: { id: actorMembership.id },
+        data: { isOwner: false },
+      });
+
+      await tx.churchMembershipRole.createMany({
+        data: [
+          {
+            membershipId: actorMembership.id,
+            roleId: memberRole.id,
+          },
+        ],
+        skipDuplicates: true,
+      });
+
+      return tx.churchMembership.update({
+        where: { id: targetMembership.id },
+        data: { isOwner: true },
+        include: membershipInclude,
+      });
+    });
+
+    invalidateMembershipAccessCache(actorUserId, churchId);
+    invalidateMembershipAccessCache(targetUserId, churchId);
+
+    const response = this.toResponse(updated, churchId);
+
+    const [actor, target] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: actorUserId },
+        select: { name: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { name: true },
+      }),
+    ]);
+
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.membershipUpdated,
+      targetType: AUDIT_TARGET_TYPES.membership,
+      targetId: targetMembership.id,
+      summary: `${actor?.name ?? 'Usuário'} transferiu a propriedade da igreja para ${target?.name ?? 'outro usuário'}`,
+      metadata: {
+        targetUserId,
+        targetEmail: targetMembership.user.email,
+        isOwner: { before: false, after: true },
+        transferredFromUserId: actorUserId,
+        formerOwnerRole: memberRole.name,
+      },
+    });
+
+    await this.membersService.ensurePastoralRecordForUser(
+      churchId,
+      targetUserId,
+    );
+
+    await this.requireOwnerVerificationOnPromotion(targetUserId);
+
+    return response;
+  }
+
+  private assertCanReceiveOwnership(
+    membership: {
+      user: {
+        email: string;
+        memberProfiles: Array<{
+          churchId: string;
+          email: string | null;
+          deletedAt: Date | null;
+        }>;
+      };
+    },
+    churchId: string,
+  ): void {
+    const memberProfile =
+      membership.user.memberProfiles.find(
+        (profile) =>
+          profile.churchId === churchId && profile.deletedAt === null,
+      ) ?? null;
+
+    const contactEmail = resolveUserContactEmail(
+      membership.user.email,
+      memberProfile?.email,
+    );
+
+    if (!contactEmail) {
+      throw new BadRequestException(
+        'A propriedade só pode ser transferida para quem tem e-mail cadastrado no membro.',
+      );
+    }
+  }
+
+  private async requireOwnerVerificationOnPromotion(
+    userId: string,
+  ): Promise<void> {
+    const verificationRequired =
+      this.config.get<boolean>('email.verificationRequired') ?? false;
+
+    if (!verificationRequired) {
+      return;
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { emailVerifiedAt: null },
+    });
   }
 
   private async ensureAnotherOwnerRemains(
@@ -580,12 +825,13 @@ export class ChurchMembershipsService {
         name: string;
         email: string;
         avatarUrl: string | null;
-        memberProfile: {
+        memberProfiles: Array<{
           id: string;
           name: string;
           churchId: string;
+          email: string | null;
           deletedAt: Date | null;
-        } | null;
+        }>;
       };
       roleAssignments: Array<{
         role: {
@@ -593,6 +839,7 @@ export class ChurchMembershipsService {
           name: string;
           color: string | null;
           isSystem: boolean;
+          systemKey: string | null;
           sortOrder: number;
         };
       }>;
@@ -600,26 +847,34 @@ export class ChurchMembershipsService {
     churchId: string,
   ): ChurchMembershipResponse {
     const memberProfile =
-      membership.user.memberProfile &&
-      membership.user.memberProfile.churchId === churchId &&
-      membership.user.memberProfile.deletedAt === null
-        ? membership.user.memberProfile
-        : null;
+      membership.user.memberProfiles.find(
+        (profile) =>
+          profile.churchId === churchId && profile.deletedAt === null,
+      ) ?? null;
 
     const roles = membership.roleAssignments
       .map((assignment) => assignment.role)
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+      .sort(
+        (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+      );
 
     return {
       id: membership.id,
       userId: membership.userId,
       churchId: membership.churchId,
       isOwner: membership.isOwner,
+      canReceiveOwnership: Boolean(
+        resolveUserContactEmail(
+          membership.user.email,
+          memberProfile?.email,
+        ),
+      ),
       roles: roles.map((role) => ({
         id: role.id,
         name: role.name,
         color: role.color ?? undefined,
         isSystem: role.isSystem,
+        systemKey: role.systemKey ?? undefined,
       })),
       createdAt: membership.createdAt.toISOString(),
       user: {

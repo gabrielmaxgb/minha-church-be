@@ -8,6 +8,7 @@ export interface ChurchRoleResponse {
   sortOrder: number;
   isSystem: boolean;
   systemKey?: string;
+  singleHolder: boolean;
   permissions: ChurchPermission[];
 }
 
@@ -24,6 +25,7 @@ export function toChurchRoleResponse(
     sortOrder: role.sortOrder,
     isSystem: role.isSystem,
     systemKey: role.systemKey ?? undefined,
+    singleHolder: role.singleHolder,
     permissions: role.permissions.map((entry) => entry.permission),
   };
 }

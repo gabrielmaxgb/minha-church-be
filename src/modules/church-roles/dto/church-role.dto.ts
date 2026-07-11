@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -29,6 +30,10 @@ export class CreateChurchRoleDto {
   @IsArray()
   @IsEnum(ChurchPermission, { each: true })
   permissions: ChurchPermission[];
+
+  @IsOptional()
+  @IsBoolean()
+  singleHolder?: boolean;
 }
 
 export class UpdateChurchRoleDto {
@@ -52,4 +57,8 @@ export class UpdateChurchRoleDto {
   @IsArray()
   @IsEnum(ChurchPermission, { each: true })
   permissions?: ChurchPermission[];
+
+  @IsOptional()
+  @IsBoolean()
+  singleHolder?: boolean;
 }

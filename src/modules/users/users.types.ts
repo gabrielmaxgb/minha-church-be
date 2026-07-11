@@ -6,6 +6,7 @@ export interface UserRecord {
   passwordHash: string;
   avatarUrl?: string;
   mustChangePassword: boolean;
+  emailVerifiedAt?: Date | null;
 }
 
 export interface ChurchMembershipRecord {

@@ -3,6 +3,7 @@ export interface ChurchMembershipRoleResponse {
   name: string;
   color?: string;
   isSystem: boolean;
+  systemKey?: string;
 }
 
 export interface ChurchMembershipResponse {
@@ -10,6 +11,7 @@ export interface ChurchMembershipResponse {
   userId: string;
   churchId: string;
   isOwner: boolean;
+  canReceiveOwnership: boolean;
   roles: ChurchMembershipRoleResponse[];
   createdAt: string;
   user: {

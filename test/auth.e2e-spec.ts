@@ -7,6 +7,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { AUTH_COOKIE, REFRESH_COOKIE } from '../src/common/constants/cookies';
 import { seedDatabase } from '../prisma/seed';
+import type { E2eLoginResponse } from './e2e.types';
 
 describe('Auth (e2e)', () => {
   let app: INestApplication<App>;
@@ -46,10 +47,12 @@ describe('Auth (e2e)', () => {
       })
       .expect(200);
 
-    expect(response.body.user.email).toBe('pastor@igreja.com.br');
-    expect(response.body.church.id).toBe('church_demo');
-    expect(response.body.tokens.expiresIn).toBeGreaterThan(0);
-    expect(response.body.tokens.accessToken).toBeUndefined();
+    const body = response.body as E2eLoginResponse;
+
+    expect(body.user.email).toBe('pastor@igreja.com.br');
+    expect(body.church.id).toBe('church_demo');
+    expect(body.tokens.expiresIn).toBeGreaterThan(0);
+    expect(body.tokens.accessToken).toBeUndefined();
 
     const cookies = response.headers['set-cookie'] as string[];
 
@@ -75,20 +78,111 @@ describe('Auth (e2e)', () => {
 
     const meResponse = await agent.get('/api/v1/auth/me').expect(200);
 
-    expect(meResponse.body.user.email).toBe('pastor@igreja.com.br');
-    expect(meResponse.body.church.slug).toBe('igreja-batista-central');
-    expect(meResponse.body.permissions.members.manage).toBe(true);
-    expect(meResponse.body.permissions.activities.createChurchWide).toBe(true);
+    const meBody = meResponse.body as E2eLoginResponse;
+
+    expect(meBody.user.email).toBe('pastor@igreja.com.br');
+    expect(meBody.church.slug).toBe('igreja-batista-central');
+    expect(meBody.permissions?.members.manage).toBe(true);
+    expect(meBody.permissions?.activities.createChurchWide).toBe(true);
+  });
+
+  it('POST /auth/register-church creates church, owner session and cookies', async () => {
+    const ownerEmail = `onboarding-${Date.now()}@example.com`;
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Igreja Teste Onboarding',
+        ownerName: 'Pastor Teste',
+        ownerEmail,
+        password: 'senha-forte',
+        acceptTerms: true,
+      })
+      .expect(200);
+
+    const body = response.body as E2eLoginResponse & {
+      user: { email: string; isOwner?: boolean };
+      church: { id: string; name?: string; slug?: string };
+    };
+
+    expect(body.user.email).toBe(ownerEmail);
+    expect(body.user.isOwner).toBe(true);
+    expect(body.church.name).toBe('Igreja Teste Onboarding');
+    expect(body.church.slug).toMatch(/^igreja-teste-onboarding/);
+    expect(body.permissions?.members.manage).toBe(true);
+    expect(body.permissions?.settings?.access).toBe(true);
+
+    const cookies = response.headers["set-cookie"] as string[] | undefined;
+
+    expect(cookies?.some((cookie) => cookie.startsWith(`${AUTH_COOKIE}=`))).toBe(
+      true,
+    );
+  });
+
+  it('POST /auth/register-church rejects duplicate owner email', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Outra Igreja',
+        ownerName: 'Duplicado',
+        ownerEmail: 'pastor@igreja.com.br',
+        password: 'senha-forte',
+        acceptTerms: true,
+      })
+      .expect(409);
   });
 
   it('POST /auth/login rejects invalid credentials', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({
-        email: 'pastor@igreja.com.br',
+        identifier: 'pastor@igreja.com.br',
         password: 'senha-errada',
       })
       .expect(401);
+  });
+
+  it('POST /auth/register-church creates church with trial and owner session', async () => {
+    const email = `owner-${Date.now()}@register.test`;
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Igreja Teste Registro',
+        ownerName: 'Owner Teste',
+        ownerEmail: email,
+        password: 'senha12345',
+        acceptTerms: true,
+      })
+      .expect(200);
+
+    const body = response.body as
+      | E2eLoginResponse
+      | { requiresEmailVerification: true; email: string };
+
+    if ('requiresEmailVerification' in body && body.requiresEmailVerification) {
+      expect(body.email).toBe(email);
+      return;
+    }
+
+    expect(body.user.email).toBe(email);
+    expect(body.user.isOwner).toBe(true);
+    expect(body.church.subscriptionStatus).toBe('trialing');
+    expect(body.church.trialEndsAt).toBeTruthy();
+    expect(body.church.featuresLocked).toBe(false);
+  });
+
+  it('POST /auth/register-church rejects duplicate email', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register-church')
+      .send({
+        churchName: 'Outra Igreja',
+        ownerName: 'Duplicado',
+        ownerEmail: 'pastor@igreja.com.br',
+        password: 'senha12345',
+        acceptTerms: true,
+      })
+      .expect(409);
   });
 
   it('POST /auth/logout clears cookies', async () => {

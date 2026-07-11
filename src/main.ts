@@ -3,14 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 
+import { requestContextMiddleware } from './common/perf/perf-timing.middleware';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const configService = app.get(ConfigService);
 
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());
+  // Cache MembershipAccess por request; PERF_LOG=true → timing JSON
+  app.use(requestContextMiddleware);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
