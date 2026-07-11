@@ -47,7 +47,7 @@ export class EmailService {
   ): Promise<void> {
     if (!this.resend) {
       this.logger.warn(
-        `RESEND_API_KEY não configurada — e-mail de reset não enviado para ${to}. URL: ${resetUrl}`,
+        `RESEND_API_KEY não configurada — e-mail de reset não enviado para ${to}.`,
       );
       return;
     }
@@ -72,7 +72,7 @@ export class EmailService {
   ): Promise<void> {
     if (!this.resend) {
       this.logger.warn(
-        `RESEND_API_KEY não configurada — e-mail de verificação não enviado para ${to}. URL: ${verifyUrl}`,
+        `RESEND_API_KEY não configurada — e-mail de verificação não enviado para ${to}.`,
       );
       return;
     }

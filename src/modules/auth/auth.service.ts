@@ -33,8 +33,6 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class AuthService {
-  private readonly revokedRefreshTokens = new Set<string>();
-
   constructor(
     private readonly usersService: UsersService,
     private readonly churchesService: ChurchesService,
@@ -232,22 +230,26 @@ export class AuthService {
   async refresh(
     refreshToken: string,
   ): Promise<{ session: AuthResponse; tokens: IssuedTokens }> {
-    if (!refreshToken || this.revokedRefreshTokens.has(refreshToken)) {
+    if (!refreshToken) {
       throw new UnauthorizedException('Sessão expirada. Faça login novamente.');
     }
 
-    let payload: JwtPayload & { type?: string };
+    let payload: JwtPayload & { type?: string; jti?: string; exp?: number };
 
     try {
-      payload = this.jwtService.verify<JwtPayload & { type?: string }>(
-        refreshToken,
-      );
+      payload = this.jwtService.verify<
+        JwtPayload & { type?: string; jti?: string; exp?: number }
+      >(refreshToken);
     } catch {
       throw new UnauthorizedException('Sessão expirada. Faça login novamente.');
     }
 
-    if (payload.type !== 'refresh') {
+    if (payload.type !== 'refresh' || !payload.jti) {
       throw new UnauthorizedException('Token de refresh inválido.');
+    }
+
+    if (await this.isRefreshTokenRevoked(payload.jti)) {
+      throw new UnauthorizedException('Sessão expirada. Faça login novamente.');
     }
 
     const user = await this.usersService.findById(payload.sub);
@@ -262,7 +264,10 @@ export class AuthService {
       throw new UnauthorizedException('Sem acesso a esta igreja.');
     }
 
-    this.revokedRefreshTokens.add(refreshToken);
+    await this.revokeRefreshToken(
+      payload.jti,
+      this.expiresAtFromJwtExp(payload.exp),
+    );
 
     const session = await this.buildSession(user.id, payload.churchId);
     const tokens = this.issueTokens({
@@ -274,9 +279,24 @@ export class AuthService {
     return { session, tokens };
   }
 
-  logout(refreshToken?: string) {
-    if (refreshToken) {
-      this.revokedRefreshTokens.add(refreshToken);
+  async logout(refreshToken?: string): Promise<void> {
+    if (!refreshToken) {
+      return;
+    }
+
+    try {
+      const payload = this.jwtService.verify<
+        JwtPayload & { type?: string; jti?: string; exp?: number }
+      >(refreshToken);
+
+      if (payload.type === 'refresh' && payload.jti) {
+        await this.revokeRefreshToken(
+          payload.jti,
+          this.expiresAtFromJwtExp(payload.exp),
+        );
+      }
+    } catch {
+      // Token inválido/expirado — cookies já serão limpos no controller.
     }
   }
 
@@ -519,6 +539,35 @@ export class AuthService {
       refreshToken,
       expiresIn,
     };
+  }
+
+  private async isRefreshTokenRevoked(jti: string): Promise<boolean> {
+    const revoked = await this.prisma.revokedRefreshToken.findUnique({
+      where: { jti },
+      select: { jti: true },
+    });
+
+    return revoked !== null;
+  }
+
+  private async revokeRefreshToken(
+    jti: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await this.prisma.revokedRefreshToken.upsert({
+      where: { jti },
+      create: { jti, expiresAt },
+      update: {},
+    });
+  }
+
+  private expiresAtFromJwtExp(exp: number | undefined): Date {
+    if (typeof exp === 'number' && Number.isFinite(exp)) {
+      return new Date(exp * 1000);
+    }
+
+    // Fallback: alinhado ao refresh padrão (7d) se o claim exp faltar.
+    return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   }
 
   private hashResetToken(token: string): string {

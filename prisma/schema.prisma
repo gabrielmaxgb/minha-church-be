@@ -622,6 +622,16 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
+/** Denylist de refresh JWT por jti (logout / rotação). */
+model RevokedRefreshToken {
+  jti       String   @id
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("revoked_refresh_tokens")
+}
+
 model EmailVerificationToken {
   id        String    @id @default(cuid())
   userId    String    @map("user_id")
