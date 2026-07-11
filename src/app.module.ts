@@ -8,6 +8,7 @@ import { CommonModule } from './common/common.module';
 import { SubscriptionWriteGuard } from './common/guards/subscription-write.guard';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { BillingModule } from './modules/billing/billing.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MembersModule } from './modules/members/members.module';
@@ -41,6 +42,10 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     AnnouncementsModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: SubscriptionWriteGuard,

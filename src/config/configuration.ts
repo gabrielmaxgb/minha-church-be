@@ -23,6 +23,20 @@ function stripePricesFromEnv(): Record<
   ) as Record<BillingTierId, { monthly: string; yearly: string }>;
 }
 
+const JWT_SECRET_MIN_LENGTH = 32;
+
+function requireJwtSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim() ?? '';
+
+  if (secret.length < JWT_SECRET_MIN_LENGTH) {
+    throw new Error(
+      `JWT_SECRET is required and must be at least ${JWT_SECRET_MIN_LENGTH} characters.`,
+    );
+  }
+
+  return secret;
+}
+
 export default () => ({
   port: parseInt(process.env.PORT ?? '3001', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -30,8 +44,7 @@ export default () => ({
   appUrl:
     process.env.APP_URL ?? process.env.CORS_ORIGIN ?? 'http://localhost:3000',
   jwt: {
-    secret:
-      process.env.JWT_SECRET ?? 'dev-secret-change-in-production-min-32-chars',
+    secret: requireJwtSecret(),
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
   },

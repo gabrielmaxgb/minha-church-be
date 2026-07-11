@@ -4,6 +4,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 
+import type { JwtPayload } from '../../modules/auth/auth.types';
 import { SubscriptionPolicyService } from '../services/subscription-policy.service';
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -56,6 +57,7 @@ export class SubscriptionWriteGuard implements CanActivate {
       method?: string;
       path?: string;
       params?: { churchId?: string };
+      user?: JwtPayload;
     }>();
     const method = request.method ?? 'GET';
     const path = request.path ?? '';
@@ -74,6 +76,12 @@ export class SubscriptionWriteGuard implements CanActivate {
     }
 
     if (/\/billing\/portal$/.test(path)) {
+      return true;
+    }
+
+    // JwtAuthGuard (APP_GUARD) runs first; without user, skip DB lookup
+    // (public routes or defense-in-depth — avoids church enumeration).
+    if (!request.user) {
       return true;
     }
 

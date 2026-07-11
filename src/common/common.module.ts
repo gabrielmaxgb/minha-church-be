@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../database/database.module';
+import { JwtAuthGuard } from '../modules/auth/guards/jwt-auth.guard';
 import {
   ChurchAccessGuard,
   PermissionsGuard,
@@ -17,6 +18,7 @@ import { PasswordCredentialsService } from './services/password-credentials.serv
 @Module({
   imports: [DatabaseModule],
   providers: [
+    JwtAuthGuard,
     ChurchAccessGuard,
     PermissionsGuard,
     ChurchOwnerGuard,
@@ -28,6 +30,7 @@ import { PasswordCredentialsService } from './services/password-credentials.serv
     PasswordCredentialsService,
   ],
   exports: [
+    JwtAuthGuard,
     ChurchAccessGuard,
     PermissionsGuard,
     ChurchOwnerGuard,

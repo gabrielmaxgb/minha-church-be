@@ -13,6 +13,7 @@ import {
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
+import { Public } from '../../common/decorators/public.decorator';
 import { REFRESH_COOKIE } from '../../common/constants/cookies';
 import { AuthCookiesService } from './auth-cookies.service';
 import type { AuthResponse, RegisterChurchResponse } from './auth.types';
@@ -37,6 +38,7 @@ export class AuthController {
     private readonly authCookiesService: AuthCookiesService,
   ) {}
 
+  @Public()
   @Post('login')
   @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -51,6 +53,7 @@ export class AuthController {
     return session;
   }
 
+  @Public()
   @Post('register-church')
   @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -69,12 +72,14 @@ export class AuthController {
     return result.session;
   }
 
+  @Public()
   @Get('verify-email')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verifyEmail(@Query('token') token: string) {
     return this.authService.verifyEmail(token ?? '');
   }
 
+  @Public()
   @Post('resend-verification')
   @HttpCode(200)
   @Throttle({ default: { limit: 3, ttl: 3_600_000 } })
@@ -106,6 +111,7 @@ export class AuthController {
     return session;
   }
 
+  @Public()
   @Post('refresh')
   @HttpCode(200)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
@@ -141,6 +147,7 @@ export class AuthController {
     return session;
   }
 
+  @Public()
   @Post('logout')
   @HttpCode(204)
   logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): void {
@@ -168,6 +175,7 @@ export class AuthController {
     return session;
   }
 
+  @Public()
   @Post('forgot-password')
   @HttpCode(200)
   @Throttle({ default: { limit: 3, ttl: 3_600_000 } })
@@ -175,12 +183,14 @@ export class AuthController {
     return this.authService.forgotPassword(dto);
   }
 
+  @Public()
   @Get('reset-password/validate')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   validateResetToken(@Query('token') token: string) {
     return this.authService.validateResetToken(token ?? '');
   }
 
+  @Public()
   @Post('reset-password')
   @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

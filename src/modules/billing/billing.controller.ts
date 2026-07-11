@@ -15,6 +15,7 @@ import type { Request } from 'express';
 
 import { ChurchAccessGuard } from '../../common/guards/church-access.guard';
 import { ChurchOwnerGuard } from '../../common/guards/church-owner.guard';
+import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { BillingService } from './billing.service';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
@@ -60,6 +61,7 @@ export class BillingController {
   }
 }
 
+@Public()
 @Controller('billing')
 export class BillingWebhookController {
   constructor(private readonly billingService: BillingService) {}
@@ -79,6 +81,7 @@ export class BillingWebhookController {
   }
 }
 
+@Public()
 @Controller('pricing')
 export class PricingController {
   constructor(private readonly billingService: BillingService) {}
