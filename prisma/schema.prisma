@@ -343,6 +343,11 @@ model Member {
 enum MemberRelationType {
   spouse
   parent
+  sibling
+  grandparent
+  step_parent
+  parent_in_law
+  uncle
 }
 
 model MemberRelation {

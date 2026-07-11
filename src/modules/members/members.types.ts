@@ -83,7 +83,14 @@ export interface FamilyResponse {
   updatedAt: string;
 }
 
-export type MemberRelationType = 'spouse' | 'parent';
+export type MemberRelationType =
+  | 'spouse'
+  | 'parent'
+  | 'sibling'
+  | 'grandparent'
+  | 'step_parent'
+  | 'parent_in_law'
+  | 'uncle';
 
 export interface MemberRelationResponse {
   id: string;

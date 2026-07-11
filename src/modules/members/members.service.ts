@@ -45,6 +45,7 @@ import {
   type FamilyResponse,
   type MemberAccountCredentials,
   type MemberRelationResponse,
+  type MemberRelationType,
   type MemberResponse,
   type ReceiveMemberResponse,
   type UpdateMemberResponse,
@@ -1642,7 +1643,11 @@ export class MembersService {
   async createMemberRelation(
     churchId: string,
     familyId: string,
-    dto: { fromMemberId: string; toMemberId: string; type: 'spouse' | 'parent' },
+    dto: {
+      fromMemberId: string;
+      toMemberId: string;
+      type: MemberRelationType;
+    },
   ): Promise<MemberRelationResponse> {
     if (dto.fromMemberId === dto.toMemberId) {
       throw new BadRequestException('Escolha duas pessoas diferentes.');
@@ -1676,16 +1681,19 @@ export class MembersService {
     let fromMemberId = dto.fromMemberId;
     let toMemberId = dto.toMemberId;
 
-    // Cônjuge: guarda uma aresta canônica (ordem estável) e impede duplicata invertida.
-    if (dto.type === 'spouse') {
+    // Undirected bonds: store a canonical edge and block the reverse duplicate.
+    const undirected =
+      dto.type === 'spouse' || dto.type === 'sibling';
+
+    if (undirected) {
       const ordered = [dto.fromMemberId, dto.toMemberId].sort();
       fromMemberId = ordered[0];
       toMemberId = ordered[1];
 
-      const existingSpouse = await this.prisma.memberRelation.findFirst({
+      const existing = await this.prisma.memberRelation.findFirst({
         where: {
           churchId,
-          type: 'spouse',
+          type: dto.type,
           OR: [
             { fromMemberId, toMemberId },
             { fromMemberId: toMemberId, toMemberId: fromMemberId },
@@ -1693,8 +1701,12 @@ export class MembersService {
         },
       });
 
-      if (existingSpouse) {
-        throw new ConflictException('Essas pessoas já estão como cônjuges.');
+      if (existing) {
+        throw new ConflictException(
+          dto.type === 'spouse'
+            ? 'Essas pessoas já estão como cônjuges.'
+            : 'Essas pessoas já estão como irmãos(ãs).',
+        );
       }
     }
 

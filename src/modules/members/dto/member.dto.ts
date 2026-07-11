@@ -243,6 +243,21 @@ export class CreateMemberRelationDto {
   @IsString()
   toMemberId: string;
 
-  @IsEnum(['spouse', 'parent'] as const)
-  type: 'spouse' | 'parent';
+  @IsEnum([
+    'spouse',
+    'parent',
+    'sibling',
+    'grandparent',
+    'step_parent',
+    'parent_in_law',
+    'uncle',
+  ] as const)
+  type:
+    | 'spouse'
+    | 'parent'
+    | 'sibling'
+    | 'grandparent'
+    | 'step_parent'
+    | 'parent_in_law'
+    | 'uncle';
 }
