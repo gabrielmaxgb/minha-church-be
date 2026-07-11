@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { ChurchPermission } from '@prisma/client';
 
 import { ALL_CHURCH_PERMISSIONS } from '../permissions/church-permissions.constants';
+import {
+  membershipCacheKey,
+  requestContextStorage,
+} from '../perf/perf-request-context';
 import { PrismaService } from '../../database/prisma.service';
 import type { UserPermissions } from '../types/user-permissions';
 
@@ -39,6 +43,39 @@ export class ChurchPermissionsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getMembershipAccess(
+    userId: string,
+    churchId: string,
+  ): Promise<MembershipAccessContext | null> {
+    const store = requestContextStorage.getStore();
+    const key = membershipCacheKey(userId, churchId);
+
+    if (store) {
+      const cached = store.membershipCache.get(key);
+
+      if (cached?.status === 'resolved') {
+        return cached.value as MembershipAccessContext | null;
+      }
+
+      if (cached?.status === 'pending') {
+        return cached.promise as Promise<MembershipAccessContext | null>;
+      }
+
+      const promise = this.loadMembershipAccess(userId, churchId).then(
+        (value) => {
+          store.membershipCache.set(key, { status: 'resolved', value });
+          return value;
+        },
+      );
+
+      store.membershipCache.set(key, { status: 'pending', promise });
+
+      return promise;
+    }
+
+    return this.loadMembershipAccess(userId, churchId);
+  }
+
+  private async loadMembershipAccess(
     userId: string,
     churchId: string,
   ): Promise<MembershipAccessContext | null> {

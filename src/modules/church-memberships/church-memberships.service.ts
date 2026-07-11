@@ -15,6 +15,7 @@ import {
   AUDIT_ACTIONS,
   AUDIT_TARGET_TYPES,
 } from '../../common/audit/audit.constants';
+import { invalidateMembershipAccessCache } from '../../common/perf/perf-request-context';
 import { formatCpf } from '../../common/utils/cpf';
 import { isInternalLoginEmail } from '../../common/utils/login-email';
 import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
@@ -533,6 +534,8 @@ export class ChurchMembershipsService {
       });
     });
 
+    invalidateMembershipAccessCache(membership.userId, churchId);
+
     const response = this.toResponse(updated, churchId);
     const afterRoleNames = response.roles.map((role) => role.name).sort();
     const rolesChanged =
@@ -701,6 +704,9 @@ export class ChurchMembershipsService {
         include: membershipInclude,
       });
     });
+
+    invalidateMembershipAccessCache(actorUserId, churchId);
+    invalidateMembershipAccessCache(targetUserId, churchId);
 
     const response = this.toResponse(updated, churchId);
 
