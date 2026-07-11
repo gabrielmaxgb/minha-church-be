@@ -65,6 +65,22 @@ const memberInclude = {
   },
 } satisfies Prisma.MemberInclude;
 
+/**
+ * Include mínimo para o create: um membro recém-criado nunca tem vínculos de
+ * ministério, então evitamos as queries extras de `ministryLinks`.
+ */
+const memberCreateInclude = { family: true } satisfies Prisma.MemberInclude;
+
+/** Monta a resposta de um membro recém-criado (sem ministérios) evitando reler o banco. */
+function toCreatedMemberResponse(
+  member: Prisma.MemberGetPayload<{ include: typeof memberCreateInclude }>,
+): MemberResponse {
+  return toMemberResponse({
+    ...member,
+    ministryLinks: [],
+  } as MemberWithMinistries);
+}
+
 @Injectable()
 export class MembersService {
   private readonly logger = new Logger(MembersService.name);
@@ -250,8 +266,9 @@ export class MembersService {
     const email = dto.email?.trim().toLowerCase() || null;
     const cpf = dto.cpf ? normalizeCpf(dto.cpf) : null;
     const status = dto.status ?? MemberStatus.visitor;
+    const isActive = status === MemberStatus.active;
 
-    if (status === MemberStatus.active && !email && !cpf) {
+    if (isActive && !email && !cpf) {
       throw new BadRequestException(
         'Informe e-mail ou CPF para liberar o acesso ao sistema.',
       );
@@ -261,27 +278,45 @@ export class MembersService {
       throw new BadRequestException('CPF inválido.');
     }
 
-    if (email) {
-      await this.ensureEmailAvailable(churchId, email);
+    // Pré-checagens independentes rodam em paralelo (cada uma é ~1 RTT ao Neon).
+    // `allSettled` preserva a ordem de prioridade das mensagens de erro.
+    const settled = await Promise.allSettled([
+      email ? this.ensureEmailAvailable(churchId, email) : Promise.resolve(),
+      cpf ? this.ensureCpfAvailable(churchId, cpf) : Promise.resolve(),
+      isActive
+        ? this.ensureUserCredentialsAvailable(email, cpf)
+        : Promise.resolve(),
+      isActive
+        ? this.assertActiveMemberTierAllowed(churchId)
+        : Promise.resolve(),
+      this.resolveFamilyId(churchId, dto.familyId),
+      isActive
+        ? this.prisma.churchRole.findFirst({
+            where: { churchId, systemKey: 'member' },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ] as const);
+
+    for (const result of settled) {
+      if (result.status === 'rejected') {
+        throw result.reason;
+      }
     }
 
-    if (cpf) {
-      await this.ensureCpfAvailable(churchId, cpf);
-    }
-
-    if (status === MemberStatus.active) {
-      await this.ensureUserCredentialsAvailable(email, cpf);
-      await this.assertActiveMemberTierAllowed(churchId);
-    }
-
-    const familyId = await this.resolveFamilyId(churchId, dto.familyId);
+    const familyId = (
+      settled[4] as PromiseFulfilledResult<string | null | undefined>
+    ).value;
+    const memberRole = (
+      settled[5] as PromiseFulfilledResult<{ id: string } | null>
+    ).value;
 
     const visitorSince =
       parseOptionalDate(dto.visitorSince) ??
       (status === MemberStatus.visitor ? new Date() : null);
     const membershipDate =
       parseOptionalDate(dto.membershipDate) ??
-      (status === MemberStatus.active ? new Date() : null);
+      (isActive ? new Date() : null);
 
     const memberData = {
       churchId,
@@ -311,49 +346,78 @@ export class MembersService {
       membershipDate,
     };
 
-    if (status !== MemberStatus.active) {
+    if (!isActive) {
       const member = await this.prisma.member.create({
         data: memberData,
-        include: memberInclude,
+        include: memberCreateInclude,
       });
 
-      await this.syncMemberCount(churchId);
-
-      return toMemberResponse(member);
+      // Visitante/inativo não altera a contagem de membros ativos, então
+      // pulamos o recount + sync de billing.
+      return toCreatedMemberResponse(member);
     }
 
-    let account!: MemberAccountCredentials;
+    // Membro ativo com login novo. As credenciais já foram validadas como
+    // inexistentes acima, então provisionamos direto — sem reconsultar o
+    // usuário e com o hash de senha calculado fora da transaction.
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    const temporaryPasswordEnc = encryptSecret(
+      temporaryPassword,
+      this.config.get<string>('jwt.secret') ?? '',
+    );
+    const userEmail = email ?? cpfToInternalEmail(cpf!);
+    const loginIdentifier = email ?? formatCpf(cpf!);
 
     const member = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email: userEmail,
+          emailCanonical: canonicalizeEmail(userEmail),
+          cpf,
+          name: memberData.name,
+          passwordHash,
+          mustChangePassword: true,
+          temporaryPasswordEnc,
+          emailVerifiedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
       const created = await tx.member.create({
-        data: memberData,
-        include: memberInclude,
+        data: { ...memberData, userId: user.id },
+        include: memberCreateInclude,
       });
 
-      const provisioned = await this.syncMemberAppAccess(tx, churchId, created);
-
-      if (!provisioned) {
-        throw new BadRequestException(
-          'Não foi possível liberar o acesso ao sistema.',
-        );
-      }
-
-      account = provisioned;
-
-      return tx.member.findUniqueOrThrow({
-        where: { id: created.id },
-        include: memberInclude,
+      await tx.churchMembership.create({
+        data: {
+          userId: user.id,
+          churchId,
+          isOwner: false,
+          ...(memberRole
+            ? {
+                roleAssignments: {
+                  create: [{ roleId: memberRole.id }],
+                },
+              }
+            : {}),
+        },
       });
+
+      return created;
     });
 
     await this.syncMemberCount(churchId);
 
-    if (account.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
-    }
+    const account: MemberAccountCredentials = {
+      kind: 'created',
+      login: loginIdentifier,
+      temporaryPassword,
+      mustChangePassword: true,
+    };
 
     return {
-      ...toMemberResponse(member),
+      ...toCreatedMemberResponse(member),
       account,
     };
   }
@@ -1328,7 +1392,12 @@ export class MembersService {
   private async assertActiveMemberTierAllowed(churchId: string): Promise<void> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
-      select: { memberCount: true },
+      select: {
+        memberCount: true,
+        subscriptionStatus: true,
+        stripeSubscriptionId: true,
+        stripePriceId: true,
+      },
     });
 
     if (!church) {
@@ -1338,6 +1407,7 @@ export class MembersService {
     await this.billingService.assertActiveMemberIncreaseAllowed(
       churchId,
       church.memberCount + 1,
+      church,
     );
   }
 
