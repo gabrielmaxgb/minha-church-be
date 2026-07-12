@@ -156,6 +156,11 @@ model Church {
   billingTierUpgradeRequests        BillingTierUpgradeRequest[]
   billingTierUpgradeStaffNotices    BillingTierUpgradeStaffNotice[]
 
+  fiscalProfile  ChurchFiscalProfile?
+  paymentAccount ChurchPaymentAccount?
+  givingFunds    GivingFund[]
+  givingDonations GivingDonation[]
+
   @@map("churches")
 }
 
@@ -230,6 +235,134 @@ model StripeWebhookEvent {
   processedAt DateTime @default(now()) @map("processed_at")
 
   @@map("stripe_webhook_events")
+}
+
+enum ChurchDocumentType {
+  cnpj
+  cpf
+}
+
+enum ConnectOnboardingStatus {
+  none
+  created
+  onboarding
+  verifying
+  active
+  restricted
+  rejected
+}
+
+enum ConnectCapabilityStatus {
+  inactive
+  pending
+  active
+}
+
+enum GivingDonationStatus {
+  pending
+  processing
+  succeeded
+  failed
+  canceled
+  refunded
+}
+
+/// Perfil fiscal/legal da igreja (identidade para NF, contrato e prefill do Connect).
+model ChurchFiscalProfile {
+  id                  String             @id @default(cuid())
+  churchId            String             @unique @map("church_id")
+  documentType        ChurchDocumentType @map("document_type")
+  documentNumber      String             @map("document_number")
+  legalName           String             @map("legal_name")
+  responsibleName     String             @map("responsible_name")
+  responsibleDocument String?            @map("responsible_document")
+  addressLine         String?            @map("address_line")
+  city                String?
+  state               String?
+  zipCode             String?            @map("zip_code")
+  contactEmail        String?            @map("contact_email")
+  contactPhone        String?            @map("contact_phone")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  @@map("church_fiscal_profiles")
+}
+
+/// Estado da conta conectada (Stripe Connect Express) da igreja, sincronizado por webhook.
+model ChurchPaymentAccount {
+  id               String                  @id @default(cuid())
+  churchId         String                  @unique @map("church_id")
+  stripeAccountId  String?                 @unique @map("stripe_account_id")
+  accountType      String                  @default("express") @map("account_type")
+  onboardingStatus ConnectOnboardingStatus @default(none) @map("onboarding_status")
+  chargesEnabled   Boolean                 @default(false) @map("charges_enabled")
+  payoutsEnabled   Boolean                 @default(false) @map("payouts_enabled")
+  detailsSubmitted Boolean                 @default(false) @map("details_submitted")
+  pixStatus        ConnectCapabilityStatus @default(inactive) @map("pix_status")
+  cardStatus       ConnectCapabilityStatus @default(inactive) @map("card_status")
+  boletoStatus     ConnectCapabilityStatus @default(inactive) @map("boleto_status")
+  requirementsDue  Json?                   @map("requirements_due")
+  disabledReason   String?                 @map("disabled_reason")
+  lastSyncedAt     DateTime?               @map("last_synced_at")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  @@map("church_payment_accounts")
+}
+
+/// Idempotência de webhooks do Stripe Connect (separado do billing SaaS).
+model ConnectWebhookEvent {
+  id          String   @id
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("connect_webhook_events")
+}
+
+/// Categoria de cobrança da igreja (dízimo, oferta, campanha, etc.).
+model GivingFund {
+  id          String   @id @default(cuid())
+  churchId    String   @map("church_id")
+  name        String
+  slug        String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  church    Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  donations GivingDonation[]
+
+  @@unique([churchId, slug])
+  @@index([churchId, isActive])
+  @@map("giving_funds")
+}
+
+/// Doação/contribuição recebida via Stripe Connect (direct charge).
+/// Fundos com pelo menos um registro não podem ser excluídos — só desativados.
+model GivingDonation {
+  id                    String               @id @default(cuid())
+  churchId              String               @map("church_id")
+  fundId                String               @map("fund_id")
+  stripePaymentIntentId String?              @unique @map("stripe_payment_intent_id")
+  amountCents           Int                  @map("amount_cents")
+  currency              String               @default("brl")
+  status                GivingDonationStatus @default(pending)
+  payerName             String?              @map("payer_name")
+  payerEmail            String?              @map("payer_email")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+
+  church Church     @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  fund   GivingFund @relation(fields: [fundId], references: [id], onDelete: Restrict)
+
+  @@index([churchId, createdAt])
+  @@index([fundId])
+  @@map("giving_donations")
 }
 
 model ChurchRole {

@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { BillingModule } from './modules/billing/billing.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MembersModule } from './modules/members/members.module';
 import { MinistriesModule } from './modules/ministries/ministries.module';
@@ -33,6 +34,7 @@ import { CareRequestsModule } from './modules/care-requests/care-requests.module
     CommonModule,
     AuthModule,
     BillingModule,
+    PaymentsModule,
     DashboardModule,
     MembersModule,
     MinistriesModule,

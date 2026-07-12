@@ -87,6 +87,12 @@ export class SubscriptionWriteGuard implements CanActivate {
       return true;
     }
 
+    // Setup de recebimentos (perfil fiscal + Stripe Connect) é um caminho de
+    // conversão e não deve ficar bloqueado pelo paywall do trial.
+    if (/\/churches\/[^/]+\/payments\//.test(path)) {
+      return true;
+    }
+
     // JwtAuthGuard (APP_GUARD) runs first; without user, skip DB lookup
     // (public routes or defense-in-depth — avoids church enumeration).
     if (!request.user) {
