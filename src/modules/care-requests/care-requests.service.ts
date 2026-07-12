@@ -262,6 +262,16 @@ export class CareRequestsService {
   private async requireActiveAdultMember(churchId: string, userId: string) {
     const member = await this.requireLinkedMember(churchId, userId);
 
+    const access = await this.churchPermissions.getMembershipAccess(
+      userId,
+      churchId,
+    );
+
+    // Owner always may use this area (still needs a linked pastoral profile).
+    if (access?.isOwner) {
+      return member;
+    }
+
     if (member.status !== MemberStatus.active) {
       throw new ForbiddenException(
         'Somente membros ativos podem enviar pedidos de aconselhamento e visitas.',
