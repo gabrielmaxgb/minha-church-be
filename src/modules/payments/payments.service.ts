@@ -28,7 +28,7 @@ import {
   CreateGivingFundDto,
   UpdateGivingFundDto,
 } from './dto/giving-fund.dto';
-import { isFiscalProfileReadyForConnect } from './fiscal-profile-completeness';
+import { isOwnerOnboardingMinimumComplete } from './fiscal-profile-completeness';
 import { StripeConnectService } from './stripe-connect.service';
 import type {
   ConnectStatusResult,
@@ -87,6 +87,12 @@ export class PaymentsService {
       dto.documentNumber,
     );
 
+    if (documentType === ChurchDocumentType.cpf && dto.confirmNoCnpj !== true) {
+      throw new BadRequestException(
+        'Confirme que a igreja não possui CNPJ antes de cadastrar com CPF.',
+      );
+    }
+
     const responsibleDocument =
       documentType === ChurchDocumentType.cnpj
         ? this.normalizeAndValidateDocument(
@@ -100,12 +106,35 @@ export class PaymentsService {
             )
           : null;
 
+    const contactPhone = dto.contactPhone.replace(/\D/g, '');
+    if (contactPhone.length < 10 || contactPhone.length > 11) {
+      throw new BadRequestException('Informe um telefone válido com DDD.');
+    }
+
+    const state = dto.state.trim().toUpperCase();
+    const city = dto.city.trim();
+    if (city.length < 2) {
+      throw new BadRequestException('Informe a cidade da igreja.');
+    }
+
     const data = {
       documentType,
       documentNumber,
       legalName: dto.legalName.trim(),
       responsibleName: dto.responsibleName.trim(),
       responsibleDocument,
+      contactPhone,
+      city,
+      state,
+      ...(dto.addressLine !== undefined
+        ? { addressLine: dto.addressLine.trim() || null }
+        : {}),
+      ...(dto.zipCode !== undefined
+        ? { zipCode: dto.zipCode.replace(/\D/g, '') || null }
+        : {}),
+      ...(dto.contactEmail !== undefined
+        ? { contactEmail: dto.contactEmail.trim().toLowerCase() || null }
+        : {}),
     };
 
     const profile = await this.prisma.churchFiscalProfile.upsert({
@@ -168,11 +197,17 @@ export class PaymentsService {
   ): Promise<GivingFundResult> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
-      select: { id: true },
+      select: { id: true, fiscalProfile: true },
     });
 
     if (!church) {
       throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    if (!isOwnerOnboardingMinimumComplete(church.fiscalProfile)) {
+      throw new BadRequestException(
+        'Complete o perfil da igreja (contato, cidade/UF e dados fiscais) antes de criar fundos de contribuição.',
+      );
     }
 
     const name = dto.name.trim();
@@ -433,9 +468,9 @@ export class PaymentsService {
     // Só exige perfil fiscal completo na 1ª criação da conta conectada —
     // retomar onboarding de conta já criada não depende disso.
     if (!accountId) {
-      if (!isFiscalProfileReadyForConnect(church.fiscalProfile)) {
+      if (!isOwnerOnboardingMinimumComplete(church.fiscalProfile)) {
         throw new BadRequestException(
-          'Preencha e salve a identificação fiscal (documento, razão social e responsável legal) antes de ativar os recebimentos.',
+          'Complete o perfil da igreja (contato, cidade/UF e dados fiscais) antes de ativar os recebimentos.',
         );
       }
 

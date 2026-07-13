@@ -100,6 +100,20 @@ async function upsertOwner(prisma: PrismaClient, passwordHash: string) {
     where: { membershipId: membership.id },
   });
 
+  const memberRole = await prisma.churchRole.findFirst({
+    where: { churchId: TIER_CROSSING_TEST_CHURCH.id, systemKey: 'member' },
+    select: { id: true },
+  });
+
+  if (memberRole) {
+    await prisma.churchMembershipRole.create({
+      data: {
+        membershipId: membership.id,
+        roleId: memberRole.id,
+      },
+    });
+  }
+
   await prisma.member.upsert({
     where: {
       churchId_email: {

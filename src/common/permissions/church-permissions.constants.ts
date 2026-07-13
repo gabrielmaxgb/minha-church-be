@@ -116,7 +116,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
     },
     {
       systemKey: 'member',
-      name: 'Membro',
+      name: 'Membro/todos',
       sortOrder: 60,
       permissions: [...MEMBER_SECTION_ACCESS],
     },

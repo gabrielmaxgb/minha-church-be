@@ -107,3 +107,29 @@ export function isFiscalProfileReadyForConnect(
 ): boolean {
   return listMissingFiscalFieldsForConnect(profile).length === 0;
 }
+
+export interface OwnerOnboardingMinimumInput
+  extends FiscalProfileCompletenessInput {
+  contactPhone?: string | null;
+  city?: string | null;
+  state?: string | null;
+}
+
+export function isOwnerOnboardingMinimumComplete(
+  profile: OwnerOnboardingMinimumInput | null | undefined,
+): boolean {
+  if (!isFiscalProfileReadyForConnect(profile)) {
+    return false;
+  }
+
+  const phone = (profile?.contactPhone ?? '').replace(/\D/g, '');
+  const city = (profile?.city ?? '').trim();
+  const state = (profile?.state ?? '').trim();
+
+  return (
+    phone.length >= 10 &&
+    phone.length <= 11 &&
+    city.length >= 2 &&
+    /^[A-Za-z]{2}$/.test(state)
+  );
+}

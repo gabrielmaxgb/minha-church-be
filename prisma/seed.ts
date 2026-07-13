@@ -300,22 +300,28 @@ async function upsertChurchMembership(
     where: { membershipId: membership.id },
   });
 
+  // Igual ao fluxo real: todo login recebe Membro/todos; cargos extras somam.
+  const roleKeys = new Set<string>(['member']);
   if (input.systemKey) {
-    const role = await prisma.churchRole.findFirst({
-      where: {
-        churchId: input.churchId,
-        systemKey: input.systemKey,
-      },
-    });
+    roleKeys.add(input.systemKey);
+  }
 
-    if (role) {
-      await prisma.churchMembershipRole.create({
-        data: {
-          membershipId: membership.id,
-          roleId: role.id,
-        },
-      });
-    }
+  const roles = await prisma.churchRole.findMany({
+    where: {
+      churchId: input.churchId,
+      systemKey: { in: [...roleKeys] },
+    },
+    select: { id: true },
+  });
+
+  if (roles.length > 0) {
+    await prisma.churchMembershipRole.createMany({
+      data: roles.map((role) => ({
+        membershipId: membership.id,
+        roleId: role.id,
+      })),
+      skipDuplicates: true,
+    });
   }
 
   return membership;
