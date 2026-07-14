@@ -2,12 +2,13 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MemberStatus, Prisma } from '@prisma/client';
+import { Gender, MaritalStatus, MemberStatus, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { generateTemporaryPassword } from '../../common/utils/credentials';
@@ -29,6 +30,8 @@ import {
   AssignMemberMinistryDto,
   AckMinistryCatalogNotificationsDto,
   CreateMemberDto,
+  ImportMemberRow,
+  ImportMembersDto,
   ListMembersQueryDto,
   UpdateMemberDto,
 } from './dto/member.dto';
@@ -42,6 +45,8 @@ import {
   parseOptionalDate,
   toMemberResponse,
   type CreateMemberResponse,
+  type ImportMembersResult,
+  type MemberImportRowResult,
   type FamilyGraphResponse,
   type FamilyResponse,
   type MemberAccountCredentials,
@@ -392,6 +397,340 @@ export class MembersService {
       ...toCreatedMemberResponse(member),
       ...(account ? { account } : {}),
     };
+  }
+
+  /**
+   * Importa vários membros de uma vez (planilha).
+   *
+   * - `dryRun` valida sem gravar (alimenta a pré-visualização).
+   * - Processa linha a linha com **sucesso parcial**: uma linha inválida vira
+   *   um erro no relatório em vez de derrubar o lote.
+   * - Reusa `create()` na execução real, preservando TODAS as regras (CPF/email
+   *   únicos, provisionamento de login de ativo, defaults de data, limite de plano).
+   * - Detecta duplicados dentro da própria planilha antes de tocar o banco.
+   *
+   * O cruzamento de faixa de plano (tier) é resolvido ANTES pelo cliente (uma
+   * confirmação do dono); aqui cada ativo ainda passa por `create()`, que só
+   * erra se o dono não tiver autorizado a faixa.
+   */
+  async importMembers(
+    churchId: string,
+    dto: ImportMembersDto,
+  ): Promise<ImportMembersResult> {
+    const rows = Array.isArray(dto.rows) ? dto.rows : [];
+    const dryRun = dto.dryRun === true;
+
+    const results: MemberImportRowResult[] = [];
+    const seenEmail = new Map<string, number>();
+    const seenCpf = new Map<string, number>();
+    let created = 0;
+    let errors = 0;
+    let activeCount = 0;
+
+    for (let index = 0; index < rows.length; index++) {
+      const raw = rows[index] ?? {};
+      const displayName = this.coerceImportString(raw.name) ?? null;
+
+      try {
+        const { dto: rowDto, email, cpf, status } =
+          this.buildCreateDtoFromRow(raw);
+
+        // Duplicados dentro da própria planilha (a linha 1 é o cabeçalho).
+        if (email && seenEmail.has(email)) {
+          throw new BadRequestException(
+            `E-mail repetido na planilha (linha ${seenEmail.get(email)! + 2}).`,
+          );
+        }
+        if (cpf && seenCpf.has(cpf)) {
+          throw new BadRequestException(
+            `CPF repetido na planilha (linha ${seenCpf.get(cpf)! + 2}).`,
+          );
+        }
+        if (email) seenEmail.set(email, index);
+        if (cpf) seenCpf.set(cpf, index);
+
+        if (dryRun) {
+          await this.validateImportRowAgainstDb(churchId, {
+            email,
+            cpf,
+            familyId: rowDto.familyId,
+          });
+          results.push({ index, name: rowDto.name, outcome: 'valid', status });
+        } else {
+          await this.create(churchId, rowDto);
+          results.push({
+            index,
+            name: rowDto.name,
+            outcome: 'created',
+            status,
+          });
+          created++;
+        }
+
+        if (status === MemberStatus.active) {
+          activeCount++;
+        }
+      } catch (error) {
+        results.push({
+          index,
+          name: displayName,
+          outcome: 'error',
+          status: null,
+          reason: this.importErrorMessage(error),
+        });
+        errors++;
+      }
+    }
+
+    return {
+      dryRun,
+      total: rows.length,
+      created,
+      errors,
+      activeCount,
+      results,
+    };
+  }
+
+  /** Checagens de banco read-only para o dry-run (sem gravar). */
+  private async validateImportRowAgainstDb(
+    churchId: string,
+    { email, cpf, familyId }: { email?: string; cpf?: string; familyId?: string },
+  ): Promise<void> {
+    await Promise.all([
+      email ? this.ensureEmailAvailable(churchId, email) : Promise.resolve(),
+      cpf ? this.ensureCpfAvailable(churchId, cpf) : Promise.resolve(),
+      familyId
+        ? this.resolveFamilyId(churchId, familyId)
+        : Promise.resolve(undefined),
+    ]);
+  }
+
+  /** Constrói um CreateMemberDto validado a partir de uma linha bruta da planilha. */
+  private buildCreateDtoFromRow(raw: ImportMemberRow): {
+    dto: CreateMemberDto;
+    email?: string;
+    cpf?: string;
+    status: MemberStatus;
+  } {
+    const name = this.coerceImportString(raw.name);
+    if (!name || name.length < 2) {
+      throw new BadRequestException('Nome é obrigatório (mínimo 2 letras).');
+    }
+
+    const email = this.coerceImportString(raw.email)?.toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('E-mail inválido.');
+    }
+
+    let cpf: string | undefined;
+    const rawCpf = this.coerceImportString(raw.cpf);
+    if (rawCpf) {
+      cpf = normalizeCpf(rawCpf);
+      if (!isValidCpf(cpf)) {
+        throw new BadRequestException('CPF inválido.');
+      }
+    }
+
+    const status = this.normalizeImportStatus(raw.status);
+    if (status === MemberStatus.active && !email && !cpf) {
+      throw new BadRequestException(
+        'Membro ativo precisa de e-mail ou CPF (é o login de acesso).',
+      );
+    }
+
+    const maritalStatus = this.normalizeImportMaritalStatus(raw.maritalStatus);
+
+    const dto: CreateMemberDto = {
+      name,
+      email,
+      cpf,
+      status,
+      phone: this.coerceImportString(raw.phone),
+      phoneSecondary: this.coerceImportString(raw.phoneSecondary),
+      gender: this.normalizeImportGender(raw.gender),
+      maritalStatus,
+      weddingAnniversary:
+        maritalStatus === MaritalStatus.married
+          ? this.normalizeImportDate(raw.weddingAnniversary, 'Aniversário de casamento')
+          : undefined,
+      birthDate: this.normalizeImportDate(raw.birthDate, 'Data de nascimento'),
+      street: this.coerceImportString(raw.street),
+      number: this.coerceImportString(raw.number),
+      complement: this.coerceImportString(raw.complement),
+      neighborhood: this.coerceImportString(raw.neighborhood),
+      city: this.coerceImportString(raw.city),
+      state: this.coerceImportString(raw.state)?.toUpperCase().slice(0, 2),
+      zipCode: this.coerceImportString(raw.zipCode)?.replace(/\D/g, '') || undefined,
+      visitorSince: this.normalizeImportDate(raw.visitorSince, 'Membro desde (visita)'),
+      baptismDate: this.normalizeImportDate(raw.baptismDate, 'Data de batismo'),
+      membershipDate: this.normalizeImportDate(raw.membershipDate, 'Data de membresia'),
+      familyId: this.coerceImportString(raw.familyId),
+    };
+
+    return { dto, email, cpf, status };
+  }
+
+  private coerceImportString(value: unknown): string | undefined {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    return undefined;
+  }
+
+  /** Normaliza texto para comparação: minúsculas, sem acento. */
+  private canonImportToken(value: unknown): string | undefined {
+    const str = this.coerceImportString(value);
+    return str
+      ? str
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+      : undefined;
+  }
+
+  private normalizeImportStatus(value: unknown): MemberStatus {
+    const token = this.canonImportToken(value);
+    if (!token) {
+      return MemberStatus.visitor;
+    }
+    const map: Record<string, MemberStatus> = {
+      visitor: MemberStatus.visitor,
+      visitante: MemberStatus.visitor,
+      visita: MemberStatus.visitor,
+      active: MemberStatus.active,
+      ativo: MemberStatus.active,
+      membro: MemberStatus.active,
+      inactive: MemberStatus.inactive,
+      inativo: MemberStatus.inactive,
+    };
+    const status = map[token];
+    if (!status) {
+      throw new BadRequestException(
+        'Situação inválida (use visitante, ativo ou inativo).',
+      );
+    }
+    return status;
+  }
+
+  private normalizeImportGender(value: unknown): Gender | undefined {
+    const token = this.canonImportToken(value);
+    if (!token) {
+      return undefined;
+    }
+    const map: Record<string, Gender> = {
+      male: Gender.male,
+      masculino: Gender.male,
+      m: Gender.male,
+      female: Gender.female,
+      feminino: Gender.female,
+      f: Gender.female,
+      other: Gender.other,
+      outro: Gender.other,
+      prefer_not_to_say: Gender.prefer_not_to_say,
+      'prefiro nao dizer': Gender.prefer_not_to_say,
+      'nao informar': Gender.prefer_not_to_say,
+    };
+    const gender = map[token];
+    if (!gender) {
+      throw new BadRequestException(
+        'Sexo inválido (use masculino, feminino ou outro).',
+      );
+    }
+    return gender;
+  }
+
+  private normalizeImportMaritalStatus(
+    value: unknown,
+  ): MaritalStatus | undefined {
+    const token = this.canonImportToken(value);
+    if (!token) {
+      return undefined;
+    }
+    const map: Record<string, MaritalStatus> = {
+      single: MaritalStatus.single,
+      solteiro: MaritalStatus.single,
+      solteira: MaritalStatus.single,
+      married: MaritalStatus.married,
+      casado: MaritalStatus.married,
+      casada: MaritalStatus.married,
+      divorced: MaritalStatus.divorced,
+      divorciado: MaritalStatus.divorced,
+      divorciada: MaritalStatus.divorced,
+      widowed: MaritalStatus.widowed,
+      viuvo: MaritalStatus.widowed,
+      viuva: MaritalStatus.widowed,
+    };
+    const marital = map[token];
+    if (!marital) {
+      throw new BadRequestException(
+        'Estado civil inválido (use solteiro, casado, divorciado ou viúvo).',
+      );
+    }
+    return marital;
+  }
+
+  /** Aceita AAAA-MM-DD ou DD/MM/AAAA e devolve ISO (AAAA-MM-DD). */
+  private normalizeImportDate(
+    value: unknown,
+    label: string,
+  ): string | undefined {
+    const str = this.coerceImportString(value);
+    if (!str) {
+      return undefined;
+    }
+
+    let year: number;
+    let month: number;
+    let day: number;
+
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(str);
+
+    if (iso) {
+      year = Number(iso[1]);
+      month = Number(iso[2]);
+      day = Number(iso[3]);
+    } else if (br) {
+      day = Number(br[1]);
+      month = Number(br[2]);
+      year = Number(br[3]);
+    } else {
+      throw new BadRequestException(
+        `${label} inválida (use AAAA-MM-DD ou DD/MM/AAAA).`,
+      );
+    }
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+    const valid =
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day;
+    if (!valid) {
+      throw new BadRequestException(`${label} inválida.`);
+    }
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${year}-${pad(month)}-${pad(day)}`;
+  }
+
+  private importErrorMessage(error: unknown): string {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (typeof response === 'string') {
+        return response;
+      }
+      if (response && typeof response === 'object' && 'message' in response) {
+        const message = (response as { message: unknown }).message;
+        return Array.isArray(message) ? message.join('; ') : String(message);
+      }
+      return error.message;
+    }
+    return 'Erro inesperado ao importar esta linha.';
   }
 
   async update(

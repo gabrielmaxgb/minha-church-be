@@ -226,3 +226,29 @@ export function parseOptionalDate(
 
   return new Date(`${value}T00:00:00.000Z`);
 }
+
+/** Resultado por linha de uma importação de membros. */
+export interface MemberImportRowResult {
+  /** Índice da linha na planilha enviada (0-based). */
+  index: number;
+  name: string | null;
+  /**
+   * `valid`  → passou na validação (só em dry-run).
+   * `created`→ criado com sucesso (execução real).
+   * `error`  → rejeitado (ver `reason`).
+   */
+  outcome: 'valid' | 'created' | 'error';
+  status: MemberStatus | null;
+  reason?: string;
+}
+
+/** Resumo da importação de membros (dry-run ou execução). */
+export interface ImportMembersResult {
+  dryRun: boolean;
+  total: number;
+  created: number;
+  errors: number;
+  /** Quantos dos criados/válidos são membros ativos (contam pro plano). */
+  activeCount: number;
+  results: MemberImportRowResult[];
+}

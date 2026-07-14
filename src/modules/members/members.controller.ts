@@ -21,6 +21,7 @@ import {
   AssignMemberMinistryDto,
   AckMinistryCatalogNotificationsDto,
   CreateMemberDto,
+  ImportMembersDto,
   ListMembersQueryDto,
   UpdateMemberDto,
 } from './dto/member.dto';
@@ -87,6 +88,13 @@ export class MembersController {
   @RequirePermission(ChurchPermission.members_manage)
   create(@Param('churchId') churchId: string, @Body() dto: CreateMemberDto) {
     return this.membersService.create(churchId, dto);
+  }
+
+  @Post('import')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.members_manage)
+  import(@Param('churchId') churchId: string, @Body() dto: ImportMembersDto) {
+    return this.membersService.importMembers(churchId, dto);
   }
 
   @Patch(':memberId')
