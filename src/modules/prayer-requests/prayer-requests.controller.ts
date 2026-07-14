@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 
@@ -12,6 +13,7 @@ import { ChurchAccessGuard } from '../../common/guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
+import { ListPrayerRequestsQueryDto } from './dto/list-prayer-requests.dto';
 import { CreatePrayerRequestDto } from './dto/prayer-request.dto';
 import { PrayerRequestsService } from './prayer-requests.service';
 
@@ -24,8 +26,13 @@ export class PrayerRequestsController {
   list(
     @Param('churchId') churchId: string,
     @CurrentUser() user: JwtPayload,
+    @Query() query: ListPrayerRequestsQueryDto,
   ) {
-    return this.prayerRequestsService.list(churchId, user.sub);
+    return this.prayerRequestsService.list(
+      churchId,
+      user.sub,
+      query.status ?? 'active',
+    );
   }
 
   @Post()
@@ -35,6 +42,15 @@ export class PrayerRequestsController {
     @Body() dto: CreatePrayerRequestDto,
   ) {
     return this.prayerRequestsService.create(churchId, user.sub, dto);
+  }
+
+  @Post(':requestId/archive')
+  archive(
+    @Param('churchId') churchId: string,
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.prayerRequestsService.archive(churchId, user.sub, requestId);
   }
 
   @Delete(':requestId')

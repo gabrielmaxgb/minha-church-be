@@ -659,12 +659,14 @@ export class EventsService {
     const existing = await this.getEventOrThrow(churchId, eventId);
     await this.assertCanManageEvent(userId, churchId, existing);
 
-    const recurrenceProvided = Object.prototype.hasOwnProperty.call(
-      dto,
-      'recurrence',
-    );
-
-    if (recurrenceProvided) {
+    // Com useDefineForClassFields, `recurrence` sempre existe no DTO como
+    // propriedade própria (mesmo omitida no JSON → undefined). hasOwnProperty
+    // NÃO distingue omissão de envio. Tratar:
+    // - undefined → omitido → só atualiza campos (mantém série)
+    // - null → remove repetição no escopo
+    // - objeto → muda/recria regra
+    if (dto.recurrence !== undefined) {
+      const recurrenceUpdate = dto.recurrence;
       const scope = this.resolveScope(existing, dto.scope);
       const startsAt =
         dto.startsAt !== undefined
@@ -710,7 +712,7 @@ export class EventsService {
 
       const recurrenceChanged = await this.hasRecurrenceChange(
         existing,
-        dto.recurrence ?? null,
+        recurrenceUpdate,
         startsAt,
       );
 
@@ -719,7 +721,7 @@ export class EventsService {
           churchId,
           event: existing,
           scope,
-          recurrence: dto.recurrence ?? null,
+          recurrence: recurrenceUpdate,
           name: dto.name !== undefined ? dto.name : existing.name,
           description:
             dto.description !== undefined
@@ -959,7 +961,13 @@ export class EventsService {
     recurrence: UpdateChurchEventDto['recurrence'],
     startsAt: Date,
   ): Promise<boolean> {
-    if (recurrence === null || recurrence === undefined) {
+    // Omitido: sem mudança de regra (só campos da ocorrência).
+    if (recurrence === undefined) {
+      return false;
+    }
+
+    // null: remove repetição.
+    if (recurrence === null) {
       return Boolean(event.recurrenceSeriesId);
     }
 

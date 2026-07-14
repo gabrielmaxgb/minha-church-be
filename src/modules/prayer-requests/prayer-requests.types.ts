@@ -14,6 +14,9 @@ export interface PrayerRequestResponse {
   prayerCount: number;
   prayedByMe: boolean;
   canDelete: boolean;
+  canArchive: boolean;
+  isArchived: boolean;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +36,7 @@ export function toPrayerRequestResponse(
     request.authorMemberId === options.viewerMemberId;
 
   const showAuthor = !request.isAnonymous || isAuthor || options.canModerate;
+  const isArchived = request.archivedAt !== null;
 
   return {
     id: request.id,
@@ -51,6 +55,9 @@ export function toPrayerRequestResponse(
         request.prayers?.some((p) => p.memberId === options.viewerMemberId),
     ),
     canDelete: isAuthor || options.canModerate,
+    canArchive: (isAuthor || options.canModerate) && !isArchived,
+    isArchived,
+    archivedAt: request.archivedAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
   };

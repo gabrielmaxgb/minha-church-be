@@ -514,13 +514,14 @@ model PrayerRequest {
   isAnonymous    Boolean   @default(false) @map("is_anonymous")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
+  archivedAt     DateTime? @map("archived_at")
   deletedAt      DateTime? @map("deleted_at")
 
   church  Church               @relation(fields: [churchId], references: [id], onDelete: Cascade)
   author  Member               @relation(fields: [authorMemberId], references: [id], onDelete: Cascade)
   prayers PrayerRequestPrayer[]
 
-  @@index([churchId, deletedAt, createdAt])
+  @@index([churchId, deletedAt, archivedAt, createdAt])
   @@index([authorMemberId])
   @@map("prayer_requests")
 }

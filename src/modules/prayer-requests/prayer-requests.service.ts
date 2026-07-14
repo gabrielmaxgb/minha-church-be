@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -15,6 +16,11 @@ import {
 
 const authorSelect = { id: true, name: true } as const;
 
+/** Dias no quadro ativo antes do soft-archive automático. */
+export const PRAYER_REQUEST_ARCHIVE_AFTER_DAYS = 30;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class PrayerRequestsService {
   constructor(
@@ -25,12 +31,19 @@ export class PrayerRequestsService {
   async list(
     churchId: string,
     userId: string,
+    status: 'active' | 'archived' = 'active',
   ): Promise<PrayerRequestResponse[]> {
     const viewer = await this.requireActiveMember(churchId, userId);
     const canModerate = await this.canModerate(churchId, userId);
 
+    await this.archiveExpiredForChurch(churchId);
+
     const requests = await this.prisma.prayerRequest.findMany({
-      where: { churchId, deletedAt: null },
+      where: {
+        churchId,
+        deletedAt: null,
+        archivedAt: status === 'archived' ? { not: null } : null,
+      },
       include: {
         author: { select: authorSelect },
         _count: { select: { prayers: true } },
@@ -40,7 +53,10 @@ export class PrayerRequestsService {
           take: 1,
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy:
+        status === 'archived'
+          ? [{ archivedAt: 'desc' }, { createdAt: 'desc' }]
+          : { createdAt: 'desc' },
     });
 
     return requests.map((request) =>
@@ -80,6 +96,53 @@ export class PrayerRequestsService {
 
     return toPrayerRequestResponse(created, {
       viewerMemberId: author.id,
+      canModerate,
+    });
+  }
+
+  async archive(
+    churchId: string,
+    userId: string,
+    requestId: string,
+  ): Promise<PrayerRequestResponse> {
+    const viewer = await this.requireActiveMember(churchId, userId);
+    const canModerate = await this.canModerate(churchId, userId);
+
+    const existing = await this.prisma.prayerRequest.findFirst({
+      where: { id: requestId, churchId, deletedAt: null },
+      select: { id: true, authorMemberId: true, archivedAt: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Pedido de oração não encontrado.');
+    }
+
+    if (existing.authorMemberId !== viewer.id && !canModerate) {
+      throw new ForbiddenException(
+        'Você não pode arquivar este pedido de oração.',
+      );
+    }
+
+    if (existing.archivedAt) {
+      throw new BadRequestException('Este pedido já está arquivado.');
+    }
+
+    const updated = await this.prisma.prayerRequest.update({
+      where: { id: existing.id },
+      data: { archivedAt: new Date() },
+      include: {
+        author: { select: authorSelect },
+        _count: { select: { prayers: true } },
+        prayers: {
+          where: { memberId: viewer.id },
+          select: { memberId: true },
+          take: 1,
+        },
+      },
+    });
+
+    return toPrayerRequestResponse(updated, {
+      viewerMemberId: viewer.id,
       canModerate,
     });
   }
@@ -170,6 +233,26 @@ export class PrayerRequestsService {
     return toPrayerRequestResponse(updated, {
       viewerMemberId: viewer.id,
       canModerate,
+    });
+  }
+
+  /**
+   * Marca como arquivados os pedidos com mais de 30 dias ainda sem archivedAt.
+   * Roda no list (lazy) — sem cron dedicado.
+   */
+  private async archiveExpiredForChurch(churchId: string): Promise<void> {
+    const cutoff = new Date(
+      Date.now() - PRAYER_REQUEST_ARCHIVE_AFTER_DAYS * MS_PER_DAY,
+    );
+
+    await this.prisma.prayerRequest.updateMany({
+      where: {
+        churchId,
+        deletedAt: null,
+        archivedAt: null,
+        createdAt: { lt: cutoff },
+      },
+      data: { archivedAt: new Date() },
     });
   }
 
