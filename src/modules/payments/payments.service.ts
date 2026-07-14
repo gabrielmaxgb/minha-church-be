@@ -443,7 +443,74 @@ export class PaymentsService {
       take: limit,
     });
 
-    return donations.map((donation) => ({
+    return donations.map((donation) => this.toGivingDonationResult(donation));
+  }
+
+  /**
+   * Histórico do próprio membro: doações vinculadas à ficha pastoral
+   * e, complementarmente, doações públicas com o mesmo e-mail da conta.
+   */
+  async listMyGivingDonations(
+    churchId: string,
+    userId: string,
+    options?: { limit?: number },
+  ): Promise<GivingDonationResult[]> {
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
+
+    const member = await this.prisma.member.findFirst({
+      where: { churchId, userId, deletedAt: null },
+      select: {
+        id: true,
+        email: true,
+        user: { select: { email: true } },
+      },
+    });
+
+    if (!member) {
+      return [];
+    }
+
+    const emails = Array.from(
+      new Set(
+        [member.user?.email, member.email]
+          .map((value) => value?.trim().toLowerCase())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const donations = await this.prisma.givingDonation.findMany({
+      where: {
+        churchId,
+        OR: [
+          { donorMemberId: member.id },
+          ...emails.map((email) => ({
+            payerEmail: { equals: email, mode: 'insensitive' as const },
+          })),
+        ],
+      },
+      include: {
+        fund: { select: { id: true, name: true } },
+        donorMember: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return donations.map((donation) => this.toGivingDonationResult(donation));
+  }
+
+  private toGivingDonationResult(donation: {
+    id: string;
+    amountCents: number;
+    currency: string;
+    status: string;
+    payerName: string | null;
+    payerEmail: string | null;
+    createdAt: Date;
+    fund: { id: string; name: string };
+    donorMember: { id: string; name: string } | null;
+  }): GivingDonationResult {
+    return {
       id: donation.id,
       fundId: donation.fund.id,
       fundName: donation.fund.name,
@@ -455,7 +522,7 @@ export class PaymentsService {
       donorMemberId: donation.donorMember?.id ?? null,
       donorMemberName: donation.donorMember?.name ?? null,
       createdAt: donation.createdAt.toISOString(),
-    }));
+    };
   }
 
   /**

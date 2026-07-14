@@ -111,6 +111,14 @@ export class PaymentsController {
     });
   }
 
+  @Get('donations/mine')
+  listMyGivingDonations(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.listMyGivingDonations(churchId, user.sub);
+  }
+
   @Get('donations')
   @UseGuards(PermissionsGuard)
   @RequirePermission(ChurchPermission.receivables_manage)
