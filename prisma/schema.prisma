@@ -152,6 +152,7 @@ model Church {
   passwordResetRequests PasswordResetRequest[]
   announcements         Announcement[]
   careRequests          CareRequest[]
+  prayerRequests        PrayerRequest[]
 
   billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
   billingTierUpgradeRequests        BillingTierUpgradeRequest[]
@@ -479,6 +480,8 @@ model Member {
   relationsTo    MemberRelation[]    @relation("RelationTo")
   careRequestsSent     CareRequest[] @relation("CareRequestRequester")
   careRequestsReceived CareRequest[] @relation("CareRequestRecipient")
+  prayerRequests       PrayerRequest[]
+  prayerReactions      PrayerRequestPrayer[]
 
   @@unique([churchId, email])
   @@unique([churchId, cpf])
@@ -486,6 +489,39 @@ model Member {
   @@index([churchId, status])
   @@index([churchId, familyId])
   @@map("members")
+}
+
+model PrayerRequest {
+  id             String    @id @default(cuid())
+  churchId       String    @map("church_id")
+  authorMemberId String    @map("author_member_id")
+  body           String
+  isAnonymous    Boolean   @default(false) @map("is_anonymous")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  church  Church               @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  author  Member               @relation(fields: [authorMemberId], references: [id], onDelete: Cascade)
+  prayers PrayerRequestPrayer[]
+
+  @@index([churchId, deletedAt, createdAt])
+  @@index([authorMemberId])
+  @@map("prayer_requests")
+}
+
+model PrayerRequestPrayer {
+  id              String   @id @default(cuid())
+  prayerRequestId String   @map("prayer_request_id")
+  memberId        String   @map("member_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  prayerRequest PrayerRequest @relation(fields: [prayerRequestId], references: [id], onDelete: Cascade)
+  member        Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([prayerRequestId, memberId])
+  @@index([memberId])
+  @@map("prayer_request_prayers")
 }
 
 model CareRequest {

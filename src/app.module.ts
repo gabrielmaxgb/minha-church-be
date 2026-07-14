@@ -20,6 +20,7 @@ import { ChurchRolesModule } from './modules/church-roles/church-roles.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { CareRequestsModule } from './modules/care-requests/care-requests.module';
+import { PrayerRequestsModule } from './modules/prayer-requests/prayer-requests.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { CareRequestsModule } from './modules/care-requests/care-requests.module
     AuditLogsModule,
     AnnouncementsModule,
     CareRequestsModule,
+    PrayerRequestsModule,
   ],
   providers: [
     {
