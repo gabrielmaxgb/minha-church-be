@@ -1267,6 +1267,7 @@ export class BillingService {
         stripeSubscriptionId: null,
         stripePriceId: null,
         cancelAtPeriodEnd: false,
+        pastDueSince: null,
       },
     });
 
@@ -1281,6 +1282,17 @@ export class BillingService {
     const subscriptionStatus = this.mapStripeStatus(subscription.status);
     const schedule = this.readStripeSubscriptionSchedule(subscription);
 
+    // Marca quando entrou em past_due (preserva a data original) e limpa ao sair;
+    // é a base da janela de graça da página pública de doação.
+    const current = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { pastDueSince: true },
+    });
+    const pastDueSince =
+      subscriptionStatus === SubscriptionStatus.past_due
+        ? (current?.pastDueSince ?? new Date())
+        : null;
+
     await this.prisma.church.update({
       where: { id: churchId },
       data: {
@@ -1288,6 +1300,7 @@ export class BillingService {
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
         cancelAtPeriodEnd: schedule.cancelAtPeriodEnd,
+        pastDueSince,
       },
     });
   }

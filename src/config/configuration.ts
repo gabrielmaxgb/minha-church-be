@@ -57,6 +57,8 @@ export default () => ({
   trial: {
     enforcement: process.env.TRIAL_ENFORCEMENT === 'true',
     durationDays: parseInt(process.env.TRIAL_DURATION_DAYS ?? '30', 10),
+    /** Dias que a página pública de doação continua no ar após entrar em past_due. */
+    pastDueGraceDays: parseInt(process.env.PAST_DUE_GRACE_DAYS ?? '7', 10),
   },
   email: {
     /** Força deduplicação Gmail (+tag) mesmo fora de produção. */

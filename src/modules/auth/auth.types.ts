@@ -1,5 +1,6 @@
 import type { UserPermissions } from '../../common/types/user-permissions';
 import type { SubscriptionStatus } from '@prisma/client';
+import type { SubscriptionLockReason } from '../../common/services/subscription-policy.service';
 
 export interface JwtPayload {
   sub: string;
@@ -52,6 +53,7 @@ export interface AuthChurchResponse {
   trialEndsAt?: string | null;
   trialDaysRemaining?: number | null;
   featuresLocked?: boolean;
+  lockReason?: SubscriptionLockReason | null;
 }
 
 export interface AuthTokensResponse {

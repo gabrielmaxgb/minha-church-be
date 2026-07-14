@@ -14,11 +14,10 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * Keeps member CRUD + lightweight read-acks usable without an active plan.
  */
 function isAllowedWriteWhenLocked(method: string, path: string): boolean {
+  // Cadastrar membro (visitante/inativo) continua liberado; o
+  // MembersService bloqueia só quando o alvo vira ativo (acesso à plataforma).
+  // Editar membro existente fica bloqueado (sem exceção de PATCH aqui).
   if (method === 'POST' && /\/churches\/[^/]+\/members$/.test(path)) {
-    return true;
-  }
-
-  if (method === 'PATCH' && /\/churches\/[^/]+\/members\/[^/]+$/.test(path)) {
     return true;
   }
 
@@ -84,12 +83,6 @@ export class SubscriptionWriteGuard implements CanActivate {
     }
 
     if (/\/billing\/portal$/.test(path)) {
-      return true;
-    }
-
-    // Setup de recebimentos (perfil fiscal + Stripe Connect) é um caminho de
-    // conversão e não deve ficar bloqueado pelo paywall do trial.
-    if (/\/churches\/[^/]+\/payments\//.test(path)) {
       return true;
     }
 

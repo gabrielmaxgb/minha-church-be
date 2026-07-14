@@ -10,24 +10,48 @@ quando algo mudar. Contexto completo do setup do dashboard: `stripe-connect-setu
 **Decisão:** o **setup** de recebimentos fica sempre acessível; a **cobrança de
 verdade** (Fase 2) é que tem gate por assinatura.
 
-### Fase 1 — Setup (perfil fiscal + onboarding Connect + status)
-- **Liberado independente da assinatura** (trial válido, trial expirado, etc.).
-- Racional: é caminho de conversão/ativação e **não move dinheiro**. Ter conta
-  conectada criada não gera risco nem custo.
-- Implementação: exceção já existente no `subscription-write.guard.ts`
-  (`/churches/:id/payments/` sempre passa). **Não remover.**
+> **Atualização (Opção B — vigente):** recebimentos passaram a ser **recurso
+> premium exclusivo de plano pago**, com liberação durante o **trial válido**
+> (com selo "gratuito durante o teste"). Ver seção **1.1**. As Fases 1 e 2
+> abaixo descrevem o modelo anterior e ficam **substituídas** por 1.1.
 
-### Fase 2 — Cobrança (criar PaymentIntent / página pública)
-- Trial válido **ou** plano ativo → cobrança liberada.
-- Trial expirado / inadimplente / cancelada → **bloquear criar novas cobranças
-  no painel**, mas **manter páginas públicas já ativas funcionando**.
-- Racional do "não derrubar página pública": o dinheiro é da igreja e um membro
-  tentando dizimar não pode ver "indisponível" — quebra confiança do membro
-  final. Painel bloqueia gestão nova; checkout existente continua no ar com CTA
-  pro dono reativar o plano.
-- Gate deve ficar na **camada de criação de cobrança**, não no acesso à seção.
-- Alternativa mais dura (expirou = corta tudo, inclusive página pública) foi
-  considerada e **descartada** pelo atrito com o membro final.
+### Fase 1 — Setup (perfil fiscal + onboarding Connect + status) — *substituída*
+- ~~**Liberado independente da assinatura**~~ (trial válido, trial expirado, etc.).
+- Racional original: é caminho de conversão/ativação e **não move dinheiro**.
+- Implementação antiga: exceção blanket no `subscription-write.guard.ts`
+  (`/churches/:id/payments/` sempre passava). **Removida em 1.1.**
+
+### Fase 2 — Cobrança (criar PaymentIntent / página pública) — *substituída*
+- Modelo antigo (Opção A): trial válido/ativo liberava; expirado/inadimplente/
+  cancelada bloqueava só o painel, **mantendo a página pública no ar**.
+- Substituído pela Opção B (1.1): página pública também é bloqueada fora de
+  plano pago/trial, com **janela de graça** só para `past_due`.
+
+---
+
+## 1.1 Recebimentos como recurso premium (Opção B — vigente)
+
+**Decisão:** recebimentos (setup fiscal + Connect + fundos + página pública
+`/doar`) são **premium**. Liberados apenas com `active` ou `trialing` válido.
+`past_due`, `canceled` e trial expirado **bloqueiam tudo**, com uma exceção.
+
+- **Trial:** tudo liberado, com selo no FE "Recurso premium — gratuito durante o
+  teste". É gatilho de conversão: a igreja conecta a conta e sente o valor.
+- **Setup deixou de ser exceção:** removida a exceção blanket
+  `/churches/:id/payments/` do `subscription-write.guard.ts`. Passa a valer a
+  régua padrão (trial válido libera; travado bloqueia perfil fiscal, Connect e
+  fundos).
+- **Página pública `/doar`:** `resolvePublicGivingContext`/`createGivingCheckout`
+  checam `SubscriptionPolicyService.isPublicGivingEntitled`. Fora de direito →
+  `ForbiddenException` com copy amigável; FE mostra página "indisponível".
+- **Exceção `past_due` (graça):** `PAST_DUE_GRACE_DAYS` (default 7) mantém **só a
+  página pública** no ar durante a graça, para não punir cartão vencido
+  involuntário. `Church.pastDueSince` marca o início (setado/limpo em
+  `billing.service`). `canceled` e trial expirado **nunca** têm graça.
+- **Racional da mudança (A → B):** Opção A corria o risco de igrejas ficarem
+  muito tempo em `past_due` usando recebimentos sem converter. Opção B reduz esse
+  vazamento mantendo uma janela curta de graça para o caso legítimo de cartão
+  vencido.
 
 ---
 

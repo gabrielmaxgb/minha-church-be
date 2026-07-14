@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -17,6 +18,7 @@ import type Stripe from 'stripe';
 
 import { isValidCnpj, normalizeCnpj } from '../../common/utils/cnpj';
 import { isValidCpf, normalizeCpf } from '../../common/utils/cpf';
+import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { UpsertFiscalProfileDto } from './dto/upsert-fiscal-profile.dto';
 import {
@@ -52,6 +54,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly stripeConnect: StripeConnectService,
+    private readonly subscriptionPolicy: SubscriptionPolicyService,
   ) {}
 
   async getFiscalProfile(
@@ -682,6 +685,9 @@ export class PaymentsService {
         id: true,
         name: true,
         slug: true,
+        subscriptionStatus: true,
+        trialEndsAt: true,
+        pastDueSince: true,
         paymentAccount: {
           select: {
             stripeAccountId: true,
@@ -693,6 +699,14 @@ export class PaymentsService {
 
     if (!church) {
       throw new NotFoundException('Página de contribuição não encontrada.');
+    }
+
+    // Recebimentos são premium: página pública fica no ar com plano ativo / trial
+    // válido e, em past_due, durante a janela de graça. Fora disso, indisponível.
+    if (!this.subscriptionPolicy.isPublicGivingEntitled(church)) {
+      throw new ForbiddenException(
+        'Os recebimentos desta igreja estão temporariamente indisponíveis. Tente novamente em breve.',
+      );
     }
 
     if (

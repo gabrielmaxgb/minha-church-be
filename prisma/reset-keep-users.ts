@@ -1,6 +1,7 @@
 import { MemberStatus, PrismaClient } from '@prisma/client';
 
 import { seedDefaultChurchRoles } from '../src/common/permissions/seed-default-church-roles';
+import { createPrismaWithPg } from './pg-prisma';
 
 async function syncChurchMemberCounts(prisma: PrismaClient) {
   const churches = await prisma.church.findMany({ select: { id: true } });
@@ -141,7 +142,9 @@ export async function resetDatabaseKeepUsers(prisma = new PrismaClient()) {
 }
 
 async function main() {
-  const prisma = new PrismaClient();
+  // Usa o adapter pg (IPv4). O engine nativo do Prisma falha com P1001 no
+  // endpoint Neon sa-east-1 (resolve IPv6 primeiro e a máquina não tem rota).
+  const { prisma, pool } = createPrismaWithPg();
 
   try {
     console.log('Resetando dados operacionais (mantendo usuários e acesso à igreja)...');
@@ -166,6 +169,7 @@ async function main() {
     console.log('Pronto. Faça login e configure ministérios, membros e eventos do zero.');
   } finally {
     await prisma.$disconnect();
+    await pool.end();
   }
 }
 

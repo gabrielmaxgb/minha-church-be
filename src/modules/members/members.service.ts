@@ -21,6 +21,7 @@ import {
 } from '../../common/utils/cpf';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
+import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BillingService } from '../billing/billing.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
@@ -92,6 +93,7 @@ export class MembersService {
     private readonly billingService: BillingService,
     private readonly emailService: EmailService,
     private readonly churchPermissions: ChurchPermissionsService,
+    private readonly subscriptionPolicy: SubscriptionPolicyService,
   ) {}
 
   async findAll(
@@ -279,6 +281,12 @@ export class MembersService {
       throw new BadRequestException('CPF inválido.');
     }
 
+    // Cadastrar visitante/inativo é sempre liberado; receber como membro ativo
+    // (que dá acesso à plataforma) é recurso premium.
+    if (isActive) {
+      await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
+    }
+
     // Pré-checagens independentes rodam em paralelo (cada uma é ~1 RTT ao Neon).
     // `allSettled` preserva a ordem de prioridade das mensagens de erro.
     // Login/vínculo multi-igreja fica em syncMemberAppAccess → provisionMemberLogin
@@ -436,6 +444,7 @@ export class MembersService {
       nextStatus === MemberStatus.active &&
       existing.status !== MemberStatus.active
     ) {
+      await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
       await this.assertActiveMemberTierAllowed(churchId);
     }
 
@@ -569,6 +578,7 @@ export class MembersService {
       );
     }
 
+    await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
     await this.assertActiveMemberTierAllowed(churchId);
 
     let account: MemberAccountCredentials | undefined;

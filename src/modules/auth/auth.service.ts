@@ -67,7 +67,11 @@ export class AuthService {
     const memberships = await this.usersService.getMemberships(user.id);
 
     if (memberships.length === 0) {
-      throw new UnauthorizedException('E-mail, CPF ou senha inválidos.');
+      // Senha confere, mas o usuário não tem vínculo ativo: visitante/inativo
+      // não acessa a plataforma. Copy amigável em vez de "credenciais inválidas".
+      throw new UnauthorizedException(
+        'Seu acesso ainda não está ativo. Peça para a liderança da sua igreja liberar seu acesso ao app.',
+      );
     }
 
     const primaryMembership = memberships[0];
@@ -791,6 +795,7 @@ export class AuthService {
       trialEndsAt: summary.trialEndsAt,
       trialDaysRemaining: summary.trialDaysRemaining,
       featuresLocked: summary.featuresLocked,
+      lockReason: summary.lockReason,
     };
   }
 

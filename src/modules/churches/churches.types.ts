@@ -7,6 +7,7 @@ export interface ChurchRecord {
   memberCount: number;
   subscriptionStatus: SubscriptionStatus;
   trialEndsAt: Date | null;
+  pastDueSince: Date | null;
 }
 
 export interface RegisterChurchInput {

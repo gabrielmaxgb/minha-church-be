@@ -1,23 +1,22 @@
-import { PrismaClient } from '@prisma/client';
-
 import { seedBillingTierChurches } from './seed-billing-tiers';
 import { seedTierCrossingTestChurch } from './seed-tier-crossing-test';
 import { seedDatabase } from './seed';
-import { applyMigrationsWithPg, createPgPool } from './pg-prisma';
+import { applyMigrationsWithPg, createPrismaWithPg, createPgPool } from './pg-prisma';
 
 async function main() {
-  const pool = createPgPool();
+  const migratePool = createPgPool();
 
   try {
     console.log('Resetando banco (driver pg, compatível com Neon)...');
-    await applyMigrationsWithPg(pool);
+    await applyMigrationsWithPg(migratePool);
     console.log('Migrations aplicadas.');
   } finally {
-    await pool.end();
+    await migratePool.end();
   }
 
-  // Seed com engine nativo do Prisma — o adapter-pg quebra enums em create/createMany.
-  const prisma = new PrismaClient();
+  // Seed também via adapter pg: o engine nativo do Prisma falha com P1001 no
+  // endpoint Neon sa-east-1 (resolve IPv6 primeiro e a máquina não tem rota).
+  const { prisma, pool } = createPrismaWithPg();
   try {
     await seedDatabase(prisma);
     await seedBillingTierChurches(prisma);
@@ -29,6 +28,7 @@ async function main() {
     console.log('  - Igreja teste faixa (99 membros) — owner-tier-crossing@billing.test');
   } finally {
     await prisma.$disconnect();
+    await pool.end();
   }
 }
 

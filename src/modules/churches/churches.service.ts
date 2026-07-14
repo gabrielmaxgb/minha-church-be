@@ -159,6 +159,7 @@ export class ChurchesService {
     memberCount: number;
     subscriptionStatus: ChurchRecord['subscriptionStatus'];
     trialEndsAt: Date | null;
+    pastDueSince?: Date | null;
   }): ChurchRecord {
     return {
       id: church.id,
@@ -167,6 +168,7 @@ export class ChurchesService {
       memberCount: church.memberCount,
       subscriptionStatus: church.subscriptionStatus,
       trialEndsAt: church.trialEndsAt,
+      pastDueSince: church.pastDueSince ?? null,
     };
   }
 }
