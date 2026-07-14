@@ -21,9 +21,12 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { ChurchAccessGuard, PermissionsGuard } from '../../common/guards';
 import { ChurchOwnerGuard } from '../../common/guards/church-owner.guard';
 import { Public } from '../../common/decorators/public.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { JwtPayload } from '../auth/auth.types';
 import { UpsertFiscalProfileDto } from './dto/upsert-fiscal-profile.dto';
 import { CreateGivingCheckoutDto } from './dto/create-giving-checkout.dto';
+import { CreateMemberGivingCheckoutDto } from './dto/create-member-giving-checkout.dto';
 import {
   CreateGivingFundDto,
   UpdateGivingFundDto,
@@ -52,9 +55,22 @@ export class PaymentsController {
 
   @Get('connect/status')
   @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.finances_access)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
   getConnectStatus(@Param('churchId') churchId: string) {
     return this.paymentsService.getConnectStatus(churchId);
+  }
+
+  @Get('summary')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  getPaymentsSummary(@Param('churchId') churchId: string) {
+    return this.paymentsService.getPaymentsSummary(churchId);
   }
 
   @Post('connect/account')
@@ -75,9 +91,17 @@ export class PaymentsController {
     return this.paymentsService.syncConnectAccount(churchId);
   }
 
+  @Get('funds/for-members')
+  listMemberGivingFunds(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.listMemberGivingFunds(churchId, user.sub);
+  }
+
   @Get('funds')
   @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.finances_access)
+  @RequirePermission(ChurchPermission.receivables_manage)
   listGivingFunds(
     @Param('churchId') churchId: string,
     @Query('includeInactive') includeInactive?: string,
@@ -89,13 +113,14 @@ export class PaymentsController {
 
   @Get('donations')
   @UseGuards(PermissionsGuard)
-  @RequirePermission(ChurchPermission.finances_access)
+  @RequirePermission(ChurchPermission.receivables_manage)
   listGivingDonations(@Param('churchId') churchId: string) {
     return this.paymentsService.listGivingDonations(churchId);
   }
 
   @Post('funds')
-  @UseGuards(ChurchOwnerGuard)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
   createGivingFund(
     @Param('churchId') churchId: string,
     @Body() dto: CreateGivingFundDto,
@@ -104,7 +129,8 @@ export class PaymentsController {
   }
 
   @Patch('funds/:fundId')
-  @UseGuards(ChurchOwnerGuard)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
   updateGivingFund(
     @Param('churchId') churchId: string,
     @Param('fundId') fundId: string,
@@ -114,12 +140,28 @@ export class PaymentsController {
   }
 
   @Delete('funds/:fundId')
-  @UseGuards(ChurchOwnerGuard)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
   deleteGivingFund(
     @Param('churchId') churchId: string,
     @Param('fundId') fundId: string,
   ) {
     return this.paymentsService.deleteGivingFund(churchId, fundId);
+  }
+
+  @Post('funds/:fundId/checkout')
+  createMemberGivingCheckout(
+    @Param('churchId') churchId: string,
+    @Param('fundId') fundId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateMemberGivingCheckoutDto,
+  ) {
+    return this.paymentsService.createMemberGivingCheckout(
+      churchId,
+      fundId,
+      user.sub,
+      dto,
+    );
   }
 }
 
@@ -127,6 +169,12 @@ export class PaymentsController {
 @Controller('public/giving')
 export class PaymentsPublicGivingController {
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  /** Declarado antes das rotas :churchSlug para não ser capturado por elas. */
+  @Get('donations/:donationId/receipt')
+  getGivingDonationReceipt(@Param('donationId') donationId: string) {
+    return this.paymentsService.getGivingDonationReceipt(donationId);
+  }
 
   @Get(':churchSlug/:fundSlug')
   getPublicGivingFund(

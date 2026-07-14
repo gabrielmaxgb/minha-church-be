@@ -12,6 +12,8 @@ import {
   ConnectCapabilityStatus,
   ConnectOnboardingStatus,
   GivingDonationStatus,
+  GivingFundAudience,
+  MemberStatus,
   Prisma,
 } from '@prisma/client';
 import type Stripe from 'stripe';
@@ -26,6 +28,7 @@ import {
   GIVING_MAX_AMOUNT_CENTS,
   GIVING_MIN_AMOUNT_CENTS,
 } from './dto/create-giving-checkout.dto';
+import { CreateMemberGivingCheckoutDto } from './dto/create-member-giving-checkout.dto';
 import {
   CreateGivingFundDto,
   UpdateGivingFundDto,
@@ -36,8 +39,12 @@ import type {
   ConnectStatusResult,
   FiscalProfileResult,
   GivingCheckoutResult,
+  GivingDonationOutcome,
+  GivingDonationReceiptResult,
   GivingDonationResult,
   GivingFundResult,
+  MemberGivingFundResult,
+  PaymentsSummaryResult,
   PublicGivingFundResult,
 } from './payments.types';
 
@@ -176,6 +183,56 @@ export class PaymentsService {
     return this.toConnectStatusResult(account);
   }
 
+  async getPaymentsSummary(churchId: string): Promise<PaymentsSummaryResult> {
+    const connect = await this.getConnectStatus(churchId);
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+
+    const [activeFunds, memberFunds, publicFunds, succeededCount, amountAgg] =
+      await Promise.all([
+        this.prisma.givingFund.count({
+          where: { churchId, isActive: true },
+        }),
+        this.prisma.givingFund.count({
+          where: {
+            churchId,
+            isActive: true,
+            audience: GivingFundAudience.members,
+          },
+        }),
+        this.prisma.givingFund.count({
+          where: {
+            churchId,
+            isActive: true,
+            audience: GivingFundAudience.public,
+          },
+        }),
+        this.prisma.givingDonation.count({
+          where: { churchId, status: GivingDonationStatus.succeeded },
+        }),
+        this.prisma.givingDonation.aggregate({
+          where: {
+            churchId,
+            status: GivingDonationStatus.succeeded,
+            createdAt: { gte: since },
+          },
+          _sum: { amountCents: true },
+        }),
+      ]);
+
+    return {
+      canReceivePayments: connect.canReceivePayments,
+      onboardingStatus: connect.hasAccount
+        ? connect.onboardingStatus
+        : 'none',
+      activeFundsCount: activeFunds,
+      memberFundsCount: memberFunds,
+      publicFundsCount: publicFunds,
+      succeededDonationsCount: succeededCount,
+      succeededAmountCentsLast30Days: amountAgg._sum.amountCents ?? 0,
+    };
+  }
+
   async listGivingFunds(
     churchId: string,
     options?: { includeInactive?: boolean },
@@ -194,13 +251,61 @@ export class PaymentsService {
     return funds.map((fund) => this.toGivingFundResult(fund));
   }
 
+  async listMemberGivingFunds(
+    churchId: string,
+    userId: string,
+  ): Promise<MemberGivingFundResult[]> {
+    await this.requireActiveMember(churchId, userId);
+
+    const funds = await this.prisma.givingFund.findMany({
+      where: {
+        churchId,
+        isActive: true,
+        audience: GivingFundAudience.members,
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        allowPix: true,
+        allowCard: true,
+        allowBoleto: true,
+      },
+    });
+
+    return funds.map((fund) => ({
+      id: fund.id,
+      name: fund.name,
+      description: fund.description,
+      paymentMethods: {
+        pix: fund.allowPix,
+        card: fund.allowCard,
+        boleto: fund.allowBoleto,
+      },
+      currency: 'brl' as const,
+      minAmountCents: GIVING_MIN_AMOUNT_CENTS,
+      maxAmountCents: GIVING_MAX_AMOUNT_CENTS,
+    }));
+  }
+
   async createGivingFund(
     churchId: string,
     dto: CreateGivingFundDto,
   ): Promise<GivingFundResult> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
-      select: { id: true, fiscalProfile: true },
+      select: {
+        id: true,
+        fiscalProfile: true,
+        paymentAccount: {
+          select: {
+            pixStatus: true,
+            cardStatus: true,
+            boletoStatus: true,
+          },
+        },
+      },
     });
 
     if (!church) {
@@ -212,6 +317,13 @@ export class PaymentsService {
         'Complete o perfil da igreja (contato, cidade/UF e dados fiscais) antes de criar fundos de contribuição.',
       );
     }
+
+    const paymentMethods = this.normalizeFundPaymentMethods({
+      allowPix: dto.allowPix,
+      allowCard: dto.allowCard,
+      allowBoleto: dto.allowBoleto,
+      account: church.paymentAccount,
+    });
 
     const name = dto.name.trim();
     const slug = await this.allocateFundSlug(churchId, name);
@@ -226,6 +338,10 @@ export class PaymentsService {
         name,
         slug,
         description: emptyToNull(dto.description),
+        audience: dto.audience,
+        allowPix: paymentMethods.pix,
+        allowCard: paymentMethods.card,
+        allowBoleto: paymentMethods.boleto,
         sortOrder: dto.sortOrder ?? (maxSort._max.sortOrder ?? -1) + 1,
       },
       include: {
@@ -274,6 +390,32 @@ export class PaymentsService {
       data.sortOrder = dto.sortOrder;
     }
 
+    if (
+      dto.allowPix !== undefined ||
+      dto.allowCard !== undefined ||
+      dto.allowBoleto !== undefined
+    ) {
+      const account = await this.prisma.churchPaymentAccount.findUnique({
+        where: { churchId },
+        select: {
+          pixStatus: true,
+          cardStatus: true,
+          boletoStatus: true,
+        },
+      });
+
+      const paymentMethods = this.normalizeFundPaymentMethods({
+        allowPix: dto.allowPix ?? existing.allowPix,
+        allowCard: dto.allowCard ?? existing.allowCard,
+        allowBoleto: dto.allowBoleto ?? existing.allowBoleto,
+        account,
+      });
+
+      data.allowPix = paymentMethods.pix;
+      data.allowCard = paymentMethods.card;
+      data.allowBoleto = paymentMethods.boleto;
+    }
+
     const fund = await this.prisma.givingFund.update({
       where: { id: fundId },
       data,
@@ -295,6 +437,7 @@ export class PaymentsService {
       where: { churchId },
       include: {
         fund: { select: { id: true, name: true } },
+        donorMember: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -309,8 +452,66 @@ export class PaymentsService {
       status: donation.status,
       payerName: donation.payerName,
       payerEmail: donation.payerEmail,
+      donorMemberId: donation.donorMember?.id ?? null,
+      donorMemberName: donation.donorMember?.name ?? null,
       createdAt: donation.createdAt.toISOString(),
     }));
+  }
+
+  /**
+   * Recibo pós-checkout: sincroniza com o Stripe quando há PI e devolve
+   * outcome estável para a UI (sem confiar em redirect_status).
+   * O donationId (cuid) é o segredo do link — não expõe PII.
+   */
+  async getGivingDonationReceipt(
+    donationId: string,
+  ): Promise<GivingDonationReceiptResult> {
+    const donation = await this.prisma.givingDonation.findFirst({
+      where: { id: donationId },
+      include: {
+        fund: { select: { name: true } },
+        church: {
+          select: {
+            paymentAccount: {
+              select: { stripeAccountId: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!donation) {
+      throw new NotFoundException('Contribuição não encontrada.');
+    }
+
+    let status = donation.status;
+    const stripeAccountId = donation.church.paymentAccount?.stripeAccountId;
+
+    if (donation.stripePaymentIntentId && stripeAccountId) {
+      try {
+        const paymentIntent = await this.stripeConnect.retrievePaymentIntent(
+          donation.stripePaymentIntentId,
+          stripeAccountId,
+        );
+        await this.syncDonationFromPaymentIntent(paymentIntent);
+        status = resolveDonationStatusFromPaymentIntent(paymentIntent);
+      } catch (error) {
+        this.logger.warn(
+          `Falha ao sincronizar doação ${donation.id} com Stripe: ${
+            error instanceof Error ? error.message : 'erro desconhecido'
+          }`,
+        );
+      }
+    }
+
+    return {
+      donationId: donation.id,
+      status,
+      outcome: mapDonationOutcome(status),
+      amountCents: donation.amountCents,
+      currency: donation.currency,
+      fundName: donation.fund.name,
+    };
   }
 
   async deleteGivingFund(
@@ -351,6 +552,11 @@ export class PaymentsService {
       fundName: context.fund.name,
       fundSlug: context.fund.slug,
       fundDescription: context.fund.description,
+      paymentMethods: {
+        pix: context.fund.allowPix,
+        card: context.fund.allowCard,
+        boleto: context.fund.allowBoleto,
+      },
       currency: 'brl',
       minAmountCents: GIVING_MIN_AMOUNT_CENTS,
       maxAmountCents: GIVING_MAX_AMOUNT_CENTS,
@@ -375,35 +581,138 @@ export class PaymentsService {
     const payerName = emptyToNull(dto.payerName);
     const payerEmail = emptyToNull(dto.payerEmail)?.toLowerCase() ?? null;
 
+    return this.createCheckoutPaymentIntent({
+      churchId: context.church.id,
+      churchName: context.church.name,
+      fundId: context.fund.id,
+      fundName: context.fund.name,
+      fundSlug: context.fund.slug,
+      allowPix: context.fund.allowPix,
+      allowCard: context.fund.allowCard,
+      allowBoleto: context.fund.allowBoleto,
+      stripeAccountId: context.stripeAccountId,
+      accountCapabilities: context.accountCapabilities,
+      publishableKey,
+      amountCents: dto.amountCents,
+      payerName,
+      payerEmail,
+      donorMemberId: null,
+      metadataExtra: {},
+    });
+  }
+
+  async createMemberGivingCheckout(
+    churchId: string,
+    fundId: string,
+    userId: string,
+    dto: CreateMemberGivingCheckoutDto,
+  ): Promise<GivingCheckoutResult> {
+    this.stripeConnect.assertConfigured();
+
+    const publishableKey = this.stripeConnect.getPublishableKey();
+    if (!publishableKey) {
+      throw new BadRequestException(
+        'Chave pública do Stripe não configurada no servidor.',
+      );
+    }
+
+    const member = await this.requireActiveMember(churchId, userId);
+    const context = await this.resolveMemberGivingContext(churchId, fundId);
+
+    const payerEmail =
+      emptyToNull(member.email ?? undefined)?.toLowerCase() ??
+      emptyToNull(member.userEmail ?? undefined)?.toLowerCase() ??
+      null;
+
+    return this.createCheckoutPaymentIntent({
+      churchId: context.church.id,
+      churchName: context.church.name,
+      fundId: context.fund.id,
+      fundName: context.fund.name,
+      fundSlug: context.fund.slug,
+      allowPix: context.fund.allowPix,
+      allowCard: context.fund.allowCard,
+      allowBoleto: context.fund.allowBoleto,
+      stripeAccountId: context.stripeAccountId,
+      accountCapabilities: context.accountCapabilities,
+      publishableKey,
+      amountCents: dto.amountCents,
+      payerName: member.name,
+      payerEmail,
+      donorMemberId: member.id,
+      metadataExtra: {
+        minhachurch_member_id: member.id,
+      },
+    });
+  }
+
+  private async createCheckoutPaymentIntent(params: {
+    churchId: string;
+    churchName: string;
+    fundId: string;
+    fundName: string;
+    fundSlug: string;
+    allowPix: boolean;
+    allowCard: boolean;
+    allowBoleto: boolean;
+    stripeAccountId: string;
+    accountCapabilities: {
+      pixStatus: ConnectCapabilityStatus;
+      cardStatus: ConnectCapabilityStatus;
+      boletoStatus: ConnectCapabilityStatus;
+    };
+    publishableKey: string;
+    amountCents: number;
+    payerName: string | null;
+    payerEmail: string | null;
+    donorMemberId: string | null;
+    metadataExtra: Record<string, string>;
+  }): Promise<GivingCheckoutResult> {
+    const paymentMethodTypes = this.resolveCheckoutPaymentMethodTypes({
+      allowPix: params.allowPix,
+      allowCard: params.allowCard,
+      allowBoleto: params.allowBoleto,
+      account: params.accountCapabilities,
+    });
+
+    if (paymentMethodTypes.length === 0) {
+      throw new BadRequestException(
+        'Este fundo não tem meios de pagamento disponíveis no momento.',
+      );
+    }
+
     const donation = await this.prisma.givingDonation.create({
       data: {
-        churchId: context.church.id,
-        fundId: context.fund.id,
-        amountCents: dto.amountCents,
+        churchId: params.churchId,
+        fundId: params.fundId,
+        donorMemberId: params.donorMemberId,
+        amountCents: params.amountCents,
         currency: 'brl',
         status: GivingDonationStatus.pending,
-        payerName,
-        payerEmail,
+        payerName: params.payerName,
+        payerEmail: params.payerEmail,
       },
     });
 
     const feeBps =
       this.configService.get<number>('payments.platformFeeBps') ?? 0;
     const applicationFeeAmount =
-      feeBps > 0 ? Math.floor((dto.amountCents * feeBps) / 10_000) : 0;
+      feeBps > 0 ? Math.floor((params.amountCents * feeBps) / 10_000) : 0;
 
     try {
       const paymentIntent = await this.stripeConnect.createPaymentIntent({
-        stripeAccountId: context.stripeAccountId,
-        amountCents: dto.amountCents,
+        stripeAccountId: params.stripeAccountId,
+        amountCents: params.amountCents,
         applicationFeeAmount,
-        receiptEmail: payerEmail ?? undefined,
-        description: `${context.fund.name} — ${context.church.name}`,
+        receiptEmail: params.payerEmail ?? undefined,
+        description: `${params.fundName} — ${params.churchName}`,
+        paymentMethodTypes,
         metadata: {
           minhachurch_donation_id: donation.id,
-          minhachurch_church_id: context.church.id,
-          minhachurch_fund_id: context.fund.id,
-          minhachurch_fund_slug: context.fund.slug,
+          minhachurch_church_id: params.churchId,
+          minhachurch_fund_id: params.fundId,
+          minhachurch_fund_slug: params.fundSlug,
+          ...params.metadataExtra,
         },
       });
 
@@ -424,9 +733,9 @@ export class PaymentsService {
       return {
         donationId: donation.id,
         clientSecret: paymentIntent.client_secret,
-        stripeAccountId: context.stripeAccountId,
-        publishableKey,
-        amountCents: dto.amountCents,
+        stripeAccountId: params.stripeAccountId,
+        publishableKey: params.publishableKey,
+        amountCents: params.amountCents,
         currency: 'brl',
       };
     } catch (error) {
@@ -640,7 +949,7 @@ export class PaymentsService {
   ): Promise<void> {
     const donationId = paymentIntent.metadata?.minhachurch_donation_id;
     const status =
-      statusOverride ?? mapPaymentIntentStatus(paymentIntent.status);
+      statusOverride ?? resolveDonationStatusFromPaymentIntent(paymentIntent);
 
     if (donationId) {
       const updated = await this.prisma.givingDonation.updateMany({
@@ -666,6 +975,137 @@ export class PaymentsService {
     });
   }
 
+  private async requireActiveMember(churchId: string, userId: string) {
+    const member = await this.prisma.member.findFirst({
+      where: { churchId, userId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+        user: { select: { email: true } },
+      },
+    });
+
+    if (!member) {
+      throw new ForbiddenException(
+        'É necessário ter um cadastro pastoral vinculado para contribuir por aqui.',
+      );
+    }
+
+    if (member.status !== MemberStatus.active) {
+      throw new ForbiddenException(
+        'Somente membros ativos podem contribuir por Dízimos e ofertas.',
+      );
+    }
+
+    return {
+      id: member.id,
+      name: member.name,
+      email: member.email,
+      userEmail: member.user?.email ?? null,
+    };
+  }
+
+  private async resolveMemberGivingContext(
+    churchId: string,
+    fundId: string,
+  ): Promise<{
+    church: { id: string; name: string; slug: string };
+    fund: {
+      id: string;
+      name: string;
+      slug: string;
+      description: string | null;
+      allowPix: boolean;
+      allowCard: boolean;
+      allowBoleto: boolean;
+    };
+    stripeAccountId: string;
+    accountCapabilities: {
+      pixStatus: ConnectCapabilityStatus;
+      cardStatus: ConnectCapabilityStatus;
+      boletoStatus: ConnectCapabilityStatus;
+    };
+  }> {
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        subscriptionStatus: true,
+        trialEndsAt: true,
+        pastDueSince: true,
+        paymentAccount: {
+          select: {
+            stripeAccountId: true,
+            chargesEnabled: true,
+            pixStatus: true,
+            cardStatus: true,
+            boletoStatus: true,
+          },
+        },
+      },
+    });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    if (!this.subscriptionPolicy.isPublicGivingEntitled(church)) {
+      throw new ForbiddenException(
+        'Os recebimentos desta igreja estão temporariamente indisponíveis.',
+      );
+    }
+
+    if (
+      !church.paymentAccount?.stripeAccountId ||
+      !church.paymentAccount.chargesEnabled
+    ) {
+      throw new BadRequestException(
+        'Esta igreja ainda não está recebendo contribuições online.',
+      );
+    }
+
+    const fund = await this.prisma.givingFund.findFirst({
+      where: {
+        id: fundId,
+        churchId: church.id,
+        isActive: true,
+        audience: GivingFundAudience.members,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        allowPix: true,
+        allowCard: true,
+        allowBoleto: true,
+      },
+    });
+
+    if (!fund) {
+      throw new NotFoundException('Fundo de contribuição não encontrado.');
+    }
+
+    return {
+      church: {
+        id: church.id,
+        name: church.name,
+        slug: church.slug,
+      },
+      fund,
+      stripeAccountId: church.paymentAccount.stripeAccountId,
+      accountCapabilities: {
+        pixStatus: church.paymentAccount.pixStatus,
+        cardStatus: church.paymentAccount.cardStatus,
+        boletoStatus: church.paymentAccount.boletoStatus,
+      },
+    };
+  }
+
   private async resolvePublicGivingContext(
     churchSlug: string,
     fundSlug: string,
@@ -676,8 +1116,16 @@ export class PaymentsService {
       name: string;
       slug: string;
       description: string | null;
+      allowPix: boolean;
+      allowCard: boolean;
+      allowBoleto: boolean;
     };
     stripeAccountId: string;
+    accountCapabilities: {
+      pixStatus: ConnectCapabilityStatus;
+      cardStatus: ConnectCapabilityStatus;
+      boletoStatus: ConnectCapabilityStatus;
+    };
   }> {
     const church = await this.prisma.church.findUnique({
       where: { slug: churchSlug },
@@ -692,6 +1140,9 @@ export class PaymentsService {
           select: {
             stripeAccountId: true,
             chargesEnabled: true,
+            pixStatus: true,
+            cardStatus: true,
+            boletoStatus: true,
           },
         },
       },
@@ -723,12 +1174,16 @@ export class PaymentsService {
         churchId: church.id,
         slug: fundSlug,
         isActive: true,
+        audience: GivingFundAudience.public,
       },
       select: {
         id: true,
         name: true,
         slug: true,
         description: true,
+        allowPix: true,
+        allowCard: true,
+        allowBoleto: true,
       },
     });
 
@@ -744,6 +1199,11 @@ export class PaymentsService {
       },
       fund,
       stripeAccountId: church.paymentAccount.stripeAccountId,
+      accountCapabilities: {
+        pixStatus: church.paymentAccount.pixStatus,
+        cardStatus: church.paymentAccount.cardStatus,
+        boletoStatus: church.paymentAccount.boletoStatus,
+      },
     };
   }
 
@@ -998,6 +1458,10 @@ export class PaymentsService {
     name: string;
     slug: string;
     description: string | null;
+    audience: GivingFundAudience;
+    allowPix: boolean;
+    allowCard: boolean;
+    allowBoleto: boolean;
     isActive: boolean;
     sortOrder: number;
     createdAt: Date;
@@ -1009,12 +1473,97 @@ export class PaymentsService {
       name: fund.name,
       slug: fund.slug,
       description: fund.description,
+      audience: fund.audience,
+      paymentMethods: {
+        pix: fund.allowPix,
+        card: fund.allowCard,
+        boleto: fund.allowBoleto,
+      },
       isActive: fund.isActive,
       canDelete: (fund._count?.donations ?? 0) === 0,
       sortOrder: fund.sortOrder,
       createdAt: fund.createdAt.toISOString(),
       updatedAt: fund.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * Persiste só o que o criador pediu e que a conta Connect realmente cobre.
+   * Exige pelo menos um meio ativo selecionado.
+   */
+  private normalizeFundPaymentMethods(params: {
+    allowPix: boolean;
+    allowCard: boolean;
+    allowBoleto: boolean;
+    account: {
+      pixStatus: ConnectCapabilityStatus;
+      cardStatus: ConnectCapabilityStatus;
+      boletoStatus: ConnectCapabilityStatus;
+    } | null;
+  }): { pix: boolean; card: boolean; boleto: boolean } {
+    if (!params.allowPix && !params.allowCard && !params.allowBoleto) {
+      throw new BadRequestException(
+        'Selecione pelo menos um meio de pagamento para o fundo.',
+      );
+    }
+
+    const pixActive = params.account?.pixStatus === ConnectCapabilityStatus.active;
+    const cardActive =
+      params.account?.cardStatus === ConnectCapabilityStatus.active;
+    const boletoActive =
+      params.account?.boletoStatus === ConnectCapabilityStatus.active;
+
+    if (!pixActive && !cardActive && !boletoActive) {
+      throw new BadRequestException(
+        'Nenhum meio de pagamento está ativo na conta de recebimentos. Conclua a ativação em Configurações → Recebimentos.',
+      );
+    }
+
+    const pix = Boolean(params.allowPix && pixActive);
+    const card = Boolean(params.allowCard && cardActive);
+    const boleto = Boolean(params.allowBoleto && boletoActive);
+
+    if (!pix && !card && !boleto) {
+      throw new BadRequestException(
+        'Os meios selecionados ainda não estão ativos na conta de recebimentos. Escolha um meio disponível.',
+      );
+    }
+
+    return { pix, card, boleto };
+  }
+
+  private resolveCheckoutPaymentMethodTypes(params: {
+    allowPix: boolean;
+    allowCard: boolean;
+    allowBoleto: boolean;
+    account: {
+      pixStatus: ConnectCapabilityStatus;
+      cardStatus: ConnectCapabilityStatus;
+      boletoStatus: ConnectCapabilityStatus;
+    };
+  }): Array<'pix' | 'card' | 'boleto'> {
+    const types: Array<'pix' | 'card' | 'boleto'> = [];
+
+    if (
+      params.allowPix &&
+      params.account.pixStatus === ConnectCapabilityStatus.active
+    ) {
+      types.push('pix');
+    }
+    if (
+      params.allowCard &&
+      params.account.cardStatus === ConnectCapabilityStatus.active
+    ) {
+      types.push('card');
+    }
+    if (
+      params.allowBoleto &&
+      params.account.boletoStatus === ConnectCapabilityStatus.active
+    ) {
+      types.push('boleto');
+    }
+
+    return types;
   }
 
   private async allocateFundSlug(
@@ -1046,6 +1595,23 @@ export class PaymentsService {
   }
 }
 
+function resolveDonationStatusFromPaymentIntent(
+  paymentIntent: Stripe.PaymentIntent,
+): GivingDonationStatus {
+  const nextActionType = paymentIntent.next_action?.type;
+  // Boleto/Pix com instruções geradas: aguardando pagamento do pagador.
+  if (
+    paymentIntent.status === 'requires_action' &&
+    (nextActionType === 'boleto_display_details' ||
+      nextActionType === 'display_bank_transfer_instructions' ||
+      nextActionType === 'pix_display_qr_code')
+  ) {
+    return GivingDonationStatus.processing;
+  }
+
+  return mapPaymentIntentStatus(paymentIntent.status);
+}
+
 function mapPaymentIntentStatus(
   status: Stripe.PaymentIntent.Status,
 ): GivingDonationStatus {
@@ -1062,7 +1628,27 @@ function mapPaymentIntentStatus(
     case 'requires_capture':
       return GivingDonationStatus.pending;
     default:
-      return GivingDonationStatus.failed;
+      return GivingDonationStatus.pending;
+  }
+}
+
+function mapDonationOutcome(
+  status: GivingDonationStatus | string,
+): GivingDonationOutcome {
+  switch (status) {
+    case GivingDonationStatus.succeeded:
+    case 'succeeded':
+      return 'succeeded';
+    case GivingDonationStatus.processing:
+    case 'processing':
+      return 'processing';
+    case GivingDonationStatus.failed:
+    case GivingDonationStatus.canceled:
+    case 'failed':
+    case 'canceled':
+      return 'failed';
+    default:
+      return 'incomplete';
   }
 }
 

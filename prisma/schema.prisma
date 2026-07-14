@@ -24,6 +24,7 @@ enum ChurchPermission {
   memberships_manage
   communication_manage
   counseling_receive
+  receivables_manage
 }
 
 enum CareRequestType {
@@ -269,6 +270,11 @@ enum GivingDonationStatus {
   refunded
 }
 
+enum GivingFundAudience {
+  members
+  public
+}
+
 /// Perfil fiscal/legal da igreja (identidade para NF, contrato e prefill do Connect).
 model ChurchFiscalProfile {
   id                  String             @id @default(cuid())
@@ -326,21 +332,26 @@ model ConnectWebhookEvent {
 
 /// Categoria de cobrança da igreja (dízimo, oferta, campanha, etc.).
 model GivingFund {
-  id          String   @id @default(cuid())
-  churchId    String   @map("church_id")
+  id          String             @id @default(cuid())
+  churchId    String             @map("church_id")
   name        String
   slug        String
   description String?
-  isActive    Boolean  @default(true) @map("is_active")
-  sortOrder   Int      @default(0) @map("sort_order")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  audience    GivingFundAudience @default(members)
+  allowPix    Boolean            @default(true) @map("allow_pix")
+  allowCard   Boolean            @default(true) @map("allow_card")
+  allowBoleto Boolean            @default(true) @map("allow_boleto")
+  isActive    Boolean            @default(true) @map("is_active")
+  sortOrder   Int                @default(0) @map("sort_order")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
 
   church    Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
   donations GivingDonation[]
 
   @@unique([churchId, slug])
   @@index([churchId, isActive])
+  @@index([churchId, audience, isActive])
   @@map("giving_funds")
 }
 
@@ -350,6 +361,7 @@ model GivingDonation {
   id                    String               @id @default(cuid())
   churchId              String               @map("church_id")
   fundId                String               @map("fund_id")
+  donorMemberId         String?              @map("donor_member_id")
   stripePaymentIntentId String?              @unique @map("stripe_payment_intent_id")
   amountCents           Int                  @map("amount_cents")
   currency              String               @default("brl")
@@ -359,11 +371,13 @@ model GivingDonation {
   createdAt             DateTime             @default(now()) @map("created_at")
   updatedAt             DateTime             @updatedAt @map("updated_at")
 
-  church Church     @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  fund   GivingFund @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  church      Church     @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  fund        GivingFund @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  donorMember Member?    @relation(fields: [donorMemberId], references: [id], onDelete: SetNull)
 
   @@index([churchId, createdAt])
   @@index([fundId])
+  @@index([donorMemberId])
   @@map("giving_donations")
 }
 
@@ -482,6 +496,7 @@ model Member {
   careRequestsReceived CareRequest[] @relation("CareRequestRecipient")
   prayerRequests       PrayerRequest[]
   prayerReactions      PrayerRequestPrayer[]
+  givingDonations      GivingDonation[]
 
   @@unique([churchId, email])
   @@unique([churchId, cpf])

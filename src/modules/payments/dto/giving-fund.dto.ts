@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
@@ -7,6 +8,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { GivingFundAudience } from '@prisma/client';
 
 export class CreateGivingFundDto {
   @IsString()
@@ -18,6 +20,18 @@ export class CreateGivingFundDto {
   @IsString()
   @MaxLength(240)
   description?: string;
+
+  @IsEnum(GivingFundAudience)
+  audience!: GivingFundAudience;
+
+  @IsBoolean()
+  allowPix!: boolean;
+
+  @IsBoolean()
+  allowCard!: boolean;
+
+  @IsBoolean()
+  allowBoleto!: boolean;
 
   @IsOptional()
   @IsInt()
@@ -40,6 +54,18 @@ export class UpdateGivingFundDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowPix?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowCard?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowBoleto?: boolean;
 
   @IsOptional()
   @IsInt()

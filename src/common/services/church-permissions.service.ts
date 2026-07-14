@@ -234,7 +234,12 @@ export class ChurchPermissionsService {
       schedules: {
         access: granted.has(ChurchPermission.schedules_access),
       },
-      finances: { access: granted.has(ChurchPermission.finances_access) },
+      finances: {
+        access:
+          granted.has(ChurchPermission.finances_access) ||
+          granted.has(ChurchPermission.receivables_manage),
+        manage: granted.has(ChurchPermission.receivables_manage),
+      },
       communication: {
         access:
           granted.has(ChurchPermission.communication_access) ||
@@ -536,7 +541,7 @@ export class ChurchPermissionsService {
       },
       activities: { access: false, createChurchWide: false, ministryIds: [] },
       schedules: { access: false },
-      finances: { access: false },
+      finances: { access: false, manage: false },
       communication: { access: false, manage: false },
       reports: { access: false },
       settings: { access: false },

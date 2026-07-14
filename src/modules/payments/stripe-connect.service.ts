@@ -250,13 +250,21 @@ export class StripeConnectService {
     metadata: Record<string, string>;
     receiptEmail?: string;
     description?: string;
+    /** Stripe payment_method_types to allow (pix, card, boleto). */
+    paymentMethodTypes: Array<'pix' | 'card' | 'boleto'>;
   }): Promise<Stripe.PaymentIntent> {
     this.assertConfigured();
+
+    if (params.paymentMethodTypes.length === 0) {
+      throw new BadRequestException(
+        'Nenhum meio de pagamento disponível para este fundo.',
+      );
+    }
 
     const createParams: Stripe.PaymentIntentCreateParams = {
       amount: params.amountCents,
       currency: params.currency ?? 'brl',
-      automatic_payment_methods: { enabled: true },
+      payment_method_types: params.paymentMethodTypes,
       metadata: params.metadata,
       description: params.description,
       receipt_email: params.receiptEmail,
@@ -272,6 +280,19 @@ export class StripeConnectService {
     return this.stripe.paymentIntents.create(createParams, {
       stripeAccount: params.stripeAccountId,
     });
+  }
+
+  async retrievePaymentIntent(
+    paymentIntentId: string,
+    stripeAccountId: string,
+  ): Promise<Stripe.PaymentIntent> {
+    this.assertConfigured();
+
+    return this.stripe.paymentIntents.retrieve(
+      paymentIntentId,
+      {},
+      { stripeAccount: stripeAccountId },
+    );
   }
 
   getPublishableKey(): string {

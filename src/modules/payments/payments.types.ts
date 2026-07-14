@@ -2,6 +2,7 @@ import type {
   ChurchDocumentType,
   ConnectCapabilityStatus,
   ConnectOnboardingStatus,
+  GivingFundAudience,
 } from '@prisma/client';
 
 export interface FiscalProfileResult {
@@ -43,11 +44,19 @@ export interface ConnectStatusResult extends ConnectAccountState {
   lastSyncedAt: string | null;
 }
 
+export interface GivingFundPaymentMethods {
+  pix: boolean;
+  card: boolean;
+  boleto: boolean;
+}
+
 export interface GivingFundResult {
   id: string;
   name: string;
   slug: string;
   description: string | null;
+  audience: GivingFundAudience;
+  paymentMethods: GivingFundPaymentMethods;
   isActive: boolean;
   /** false quando já existem doações — exclusão bloqueada, só desativar. */
   canDelete: boolean;
@@ -56,12 +65,33 @@ export interface GivingFundResult {
   updatedAt: string;
 }
 
+export interface MemberGivingFundResult {
+  id: string;
+  name: string;
+  description: string | null;
+  paymentMethods: GivingFundPaymentMethods;
+  currency: 'brl';
+  minAmountCents: number;
+  maxAmountCents: number;
+}
+
+export interface PaymentsSummaryResult {
+  canReceivePayments: boolean;
+  onboardingStatus: ConnectOnboardingStatus | 'none';
+  activeFundsCount: number;
+  memberFundsCount: number;
+  publicFundsCount: number;
+  succeededDonationsCount: number;
+  succeededAmountCentsLast30Days: number;
+}
+
 export interface PublicGivingFundResult {
   churchName: string;
   churchSlug: string;
   fundName: string;
   fundSlug: string;
   fundDescription: string | null;
+  paymentMethods: GivingFundPaymentMethods;
   currency: 'brl';
   minAmountCents: number;
   maxAmountCents: number;
@@ -76,6 +106,25 @@ export interface GivingCheckoutResult {
   currency: 'brl';
 }
 
+/**
+ * Estado exibido após checkout — derivado do status real da doação
+ * (sincronizado com o PaymentIntent do Stripe, não do redirect_status).
+ */
+export type GivingDonationOutcome =
+  | 'succeeded'
+  | 'processing'
+  | 'incomplete'
+  | 'failed';
+
+export interface GivingDonationReceiptResult {
+  donationId: string;
+  status: string;
+  outcome: GivingDonationOutcome;
+  amountCents: number;
+  currency: string;
+  fundName: string;
+}
+
 export interface GivingDonationResult {
   id: string;
   fundId: string;
@@ -85,6 +134,8 @@ export interface GivingDonationResult {
   status: string;
   payerName: string | null;
   payerEmail: string | null;
+  donorMemberId: string | null;
+  donorMemberName: string | null;
   createdAt: string;
 }
 

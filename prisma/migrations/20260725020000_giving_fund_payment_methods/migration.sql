@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "giving_funds" ADD COLUMN IF NOT EXISTS "allow_pix" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "giving_funds" ADD COLUMN IF NOT EXISTS "allow_card" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "giving_funds" ADD COLUMN IF NOT EXISTS "allow_boleto" BOOLEAN NOT NULL DEFAULT true;
