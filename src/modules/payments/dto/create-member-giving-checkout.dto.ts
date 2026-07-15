@@ -1,4 +1,4 @@
-import { IsInt, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 import {
   GIVING_MAX_AMOUNT_CENTS,
@@ -11,4 +11,9 @@ export class CreateMemberGivingCheckoutDto {
   @Min(GIVING_MIN_AMOUNT_CENTS)
   @Max(GIVING_MAX_AMOUNT_CENTS)
   amountCents!: number;
+
+  /** Contribuição mensal (cartão). Default: false. */
+  @IsOptional()
+  @IsBoolean()
+  recurring?: boolean;
 }

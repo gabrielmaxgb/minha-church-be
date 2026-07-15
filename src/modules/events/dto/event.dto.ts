@@ -3,9 +3,12 @@ import {
   IsBoolean,
   IsDateString,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateIf,
   ValidateNested,
@@ -86,6 +89,21 @@ export class CreateChurchEventDto {
   @IsOptional()
   @IsBoolean()
   visibleToChurch?: boolean;
+
+  /** Abre inscrição para membros (gratuita se priceCents for omitido/null). */
+  @IsOptional()
+  @IsBoolean()
+  registrationOpen?: boolean;
+
+  /**
+   * Preço da inscrição em centavos.
+   * Omitir/null com registrationOpen = gratuita; ≥ 500 = paga (abre inscrição).
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(500)
+  @Max(10_000_000)
+  priceCents?: number | null;
 }
 
 export class UpdateChurchEventDto {
@@ -142,6 +160,16 @@ export class UpdateChurchEventDto {
   @IsOptional()
   @IsBoolean()
   visibleToChurch?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  registrationOpen?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(500)
+  @Max(10_000_000)
+  priceCents?: number | null;
 
   /**
    * Atualiza a regra de recorrência (estilo Google Agenda).

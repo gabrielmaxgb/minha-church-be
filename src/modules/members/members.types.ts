@@ -70,6 +70,11 @@ export interface MemberResponse {
   membershipDate: string | null;
   userId: string | null;
   ministries: MemberMinistryLinkResponse[];
+  /**
+   * Contribuições mensais abertas (active/past_due/incomplete) vinculadas
+   * a este membro. Preenchido em findOne; pode ser omitido em listagens.
+   */
+  activeGivingSubscriptionsCount?: number;
   createdAt: string;
   updatedAt: string;
 }

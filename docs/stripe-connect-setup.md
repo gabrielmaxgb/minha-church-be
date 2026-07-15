@@ -45,36 +45,36 @@ com o Stripe que são totalmente separados e não se misturam:**
 | Subsistema | Quem a igreja é no Stripe | Para quê | Status |
 |---|---|---|---|
 | **Billing (assinatura do SaaS)** | um **Customer** da plataforma | a igreja paga o Minha Church | **Já existe. NÃO MEXER.** |
-| **Recebimentos (Connect)** | uma **Connected Account (Express)** | a igreja **recebe** dízimos, doações e inscrições de eventos dos membros | **É o que estamos configurando agora.** |
+| **Recebimentos (Connect)** | uma **Connected Account (Express)** | a igreja **recebe** dízimos e doações dos membros | **Giving + onboarding já no código; este guia configura o Dashboard.** |
 
 **Decisões de arquitetura que explicam a configuração:**
 - **A igreja é a _merchant of record_ (MoR).** O dinheiro cai na conta conectada da
   própria igreja; a responsabilidade fiscal/NF e disputas são dela. Por isso usamos
   contas **Express** (o Stripe hospeda o onboarding e faz o KYC/verificação segundo
   as regras do Brasil).
-- **A plataforma (Minha Church) origina as cobranças** e, nas próximas fases, usará
-  **destination charge + `on_behalf_of` a igreja** + `application_fee_amount` (taxa
-  da plataforma). Por isso a conta conectada precisa da capability **`transfers`**
-  além dos métodos de pagamento.
-- **Fase atual (Fase 1): só onboarding + sincronização de estado. NENHUM dinheiro é
-  movimentado.** O objetivo é a igreja conseguir criar a conta conectada e concluir
-  a verificação até ficar "apta a receber" (`charges_enabled`).
+- **Cobrança vigente: direct charge** na conta conectada (`Stripe-Account: acct_...`)
+  com `application_fee_amount` opcional. Ver `payments-decisions.md` §3–4. A capability
+  **`transfers`** continua sendo solicitada; Pix **não** é pedida via API em Express BR
+  (a igreja liga no Express Dashboard ou via default da plataforma).
+- **Giving já implementado:** fundos, checkout (membro + público `/doar`), webhooks de
+  `payment_intent.*` e painel de contribuições. O onboarding continua dependendo do
+  webhook Connect para sincronizar `charges_enabled`.
 - **O estado da conta é lido do nosso banco**, sincronizado por **webhook**. Por isso
   o webhook do Connect (passo 2.5) é essencial — sem ele, o app não sabe quando a
   conta foi aprovada.
 - **Taxa da plataforma = 0% no lançamento** (`PAYMENTS_PLATFORM_FEE_BPS=0`). O
   mecanismo já está pronto e liga depois sem migração.
 
-Fluxo de fundos (referência das próximas fases; hoje ainda não acontece):
+Fluxo de fundos (vigente — direct charge):
 
 ```
 Membro paga (Pix/cartão/boleto)
         │
         ▼
-PaymentIntent criado NA PLATAFORMA (on_behalf_of = igreja)
+PaymentIntent criado NA CONTA CONECTADA (igreja = MoR)
         │
         ├─ application_fee_amount ──► Conta Minha Church (taxa; 0 no lançamento)
-        └─ transfer_data.destination ─► Conta conectada da IGREJA (recebe)
+        └─ restante ──────────────────► Saldo da conta Express da igreja
 ```
 
 ---
@@ -86,13 +86,16 @@ depende de o Stripe estar configurado exatamente assim:
 
 - **API que o backend chama:** `accounts.create` (tipo `express`, país `BR`),
   `accountLinks.create` (tipo `account_onboarding`), `accounts.retrieve`.
-- **Capabilities solicitadas na criação da conta** (controladas pela env
-  `PAYMENTS_ENABLED_METHODS=pix,card,boleto`): `card_payments`, `pix_payments`,
-  `boleto_payments` e sempre `transfers`.
+- **Capabilities solicitadas na criação da conta** (env
+  `PAYMENTS_ENABLED_METHODS=pix,card,boleto`): `card_payments`, `boleto_payments`
+  e sempre `transfers`. `pix` na env representa intenção de produto, mas **não** é
+  pedida via API (limitação Express BR — ver `payments-decisions.md` §2).
 - **Webhook DEDICADO do Connect** que o backend expõe:
   `POST /api/v1/payments/connect/webhook`
   - Escuta eventos **de contas conectadas** (não da conta da plataforma).
-  - Eventos mínimos: **`account.updated`** e **`capability.updated`**.
+  - Eventos mínimos: **`account.updated`**, **`capability.updated`**, e os de
+    giving (`payment_intent.succeeded`, `payment_intent.payment_failed`,
+    `payment_intent.canceled`, mais estornos quando habilitados).
   - Precisa de um **signing secret PRÓPRIO** → env `STRIPE_CONNECT_WEBHOOK_SECRET`
     (é **diferente** do `STRIPE_WEBHOOK_SECRET` usado pelo billing).
 - **Envs relevantes** (arquivo `minha-church-be/.env`):
@@ -128,7 +131,7 @@ depende de o Stripe estar configurado exatamente assim:
 - **O que fazer:** ativar o Connect e preencher o **Platform profile** (o que a
   plataforma faz, site/URL, setor). Setor sugerido: software / SaaS para
   organizações religiosas. Descrição: "Plataforma de gestão para igrejas que
-  permite que cada igreja receba dízimos, doações e inscrições em eventos."
+  permite que cada igreja receba dízimos e doações."
 - **Por quê:** sem o Connect ativado, `accounts.create` falha. O perfil é
   obrigatório para plataformas e o Stripe usa isso para avaliar risco.
 

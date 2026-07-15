@@ -99,11 +99,28 @@ export interface PublicGivingFundResult {
 
 export interface GivingCheckoutResult {
   donationId: string;
+  subscriptionId?: string | null;
+  mode: 'payment' | 'subscription';
   clientSecret: string;
   stripeAccountId: string;
   publishableKey: string;
   amountCents: number;
   currency: 'brl';
+}
+
+export interface GivingSubscriptionResult {
+  id: string;
+  fundId: string;
+  fundName: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  payerName: string | null;
+  payerEmail: string | null;
+  donorMemberId: string | null;
+  donorMemberName: string | null;
+  canceledAt: string | null;
+  createdAt: string;
 }
 
 /**
@@ -137,6 +154,62 @@ export interface GivingDonationResult {
   donorMemberId: string | null;
   donorMemberName: string | null;
   createdAt: string;
+}
+
+export interface GivingDonationListResult {
+  items: GivingDonationResult[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface ListGivingDonationsOptions {
+  fundId?: string;
+  status?: string;
+  memberId?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface FinanceEntryResult {
+  id: string;
+  type: string;
+  amountCents: number;
+  currency: string;
+  occurredOn: string;
+  category: string;
+  fundId: string | null;
+  fundName: string | null;
+  method: string;
+  note: string | null;
+  createdByUserId: string | null;
+  createdByUserName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FinanceEntryListResult {
+  items: FinanceEntryResult[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface ListFinanceEntriesOptions {
+  type?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface FinanceEntriesSummaryResult {
+  incomeCents: number;
+  expenseCents: number;
+  balanceCents: number;
+  onlineDonationCents: number;
 }
 
 /** Campos que o Stripe Express ainda devolve após o onboarding (subset). */

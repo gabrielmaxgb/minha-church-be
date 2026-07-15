@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Headers,
+  Header,
   Patch,
   Post,
   Put,
@@ -31,6 +32,10 @@ import {
   CreateGivingFundDto,
   UpdateGivingFundDto,
 } from './dto/giving-fund.dto';
+import {
+  CreateFinanceEntryDto,
+  UpdateFinanceEntryDto,
+} from './dto/finance-entry.dto';
 import { PaymentsService } from './payments.service';
 
 @Controller('churches/:churchId/payments')
@@ -119,11 +124,133 @@ export class PaymentsController {
     return this.paymentsService.listMyGivingDonations(churchId, user.sub);
   }
 
-  @Get('donations')
+  @Get('subscriptions/mine')
+  listMyGivingSubscriptions(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.listMyGivingSubscriptions(churchId, user.sub);
+  }
+
+  @Get('subscriptions')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  listGivingSubscriptions(
+    @Param('churchId') churchId: string,
+    @Query('fundId') fundId?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.paymentsService.listGivingSubscriptions(churchId, {
+      fundId,
+      status,
+    });
+  }
+
+  @Post('subscriptions/:subscriptionId/cancel')
+  cancelMyGivingSubscription(
+    @Param('churchId') churchId: string,
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.cancelGivingSubscription(
+      churchId,
+      subscriptionId,
+      user.sub,
+    );
+  }
+
+  @Post('subscriptions/:subscriptionId/cancel-as-treasurer')
   @UseGuards(PermissionsGuard)
   @RequirePermission(ChurchPermission.receivables_manage)
-  listGivingDonations(@Param('churchId') churchId: string) {
-    return this.paymentsService.listGivingDonations(churchId);
+  cancelGivingSubscriptionAsTreasurer(
+    @Param('churchId') churchId: string,
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.cancelGivingSubscription(
+      churchId,
+      subscriptionId,
+      user.sub,
+      { asTreasurer: true },
+    );
+  }
+
+  @Post('events/:eventId/ticket-checkout')
+  createEventTicketCheckout(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.createEventTicketCheckout(
+      churchId,
+      eventId,
+      user.sub,
+    );
+  }
+
+  @Get('donations')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  listGivingDonations(
+    @Param('churchId') churchId: string,
+    @Query('fundId') fundId?: string,
+    @Query('status') status?: string,
+    @Query('memberId') memberId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.paymentsService.listGivingDonations(churchId, {
+      fundId,
+      status,
+      memberId,
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Get('donations/export')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="contribuicoes.csv"')
+  exportGivingDonations(
+    @Param('churchId') churchId: string,
+    @Query('fundId') fundId?: string,
+    @Query('status') status?: string,
+    @Query('memberId') memberId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.paymentsService.exportGivingDonationsCsv(churchId, {
+      fundId,
+      status,
+      memberId,
+      from,
+      to,
+    });
+  }
+
+  @Post('donations/:donationId/refund')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
+  refundGivingDonation(
+    @Param('churchId') churchId: string,
+    @Param('donationId') donationId: string,
+  ) {
+    return this.paymentsService.refundGivingDonation(churchId, donationId);
   }
 
   @Post('funds')
@@ -170,6 +297,99 @@ export class PaymentsController {
       user.sub,
       dto,
     );
+  }
+
+  @Get('entries/summary')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  getFinanceEntriesSummary(
+    @Param('churchId') churchId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.paymentsService.getFinanceEntriesSummary(churchId, {
+      from,
+      to,
+    });
+  }
+
+  @Get('entries/export')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="lancamentos-manuais.csv"')
+  exportFinanceEntries(
+    @Param('churchId') churchId: string,
+    @Query('type') type?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.paymentsService.exportFinanceEntriesCsv(churchId, {
+      type,
+      from,
+      to,
+    });
+  }
+
+  @Get('entries')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  listFinanceEntries(
+    @Param('churchId') churchId: string,
+    @Query('type') type?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.paymentsService.listFinanceEntries(churchId, {
+      type,
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Post('entries')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
+  createFinanceEntry(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateFinanceEntryDto,
+  ) {
+    return this.paymentsService.createFinanceEntry(churchId, user.sub, dto);
+  }
+
+  @Patch('entries/:entryId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
+  updateFinanceEntry(
+    @Param('churchId') churchId: string,
+    @Param('entryId') entryId: string,
+    @Body() dto: UpdateFinanceEntryDto,
+  ) {
+    return this.paymentsService.updateFinanceEntry(churchId, entryId, dto);
+  }
+
+  @Delete('entries/:entryId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
+  deleteFinanceEntry(
+    @Param('churchId') churchId: string,
+    @Param('entryId') entryId: string,
+  ) {
+    return this.paymentsService.deleteFinanceEntry(churchId, entryId);
   }
 }
 

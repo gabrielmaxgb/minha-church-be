@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsInt,
   IsOptional,
@@ -30,4 +31,9 @@ export class CreateGivingCheckoutDto {
   @IsEmail()
   @MaxLength(160)
   payerEmail?: string;
+
+  /** Contribuição mensal (cartão). Default: false. */
+  @IsOptional()
+  @IsBoolean()
+  recurring?: boolean;
 }

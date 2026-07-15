@@ -41,6 +41,7 @@ function isAllowedWriteWhenLocked(method: string, path: string): boolean {
   if (
     method === 'POST' &&
     (/\/churches\/[^/]+\/care-requests$/.test(path) ||
+      /\/churches\/[^/]+\/care-requests\/mine\/ack-viewed$/.test(path) ||
       /\/churches\/[^/]+\/care-requests\/[^/]+\/view$/.test(path))
   ) {
     return true;

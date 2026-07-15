@@ -126,6 +126,44 @@ export class CareRequestsService {
     });
   }
 
+  async viewedMineCount(churchId: string, userId: string): Promise<number> {
+    const requester = await this.prisma.member.findFirst({
+      where: { churchId, userId, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!requester) {
+      return 0;
+    }
+
+    return this.prisma.careRequest.count({
+      where: {
+        churchId,
+        requesterMemberId: requester.id,
+        status: CareRequestStatus.viewed,
+        viewNotificationAckedAt: null,
+      },
+    });
+  }
+
+  async ackViewedMine(churchId: string, userId: string): Promise<{ count: number }> {
+    const requester = await this.requireLinkedMember(churchId, userId);
+
+    await this.prisma.careRequest.updateMany({
+      where: {
+        churchId,
+        requesterMemberId: requester.id,
+        status: CareRequestStatus.viewed,
+        viewNotificationAckedAt: null,
+      },
+      data: {
+        viewNotificationAckedAt: new Date(),
+      },
+    });
+
+    return { count: 0 };
+  }
+
   async create(
     churchId: string,
     userId: string,
@@ -221,6 +259,7 @@ export class CareRequestsService {
       data: {
         status: CareRequestStatus.viewed,
         viewedAt: new Date(),
+        viewNotificationAckedAt: null,
       },
       include: {
         requester: { select: memberSelect },
@@ -414,4 +453,5 @@ export class CareRequestsService {
       appUrl,
     });
   }
+
 }

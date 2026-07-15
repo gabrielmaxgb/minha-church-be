@@ -175,4 +175,44 @@ describe('Payments / Connect (e2e)', () => {
       .send({ id: 'evt_test', type: 'account.updated' })
       .expect(400);
   });
+
+  it('POST donations/:id/refund returns 404 for unknown donation', async () => {
+    const { agent, body } = await login('treasurer@igreja.com.br');
+
+    await agent
+      .post(
+        `/api/v1/churches/${body.church.id}/payments/donations/nonexistent/refund`,
+      )
+      .set('X-Church-Id', body.church.id)
+      .send({})
+      .expect(404);
+  });
+
+  it('GET donations returns paginated list for treasurer', async () => {
+    const { agent, body } = await login('treasurer@igreja.com.br');
+
+    const response = await agent
+      .get(`/api/v1/churches/${body.church.id}/payments/donations`)
+      .set('X-Church-Id', body.church.id)
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      page: 1,
+      limit: 50,
+      total: expect.any(Number),
+      items: expect.any(Array),
+    });
+  });
+
+  it('GET donations/export returns CSV for treasurer', async () => {
+    const { agent, body } = await login('treasurer@igreja.com.br');
+
+    const response = await agent
+      .get(`/api/v1/churches/${body.church.id}/payments/donations/export`)
+      .set('X-Church-Id', body.church.id)
+      .expect(200);
+
+    expect(String(response.headers['content-type'])).toMatch(/text\/csv/i);
+    expect(String(response.text)).toMatch(/Data,Fundo,Valor/i);
+  });
 });

@@ -25,6 +25,7 @@ import { EmailService } from '../../common/services/email.service';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BillingService } from '../billing/billing.service';
+import { PaymentsService } from '../payments/payments.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
@@ -99,6 +100,7 @@ export class MembersService {
     private readonly emailService: EmailService,
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   async findAll(
@@ -164,7 +166,7 @@ export class MembersService {
   async findOne(churchId: string, memberId: string): Promise<MemberResponse> {
     const member = await this.getMemberOrThrow(churchId, memberId);
 
-    return toMemberResponse(member);
+    return this.toMemberResponseWithGiving(churchId, member);
   }
 
   async findMine(userId: string, churchId: string): Promise<MemberResponse> {
@@ -177,7 +179,10 @@ export class MembersService {
       throw new NotFoundException('Cadastro pastoral não encontrado.');
     }
 
-    return toMemberResponse(member as MemberWithMinistries);
+    return this.toMemberResponseWithGiving(
+      churchId,
+      member as MemberWithMinistries,
+    );
   }
 
   async findMyMinistryNotifications(
@@ -884,8 +889,18 @@ export class MembersService {
       await this.notifyExistingUserLinkedToChurch(churchId, account.login);
     }
 
+    if (
+      previousStatus === MemberStatus.active &&
+      nextStatus !== MemberStatus.active
+    ) {
+      await this.paymentsService.cancelOpenGivingSubscriptionsForMember(
+        churchId,
+        memberId,
+      );
+    }
+
     return {
-      ...toMemberResponse(member),
+      ...(await this.toMemberResponseWithGiving(churchId, member)),
       ...(account ? { account } : {}),
     };
   }
@@ -897,6 +912,12 @@ export class MembersService {
       where: { id: memberId },
       data: { deletedAt: new Date() },
     });
+
+    // Após soft-delete: ainda vinculados por donorMemberId — cancela cobranças futuras.
+    await this.paymentsService.cancelOpenGivingSubscriptionsForMember(
+      churchId,
+      memberId,
+    );
 
     await this.syncMemberCount(churchId);
   }
@@ -1108,6 +1129,22 @@ export class MembersService {
         'Sem permissão para gerenciar a equipe deste ministério.',
       );
     }
+  }
+
+  private async toMemberResponseWithGiving(
+    churchId: string,
+    member: MemberWithMinistries,
+  ): Promise<MemberResponse> {
+    const activeGivingSubscriptionsCount =
+      await this.paymentsService.countOpenGivingSubscriptionsForMember(
+        churchId,
+        member.id,
+      );
+
+    return {
+      ...toMemberResponse(member),
+      activeGivingSubscriptionsCount,
+    };
   }
 
   private async getMemberOrThrow(

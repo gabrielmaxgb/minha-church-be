@@ -123,6 +123,7 @@ model User {
   billingTierUpgradeRequestsMade    BillingTierUpgradeRequest[]        @relation("BillingTierUpgradeRequestedBy")
   billingTierUpgradeRequestsResolved BillingTierUpgradeRequest[]       @relation("BillingTierUpgradeResolvedBy")
   billingTierUpgradeStaffNoticeReads BillingTierUpgradeStaffNoticeRead[]
+  financeEntriesCreated            FinanceEntry[] @relation("FinanceEntryCreatedBy")
 
   @@map("users")
 }
@@ -159,10 +160,13 @@ model Church {
   billingTierUpgradeRequests        BillingTierUpgradeRequest[]
   billingTierUpgradeStaffNotices    BillingTierUpgradeStaffNotice[]
 
-  fiscalProfile  ChurchFiscalProfile?
-  paymentAccount ChurchPaymentAccount?
-  givingFunds    GivingFund[]
-  givingDonations GivingDonation[]
+  fiscalProfile        ChurchFiscalProfile?
+  paymentAccount       ChurchPaymentAccount?
+  givingFunds          GivingFund[]
+  givingDonations      GivingDonation[]
+  givingSubscriptions  GivingSubscription[]
+  financeEntries       FinanceEntry[]
+  eventTicketPurchases EventTicketPurchase[]
 
   @@map("churches")
 }
@@ -275,6 +279,32 @@ enum GivingFundAudience {
   public
 }
 
+enum GivingSubscriptionStatus {
+  incomplete
+  active
+  past_due
+  canceled
+}
+
+enum EventTicketStatus {
+  pending
+  succeeded
+  failed
+  canceled
+  refunded
+}
+
+enum FinanceEntryType {
+  income
+  expense
+}
+
+enum FinanceEntryMethod {
+  cash
+  transfer
+  other
+}
+
 /// Perfil fiscal/legal da igreja (identidade para NF, contrato e prefill do Connect).
 model ChurchFiscalProfile {
   id                  String             @id @default(cuid())
@@ -346,13 +376,42 @@ model GivingFund {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  church    Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  donations GivingDonation[]
+  church         Church                @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  donations      GivingDonation[]
+  subscriptions  GivingSubscription[]
+  financeEntries FinanceEntry[]
 
   @@unique([churchId, slug])
   @@index([churchId, isActive])
   @@index([churchId, audience, isActive])
   @@map("giving_funds")
+}
+
+/// Assinatura de contribuição recorrente (Stripe Subscription na conta conectada).
+model GivingSubscription {
+  id                   String                    @id @default(cuid())
+  churchId             String                    @map("church_id")
+  fundId               String                    @map("fund_id")
+  donorMemberId        String?                   @map("donor_member_id")
+  stripeSubscriptionId String                    @unique @map("stripe_subscription_id")
+  stripeCustomerId     String?                   @map("stripe_customer_id")
+  amountCents          Int                       @map("amount_cents")
+  currency             String                    @default("brl")
+  status               GivingSubscriptionStatus  @default(incomplete)
+  payerName            String?                   @map("payer_name")
+  payerEmail           String?                   @map("payer_email")
+  canceledAt           DateTime?                 @map("canceled_at")
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+
+  church      Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  fund        GivingFund       @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  donorMember Member?          @relation(fields: [donorMemberId], references: [id], onDelete: SetNull)
+  donations   GivingDonation[]
+
+  @@index([churchId, status])
+  @@index([donorMemberId])
+  @@map("giving_subscriptions")
 }
 
 /// Doação/contribuição recebida via Stripe Connect (direct charge).
@@ -362,6 +421,7 @@ model GivingDonation {
   churchId              String               @map("church_id")
   fundId                String               @map("fund_id")
   donorMemberId         String?              @map("donor_member_id")
+  subscriptionId        String?              @map("subscription_id")
   stripePaymentIntentId String?              @unique @map("stripe_payment_intent_id")
   amountCents           Int                  @map("amount_cents")
   currency              String               @default("brl")
@@ -371,14 +431,40 @@ model GivingDonation {
   createdAt             DateTime             @default(now()) @map("created_at")
   updatedAt             DateTime             @updatedAt @map("updated_at")
 
-  church      Church     @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  fund        GivingFund @relation(fields: [fundId], references: [id], onDelete: Restrict)
-  donorMember Member?    @relation(fields: [donorMemberId], references: [id], onDelete: SetNull)
+  church       Church              @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  fund         GivingFund          @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  donorMember  Member?             @relation(fields: [donorMemberId], references: [id], onDelete: SetNull)
+  subscription GivingSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   @@index([churchId, createdAt])
   @@index([fundId])
   @@index([donorMemberId])
+  @@index([subscriptionId])
   @@map("giving_donations")
+}
+
+/// Lançamento manual no livro-caixa (entrada ou saída).
+model FinanceEntry {
+  id              String             @id @default(cuid())
+  churchId        String             @map("church_id")
+  type            FinanceEntryType
+  amountCents     Int                @map("amount_cents")
+  currency        String             @default("brl")
+  occurredOn      DateTime           @map("occurred_on") @db.Date
+  category        String
+  fundId          String?            @map("fund_id")
+  method          FinanceEntryMethod @default(other)
+  note            String?
+  createdByUserId String?            @map("created_by_user_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  church    Church      @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  fund      GivingFund? @relation(fields: [fundId], references: [id], onDelete: SetNull)
+  createdBy User?       @relation("FinanceEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, occurredOn])
+  @@map("finance_entries")
 }
 
 model ChurchRole {
@@ -495,8 +581,10 @@ model Member {
   careRequestsSent     CareRequest[] @relation("CareRequestRequester")
   careRequestsReceived CareRequest[] @relation("CareRequestRecipient")
   prayerRequests       PrayerRequest[]
-  prayerReactions      PrayerRequestPrayer[]
-  givingDonations      GivingDonation[]
+  prayerReactions        PrayerRequestPrayer[]
+  givingDonations        GivingDonation[]
+  givingSubscriptions    GivingSubscription[]
+  eventTicketPurchases   EventTicketPurchase[]
 
   @@unique([churchId, email])
   @@unique([churchId, cpf])
@@ -541,23 +629,24 @@ model PrayerRequestPrayer {
 }
 
 model CareRequest {
-  id                 String            @id @default(cuid())
-  churchId           String            @map("church_id")
-  type               CareRequestType
-  requesterMemberId  String            @map("requester_member_id")
-  recipientMemberId  String            @map("recipient_member_id")
-  message            String?
-  status             CareRequestStatus @default(pending)
-  viewedAt           DateTime?         @map("viewed_at")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
+  id                      String            @id @default(cuid())
+  churchId                String            @map("church_id")
+  type                    CareRequestType
+  requesterMemberId       String            @map("requester_member_id")
+  recipientMemberId       String            @map("recipient_member_id")
+  message                 String?
+  status                  CareRequestStatus @default(pending)
+  viewedAt                DateTime?         @map("viewed_at")
+  viewNotificationAckedAt DateTime?         @map("view_notification_acked_at")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
 
   church    Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
   requester Member @relation("CareRequestRequester", fields: [requesterMemberId], references: [id], onDelete: Cascade)
   recipient Member @relation("CareRequestRecipient", fields: [recipientMemberId], references: [id], onDelete: Cascade)
 
   @@index([churchId, recipientMemberId, status])
-  @@index([churchId, requesterMemberId])
+  @@index([churchId, requesterMemberId, status])
   @@map("care_requests")
 }
 
@@ -745,6 +834,10 @@ model MinistryEvent {
   usesRoster           Boolean   @default(true) @map("uses_roster")
   rosterOpen           Boolean   @default(false) @map("roster_open")
   visibleToChurch      Boolean   @default(true) @map("visible_to_church")
+  /// Quando true, membros podem se inscrever (gratuito se priceCents for null).
+  registrationOpen     Boolean   @default(false) @map("registration_open")
+  /// Preço da inscrição em centavos; null = inscrição gratuita (quando registrationOpen).
+  priceCents           Int?      @map("price_cents")
   deletedAt            DateTime? @map("deleted_at")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
@@ -755,6 +848,7 @@ model MinistryEvent {
   availabilities   EventAvailability[]
   rosterSlots      EventRosterSlot[]
   rosterAssignments EventRosterAssignment[]
+  ticketPurchases  EventTicketPurchase[]
 
   @@index([churchId, ministryId, startsAt])
   @@index([churchId, startsAt])
@@ -814,6 +908,34 @@ model EventRosterAssignment {
   @@index([memberId])
   @@map("event_roster_assignments")
 }
+
+/// Pagamento de inscrição em evento (direct charge na conta Connect).
+model EventTicketPurchase {
+  id                    String           @id @default(cuid())
+  churchId              String           @map("church_id")
+  eventId               String           @map("event_id")
+  memberId              String?          @map("member_id")
+  stripePaymentIntentId String?          @unique @map("stripe_payment_intent_id")
+  amountCents           Int              @map("amount_cents")
+  currency              String           @default("brl")
+  status                EventTicketStatus @default(pending)
+  buyerName             String?          @map("buyer_name")
+  buyerEmail            String?          @map("buyer_email")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+
+  church Church        @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  event  MinistryEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member Member?       @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, eventId])
+  @@index([eventId, status])
+  @@index([memberId])
+  @@map("event_ticket_purchases")
+}
+
+/// Unique parcial: no máximo uma inscrição confirmada por membro/evento.
+/// Criada em migration SQL (Prisma não modela índices parciais).
 
 model AuditLog {
   id          String   @id @default(cuid())

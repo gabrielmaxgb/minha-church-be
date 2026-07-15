@@ -38,7 +38,7 @@ export class StripeConnectService {
   private static readonly CHURCH_MCC = '8661';
 
   private static readonly CHURCH_PRODUCT_DESCRIPTION =
-    'Recebemos dízimos, ofertas e doações de membros da comunidade religiosa, e pagamentos de inscrições em eventos da igreja, através da plataforma Minha Church.';
+    'Recebemos dízimos, ofertas e doações de membros da comunidade religiosa através da plataforma Minha Church.';
 
   private static readonly CHURCH_BUSINESS_URL = 'https://www.minhachurch.com';
 
@@ -76,7 +76,7 @@ export class StripeConnectService {
     this.assertConfigured();
 
     const methods = this.enabledMethods();
-    // `transfers` é necessário para destination charges nas próximas fases.
+    // `transfers` permanece solicitado no perfil Connect da plataforma.
     const capabilities: Record<string, { requested: boolean }> = {
       transfers: { requested: true },
     };
@@ -291,6 +291,148 @@ export class StripeConnectService {
     return this.stripe.paymentIntents.retrieve(
       paymentIntentId,
       {},
+      { stripeAccount: stripeAccountId },
+    );
+  }
+
+  async cancelPaymentIntent(
+    paymentIntentId: string,
+    stripeAccountId: string,
+  ): Promise<Stripe.PaymentIntent> {
+    this.assertConfigured();
+
+    return this.stripe.paymentIntents.cancel(
+      paymentIntentId,
+      {},
+      { stripeAccount: stripeAccountId },
+    );
+  }
+
+  /** Estorno total do PaymentIntent na conta conectada (direct charge). */
+  async createRefund(params: {
+    stripeAccountId: string;
+    paymentIntentId: string;
+    metadata?: Record<string, string>;
+  }): Promise<Stripe.Refund> {
+    this.assertConfigured();
+
+    return this.stripe.refunds.create(
+      {
+        payment_intent: params.paymentIntentId,
+        metadata: params.metadata,
+      },
+      { stripeAccount: params.stripeAccountId },
+    );
+  }
+
+  async createCustomer(params: {
+    stripeAccountId: string;
+    email?: string | null;
+    name?: string | null;
+    metadata?: Record<string, string>;
+  }): Promise<Stripe.Customer> {
+    this.assertConfigured();
+
+    return this.stripe.customers.create(
+      {
+        email: params.email ?? undefined,
+        name: params.name ?? undefined,
+        metadata: params.metadata,
+      },
+      { stripeAccount: params.stripeAccountId },
+    );
+  }
+
+  /**
+   * Subscription mensal na conta conectada (cartão).
+   * Retorna subscription com latest_invoice.confirmation_secret
+   * (API Basil+; payment_intent saiu do Invoice).
+   * Expand máximo: 4 níveis — nunca latest_invoice.payments.data.payment.payment_intent.
+   */
+  async createGivingSubscription(params: {
+    stripeAccountId: string;
+    customerId: string;
+    amountCents: number;
+    currency?: string;
+    productName: string;
+    applicationFeePercent?: number;
+    metadata: Record<string, string>;
+  }): Promise<Stripe.Subscription> {
+    this.assertConfigured();
+
+    const product = await this.stripe.products.create(
+      {
+        name: params.productName,
+        metadata: params.metadata,
+      },
+      { stripeAccount: params.stripeAccountId },
+    );
+
+    const createParams: Stripe.SubscriptionCreateParams = {
+      customer: params.customerId,
+      payment_behavior: 'default_incomplete',
+      payment_settings: {
+        save_default_payment_method: 'on_subscription',
+        payment_method_types: ['card'],
+      },
+      items: [
+        {
+          price_data: {
+            currency: params.currency ?? 'brl',
+            unit_amount: params.amountCents,
+            recurring: { interval: 'month' },
+            product: product.id,
+          },
+        },
+      ],
+      metadata: params.metadata,
+      // Stripe limita expand a 4 níveis. Não use
+      // latest_invoice.payments.data.payment.payment_intent (5 níveis).
+      expand: [
+        'latest_invoice.confirmation_secret',
+        'latest_invoice.payments',
+      ],
+    };
+
+    if (
+      typeof params.applicationFeePercent === 'number' &&
+      params.applicationFeePercent > 0
+    ) {
+      createParams.application_fee_percent = params.applicationFeePercent;
+    }
+
+    return this.stripe.subscriptions.create(createParams, {
+      stripeAccount: params.stripeAccountId,
+    });
+  }
+
+  async cancelSubscription(
+    subscriptionId: string,
+    stripeAccountId: string,
+  ): Promise<Stripe.Subscription> {
+    this.assertConfigured();
+
+    return this.stripe.subscriptions.cancel(
+      subscriptionId,
+      {},
+      { stripeAccount: stripeAccountId },
+    );
+  }
+
+  async retrieveInvoice(
+    invoiceId: string,
+    stripeAccountId: string,
+  ): Promise<Stripe.Invoice> {
+    this.assertConfigured();
+
+    return this.stripe.invoices.retrieve(
+      invoiceId,
+      {
+        expand: [
+          'confirmation_secret',
+          'payments.data.payment.payment_intent',
+        ],
+      },
       { stripeAccount: stripeAccountId },
     );
   }

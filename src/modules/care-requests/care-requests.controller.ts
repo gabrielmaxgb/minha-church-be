@@ -60,6 +60,27 @@ export class CareRequestsController {
     return { count };
   }
 
+  @Get('mine/viewed-count')
+  async viewedMineCount(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const count = await this.careRequestsService.viewedMineCount(
+      churchId,
+      user.sub,
+    );
+
+    return { count };
+  }
+
+  @Post('mine/ack-viewed')
+  ackViewedMine(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.careRequestsService.ackViewedMine(churchId, user.sub);
+  }
+
   @Post()
   create(
     @Param('churchId') churchId: string,

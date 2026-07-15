@@ -99,7 +99,7 @@ opcional (hoje `PAYMENTS_PLATFORM_FEE_BPS=0`).
 - PaymentIntent criado com `Stripe-Account: acct_...`.
 - Checkout público: `GET/POST /api/v1/public/giving/:churchSlug/:fundSlug`.
 - Página FE: `/doar/[churchSlug]/[fundSlug]`.
-- Recorrência (assinatura) **não** está no fundo — fica no checkout (fase futura).
+- Recorrência (assinatura) **não** está no fundo — fica no checkout (toggle mensal; cartão).
 
 ---
 
