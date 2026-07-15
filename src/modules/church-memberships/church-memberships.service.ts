@@ -23,6 +23,7 @@ import { decryptSecret } from '../../common/utils/secret-encryption';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchRolesService } from '../church-roles/church-roles.service';
 import { MembersService } from '../members/members.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { UpdateMembershipDto } from './dto/update-membership.dto';
 import type { ChurchMembershipResponse } from './church-memberships.types';
 import type { PendingAccessUserResponse } from './pending-access.types';
@@ -77,6 +78,7 @@ export class ChurchMembershipsService {
     private readonly config: ConfigService,
     private readonly passwordCredentials: PasswordCredentialsService,
     private readonly membersService: MembersService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async findAll(churchId: string): Promise<ChurchMembershipResponse[]> {
@@ -240,6 +242,16 @@ export class ChurchMembershipsService {
 
     const { login, temporaryPassword } =
       await this.passwordCredentials.issueTemporaryPassword(userId);
+
+    const pendingName = user.memberProfiles[0]?.name ?? user.name;
+    this.notificationsService.schedule(
+      this.notificationsService.emitPendingAccess({
+        churchId,
+        pendingUserId: userId,
+        pendingUserName: pendingName,
+      }),
+      'pending_access',
+    );
 
     await this.prisma.passwordResetRequest.updateMany({
       where: { userId, churchId, status: 'pending' },

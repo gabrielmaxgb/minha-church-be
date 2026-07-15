@@ -126,11 +126,13 @@ export type MemberAccountCredentials =
       login: string;
       temporaryPassword: string;
       mustChangePassword: true;
+      userId: string;
     }
   | {
       kind: 'linked';
       login: string;
       linkedExistingAccount: true;
+      userId: string;
     };
 
 export interface CreateMemberResponse extends MemberResponse {

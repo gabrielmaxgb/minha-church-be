@@ -72,8 +72,6 @@ enum MemberStatus {
 enum Gender {
   male
   female
-  other
-  prefer_not_to_say
 }
 
 enum MaritalStatus {
@@ -86,6 +84,13 @@ enum MaritalStatus {
 enum PasswordResetRequestStatus {
   pending
   resolved
+}
+
+enum NotificationType {
+  registration_open
+  schedule_roster_assigned
+  account_linked
+  pending_access
 }
 
 enum EventRecurrenceFrequency {
@@ -124,6 +129,8 @@ model User {
   billingTierUpgradeRequestsResolved BillingTierUpgradeRequest[]       @relation("BillingTierUpgradeResolvedBy")
   billingTierUpgradeStaffNoticeReads BillingTierUpgradeStaffNoticeRead[]
   financeEntriesCreated            FinanceEntry[] @relation("FinanceEntryCreatedBy")
+  notifications                    Notification[]     @relation("NotificationRecipient")
+  notificationReads                NotificationRead[]
 
   @@map("users")
 }
@@ -167,6 +174,7 @@ model Church {
   givingSubscriptions  GivingSubscription[]
   financeEntries       FinanceEntry[]
   eventTicketPurchases EventTicketPurchase[]
+  notifications        Notification[]
 
   @@map("churches")
 }
@@ -1059,4 +1067,46 @@ model AnnouncementRead {
   @@id([announcementId, userId])
   @@index([userId])
   @@map("announcement_reads")
+}
+
+/// Inbox unificado in-app (1ª leva). Itens pessoais usam userId + readAt;
+/// itens compartilhados de staff usam userId null + NotificationRead.
+model Notification {
+  id         String           @id @default(cuid())
+  churchId   String           @map("church_id")
+  type       NotificationType
+  userId     String?          @map("user_id")
+  title      String
+  body       String?
+  href       String?
+  entityType String?          @map("entity_type")
+  entityId   String?          @map("entity_id")
+  payload    Json?
+  createdAt  DateTime         @default(now()) @map("created_at")
+  expiresAt  DateTime?        @map("expires_at")
+  readAt     DateTime?        @map("read_at")
+  ackedAt    DateTime?        @map("acked_at")
+
+  church Church             @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  user   User?              @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  reads  NotificationRead[]
+
+  @@index([churchId, userId, createdAt])
+  @@index([churchId, type, entityId])
+  @@index([expiresAt])
+  @@map("notifications")
+}
+
+model NotificationRead {
+  id             String   @id @default(cuid())
+  notificationId String   @map("notification_id")
+  userId         String   @map("user_id")
+  readAt         DateTime @default(now()) @map("read_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId])
+  @@map("notification_reads")
 }

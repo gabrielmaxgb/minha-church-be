@@ -21,6 +21,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { CareRequestsModule } from './modules/care-requests/care-requests.module';
 import { PrayerRequestsModule } from './modules/prayer-requests/prayer-requests.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { PrayerRequestsModule } from './modules/prayer-requests/prayer-requests.
     AnnouncementsModule,
     CareRequestsModule,
     PrayerRequestsModule,
+    NotificationsModule,
   ],
   providers: [
     {

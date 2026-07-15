@@ -25,6 +25,7 @@ import { EmailService } from '../../common/services/email.service';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BillingService } from '../billing/billing.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentsService } from '../payments/payments.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
@@ -101,6 +102,7 @@ export class MembersService {
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
     private readonly paymentsService: PaymentsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async findAll(
@@ -394,8 +396,8 @@ export class MembersService {
 
     await this.syncMemberCount(churchId);
 
-    if (account?.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    if (account) {
+      await this.emitAccountAccessNotifications(churchId, account, member.name);
     }
 
     return {
@@ -627,6 +629,19 @@ export class MembersService {
     if (!token) {
       return undefined;
     }
+    const ignored = new Set([
+      'other',
+      'outro',
+      'prefer_not_to_say',
+      'prefiro nao dizer',
+      'prefiro nao informar',
+      'nao informar',
+      'nao informado',
+    ]);
+    if (ignored.has(token)) {
+      return undefined;
+    }
+
     const map: Record<string, Gender> = {
       male: Gender.male,
       masculino: Gender.male,
@@ -634,16 +649,11 @@ export class MembersService {
       female: Gender.female,
       feminino: Gender.female,
       f: Gender.female,
-      other: Gender.other,
-      outro: Gender.other,
-      prefer_not_to_say: Gender.prefer_not_to_say,
-      'prefiro nao dizer': Gender.prefer_not_to_say,
-      'nao informar': Gender.prefer_not_to_say,
     };
     const gender = map[token];
     if (!gender) {
       throw new BadRequestException(
-        'Sexo inválido (use masculino, feminino ou outro).',
+        'Sexo inválido (use masculino ou feminino).',
       );
     }
     return gender;
@@ -679,7 +689,7 @@ export class MembersService {
     return marital;
   }
 
-  /** Aceita AAAA-MM-DD ou DD/MM/AAAA e devolve ISO (AAAA-MM-DD). */
+  /** Aceita DD/MM/AAAA (preferido) ou AAAA-MM-DD e devolve ISO (AAAA-MM-DD). */
   private normalizeImportDate(
     value: unknown,
     label: string,
@@ -696,17 +706,17 @@ export class MembersService {
     const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
     const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(str);
 
-    if (iso) {
-      year = Number(iso[1]);
-      month = Number(iso[2]);
-      day = Number(iso[3]);
-    } else if (br) {
+    if (br) {
       day = Number(br[1]);
       month = Number(br[2]);
       year = Number(br[3]);
+    } else if (iso) {
+      year = Number(iso[1]);
+      month = Number(iso[2]);
+      day = Number(iso[3]);
     } else {
       throw new BadRequestException(
-        `${label} inválida (use AAAA-MM-DD ou DD/MM/AAAA).`,
+        `${label} inválida (use DD/MM/AAAA, ex.: 20/05/1990).`,
       );
     }
 
@@ -885,8 +895,12 @@ export class MembersService {
 
     await this.syncMemberCount(churchId);
 
-    if (account?.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    if (account) {
+      await this.emitAccountAccessNotifications(
+        churchId,
+        account,
+        member.name,
+      );
     }
 
     if (
@@ -964,8 +978,12 @@ export class MembersService {
 
     await this.syncMemberCount(churchId);
 
-    if (account?.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    if (account) {
+      await this.emitAccountAccessNotifications(
+        churchId,
+        account,
+        updated.name,
+      );
     }
 
     return {
@@ -1349,6 +1367,7 @@ export class MembersService {
       login: loginIdentifier,
       temporaryPassword,
       mustChangePassword: true,
+      userId: user.id,
     };
   }
 
@@ -1520,12 +1539,38 @@ export class MembersService {
       kind: 'linked',
       login,
       linkedExistingAccount: true,
+      userId: user.id,
     };
+  }
+
+  private async emitAccountAccessNotifications(
+    churchId: string,
+    account: MemberAccountCredentials,
+    memberName: string,
+  ): Promise<void> {
+    if (account.kind === 'linked') {
+      await this.notifyExistingUserLinkedToChurch(
+        churchId,
+        account.login,
+        account.userId,
+      );
+      return;
+    }
+
+    this.notificationsService.schedule(
+      this.notificationsService.emitPendingAccess({
+        churchId,
+        pendingUserId: account.userId,
+        pendingUserName: memberName,
+      }),
+      'pending_access',
+    );
   }
 
   private async notifyExistingUserLinkedToChurch(
     churchId: string,
     login: string,
+    userId: string,
   ): Promise<void> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
@@ -1536,6 +1581,15 @@ export class MembersService {
       return;
     }
 
+    this.notificationsService.schedule(
+      this.notificationsService.emitAccountLinked({
+        churchId,
+        userId,
+        churchName: church.name,
+      }),
+      'account_linked',
+    );
+
     const email = login.includes('@') ? login.trim().toLowerCase() : null;
 
     if (!email || this.isCpfInternalEmail(email)) {
@@ -1543,7 +1597,7 @@ export class MembersService {
     }
 
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { id: userId },
       select: { name: true, email: true },
     });
 

@@ -30,6 +30,7 @@ import {
   normalizeRosterRoleValue,
 } from '../ministries/roster-roles';
 import { memberNeedsServiceFunctions } from '../members/member-ministry-notifications';
+import { NotificationsService } from '../notifications/notifications.service';
 import { GIVING_MIN_AMOUNT_CENTS } from '../payments/dto/create-giving-checkout.dto';
 import { EventCreationService } from './event-creation.service';
 import { resolveEventRegistrationFields } from './event-registration-fields';
@@ -81,6 +82,7 @@ export class EventsService {
     private readonly prisma: PrismaService,
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly eventCreation: EventCreationService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async findOne(
@@ -658,6 +660,17 @@ export class EventsService {
       throw new BadRequestException('Informe a função da escala.');
     }
 
+    const existingAssignment = await this.prisma.eventRosterAssignment.findUnique({
+      where: {
+        eventId_memberId: {
+          eventId,
+          memberId: dto.memberId,
+        },
+      },
+      select: { id: true },
+    });
+    const isNewAssignment = !existingAssignment;
+
     if (event.ministryId) {
       const memberLink = await this.prisma.memberMinistry.findFirst({
         where: {
@@ -781,6 +794,26 @@ export class EventsService {
       },
     });
 
+    if (isNewAssignment) {
+      const assigned = eventWithRoster.rosterAssignments.find(
+        (item) => item.memberId === dto.memberId,
+      );
+      if (assigned) {
+        this.notificationsService.schedule(
+          this.notificationsService.emitRosterAssigned({
+            churchId,
+            eventId,
+            eventName: event.name,
+            startsAt: event.startsAt,
+            memberId: dto.memberId,
+            roleLabel: assigned.roleLabel,
+            ministryId: event.ministryId,
+          }),
+          'schedule_roster_assigned',
+        );
+      }
+    }
+
     return this.buildRosterResponse(eventWithRoster, event.ministryId);
   }
 
@@ -811,6 +844,14 @@ export class EventsService {
         reopenOnVacancy: true,
         wasFullyStaffed,
       });
+    });
+
+    await this.prisma.notification.deleteMany({
+      where: {
+        churchId,
+        type: 'schedule_roster_assigned',
+        entityId: `${eventId}:${memberId}`,
+      },
     });
 
     const eventWithRoster = await this.prisma.ministryEvent.findFirstOrThrow({
@@ -910,6 +951,13 @@ export class EventsService {
         rosterSlots: rosterSlotsInclude,
       },
     });
+
+    if (registrationOpen) {
+      this.notificationsService.schedule(
+        this.emitRegistrationOpenForSeries(churchId, event.id, event.recurrenceSeriesId),
+        'registration_open',
+      );
+    }
 
     return {
       ...toMinistryEventResponse(eventWithSlots),
@@ -1039,6 +1087,17 @@ export class EventsService {
             rosterSlots: rosterSlotsInclude,
           },
         });
+
+        if (registrationOpen && !existing.registrationOpen) {
+          this.notificationsService.schedule(
+            this.emitRegistrationOpenForSeries(
+              churchId,
+              event.id,
+              event.recurrenceSeriesId,
+            ),
+            'registration_open',
+          );
+        }
 
         return toMinistryEventResponse(event);
       }
@@ -1177,6 +1236,17 @@ export class EventsService {
         rosterSlots: rosterSlotsInclude,
       },
     });
+
+    if (event.registrationOpen && !existing.registrationOpen) {
+      this.notificationsService.schedule(
+        this.emitRegistrationOpenForSeries(
+          churchId,
+          event.id,
+          event.recurrenceSeriesId,
+        ),
+        'registration_open',
+      );
+    }
 
     return toMinistryEventResponse(event);
   }
@@ -1327,6 +1397,60 @@ export class EventsService {
       },
       orderBy: { startsAt: 'asc' },
     });
+  }
+
+  private async emitRegistrationOpenForSeries(
+    churchId: string,
+    eventId: string,
+    recurrenceSeriesId: string | null,
+  ): Promise<void> {
+    // Uma notificação por série (próxima ocorrência), para não poluir o sininho
+    // com um item por data recorrente.
+    const event = recurrenceSeriesId
+      ? await this.prisma.ministryEvent.findFirst({
+          where: {
+            churchId,
+            recurrenceSeriesId,
+            deletedAt: null,
+            registrationOpen: true,
+            startsAt: { gte: new Date() },
+          },
+          orderBy: { startsAt: 'asc' },
+          select: {
+            id: true,
+            churchId: true,
+            name: true,
+            startsAt: true,
+            ministryId: true,
+            visibleToChurch: true,
+            registrationOpen: true,
+            recurrenceSeriesId: true,
+          },
+        })
+      : await this.prisma.ministryEvent.findFirst({
+          where: {
+            id: eventId,
+            churchId,
+            deletedAt: null,
+            registrationOpen: true,
+          },
+          select: {
+            id: true,
+            churchId: true,
+            name: true,
+            startsAt: true,
+            ministryId: true,
+            visibleToChurch: true,
+            registrationOpen: true,
+            recurrenceSeriesId: true,
+          },
+        });
+
+    if (!event) {
+      return;
+    }
+
+    await this.notificationsService.emitRegistrationOpen(event);
   }
 
   private async getEventOrThrow(churchId: string, eventId: string) {
