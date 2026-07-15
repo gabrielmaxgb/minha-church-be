@@ -31,6 +31,9 @@ import { memberNeedsServiceFunctions } from '../members/member-ministry-notifica
 import { EventCreationService } from './event-creation.service';
 import { syncEventRosterSlots, RosterSlotSyncError, resolveRosterSlotPlan, syncRosterCollectionState, wasRosterFullyStaffed } from './event-roster-slots';
 import {
+  buildRosterCandidatesFromPool,
+} from './roster-candidates';
+import {
   buildVisibleEventsWhere,
   buildEventViewContext,
   canUserViewEventWithContext,
@@ -129,13 +132,15 @@ export class EventsService {
       event,
     );
 
-    const roster = usesRoster
-      ? await this.buildRosterResponse(event, event.ministryId)
-      : [];
-    const rosterCandidates =
-      usesRoster && canManageRoster
-        ? await this.buildRosterCandidates(churchId, event)
+    const roster =
+      usesRoster || canManageRoster
+        ? await this.buildRosterResponse(event, event.ministryId)
         : [];
+    // Líder sempre vê o time completo (disponibilidade = sinal). A atribuição
+    // liga usesRoster se ainda estiver false.
+    const rosterCandidates = canManageRoster
+      ? await this.buildRosterCandidates(churchId, event)
+      : [];
 
     const myAvailability = viewerMember
       ? event.availabilities.find(
@@ -366,21 +371,6 @@ export class EventsService {
       );
     }
 
-    const eventWithAvailability = await this.prisma.ministryEvent.findFirstOrThrow({
-      where: { id: eventId, churchId },
-      include: { availabilities: true },
-    });
-
-    const availability = eventWithAvailability.availabilities.find(
-      (item) => item.memberId === dto.memberId,
-    );
-
-    if (availability?.status !== 'available') {
-      throw new BadRequestException(
-        'Só é possível escalar quem marcou disponibilidade para este evento.',
-      );
-    }
-
     const roleLabel = normalizeRosterRoleValue(dto.roleLabel);
 
     if (!roleLabel) {
@@ -460,17 +450,6 @@ export class EventsService {
 
         if (!slot) {
           throw new BadRequestException('Função não encontrada neste evento.');
-        }
-
-        const availabilityRoleLabels = availability.roleLabels ?? [];
-
-        if (
-          availabilityRoleLabels.length > 0 &&
-          !isAllowedMemberRosterRole(availabilityRoleLabels, slot.label)
-        ) {
-          throw new BadRequestException(
-            'Esta pessoa não marcou disponibilidade para esta função neste evento.',
-          );
         }
 
         const slotTakenCount = slot.assignments.filter(
@@ -1245,29 +1224,13 @@ export class EventsService {
       rosterSlots: Array<{ label: string }>;
     },
   ): Promise<EventRosterCandidateResponse[]> {
-    const assignedIds = new Set(
-      event.rosterAssignments.map((item) => item.memberId),
-    );
-
-    const availableRows = event.availabilities.filter(
-      (item) =>
-        item.status === 'available' && !assignedIds.has(item.memberId),
-    );
-
-    if (availableRows.length === 0) {
-      return [];
-    }
-
-    const memberIds = availableRows.map((item) => item.memberId);
-    const availabilityByMemberId = new Map(
-      availableRows.map((item) => [item.memberId, item]),
-    );
+    const assignedIds = event.rosterAssignments.map((item) => item.memberId);
 
     if (event.ministryId) {
+      // Uma query só: todo o time do ministério (select enxuto).
       const links = await this.prisma.memberMinistry.findMany({
         where: {
           ministryId: event.ministryId,
-          memberId: { in: memberIds },
           endedAt: null,
           member: {
             churchId,
@@ -1275,31 +1238,33 @@ export class EventsService {
             status: MemberStatus.active,
           },
         },
-        include: { member: true },
+        select: {
+          memberId: true,
+          instruments: true,
+          member: { select: { name: true } },
+        },
         orderBy: { member: { name: 'asc' } },
       });
 
-      return links
-        .map((link) => {
-          const availability = availabilityByMemberId.get(link.memberId)!;
-
-          return {
-            memberId: link.memberId,
-            memberName: link.member.name,
-            availabilityStatus: availability.status,
-            roleLabels: link.instruments ?? [],
-          };
-        })
-        .sort((a, b) => this.compareRosterCandidates(a, b));
+      return buildRosterCandidatesFromPool({
+        pool: links.map((link) => ({
+          memberId: link.memberId,
+          memberName: link.member.name,
+          roleLabels: link.instruments ?? [],
+        })),
+        availabilities: event.availabilities,
+        assignedMemberIds: assignedIds,
+      });
     }
 
+    // Atividade da igreja: pool = membros ativos (id+nome). Cruzamento em memória.
     const members = await this.prisma.member.findMany({
       where: {
-        id: { in: memberIds },
         churchId,
         deletedAt: null,
         status: MemberStatus.active,
       },
+      select: { id: true, name: true },
       orderBy: { name: 'asc' },
     });
 
@@ -1309,33 +1274,15 @@ export class EventsService {
         ? eventSlotLabels
         : [CHURCH_WIDE_DEFAULT_ROSTER_ROLE];
 
-    return members
-      .map((member) => {
-        const availability = availabilityByMemberId.get(member.id)!;
-        const storedRoleLabels = availability.roleLabels ?? [];
-        const roleLabels =
-          storedRoleLabels.length > 0 ? storedRoleLabels : fallbackRoleLabels;
-
-        return {
-          memberId: member.id,
-          memberName: member.name,
-          availabilityStatus: availability.status,
-          roleLabels,
-        };
-      })
-      .sort((a, b) => this.compareRosterCandidates(a, b));
-  }
-
-  private compareRosterCandidates(
-    a: EventRosterCandidateResponse,
-    b: EventRosterCandidateResponse,
-  ): number {
-    const rank = (status: string | null) =>
-      status === 'available' ? 0 : status === null ? 1 : 2;
-
-    return (
-      rank(a.availabilityStatus) - rank(b.availabilityStatus) ||
-      a.memberName.localeCompare(b.memberName, 'pt-BR')
-    );
+    return buildRosterCandidatesFromPool({
+      pool: members.map((member) => ({
+        memberId: member.id,
+        memberName: member.name,
+        roleLabels: [],
+      })),
+      availabilities: event.availabilities,
+      assignedMemberIds: assignedIds,
+      fallbackRoleLabels,
+    });
   }
 }
