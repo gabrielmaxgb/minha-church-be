@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 
 import { ChurchAccessGuard } from '../../common/guards/church-access.guard';
 import { ChurchOwnerGuard } from '../../common/guards/church-owner.guard';
@@ -26,6 +27,7 @@ export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
   @Post('checkout')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   createCheckout(
     @Param('churchId') churchId: string,
     @Body() dto: CreateCheckoutDto,
@@ -56,12 +58,14 @@ export class BillingController {
   }
 
   @Post('portal')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   createPortal(@Param('churchId') churchId: string) {
     return this.billingService.createPortalSession(churchId);
   }
 }
 
 @Public()
+@SkipThrottle()
 @Controller('billing')
 export class BillingWebhookController {
   constructor(private readonly billingService: BillingService) {}
@@ -87,6 +91,7 @@ export class PricingController {
   constructor(private readonly billingService: BillingService) {}
 
   @Get()
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   getPricing() {
     return this.billingService.getPricingCatalog();
   }

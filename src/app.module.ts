@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import configuration from './config/configuration';
 import { CommonModule } from './common/common.module';
@@ -32,8 +32,10 @@ import { PrivacyModule } from './common/privacy/privacy.module';
       load: [configuration],
     }),
     ScheduleModule.forRoot(),
+    // Default por IP: painel autenticado (várias queries em paralelo).
+    // Rotas sensíveis sobrescrevem com @Throttle / @SkipThrottle.
     ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
+      throttlers: [{ name: 'default', ttl: 60_000, limit: 200 }],
     }),
     DatabaseModule,
     CommonModule,
@@ -54,6 +56,10 @@ import { PrivacyModule } from './common/privacy/privacy.module';
     NotificationsModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

@@ -20,7 +20,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
 import { BillingService } from './billing.service';
 import { ConfirmTierCrossingDto } from './dto/confirm-tier-crossing.dto';
-
+import { Throttle } from '@nestjs/throttler';
 @Controller('churches/:churchId/billing')
 @UseGuards(JwtAuthGuard, ChurchAccessGuard)
 export class BillingTierController {
@@ -42,6 +42,7 @@ export class BillingTierController {
 
   @Post('tier-crossing/confirm')
   @UseGuards(ChurchOwnerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   confirmTierCrossing(
     @Param('churchId') churchId: string,
     @Body() dto: ConfirmTierCrossingDto,
@@ -57,6 +58,7 @@ export class BillingTierController {
   @Post('tier-crossing/request')
   @UseGuards(PermissionsGuard)
   @RequirePermission(ChurchPermission.members_manage)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   requestTierCrossing(
     @Param('churchId') churchId: string,
     @Body() dto: ConfirmTierCrossingDto,

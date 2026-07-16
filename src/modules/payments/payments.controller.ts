@@ -37,6 +37,7 @@ import {
   UpdateFinanceEntryDto,
 } from './dto/finance-entry.dto';
 import { PaymentsService } from './payments.service';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 
 @Controller('churches/:churchId/payments')
 @UseGuards(JwtAuthGuard, ChurchAccessGuard)
@@ -185,6 +186,7 @@ export class PaymentsController {
   }
 
   @Post('events/:eventId/ticket-checkout')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   createEventTicketCheckout(
     @Param('churchId') churchId: string,
     @Param('eventId') eventId: string,
@@ -291,6 +293,7 @@ export class PaymentsController {
   }
 
   @Post('funds/:fundId/checkout')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   createMemberGivingCheckout(
     @Param('churchId') churchId: string,
     @Param('fundId') fundId: string,
@@ -406,11 +409,13 @@ export class PaymentsPublicGivingController {
 
   /** Declarado antes das rotas :churchSlug para não ser capturado por elas. */
   @Get('donations/:donationId/receipt')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   getGivingDonationReceipt(@Param('donationId') donationId: string) {
     return this.paymentsService.getGivingDonationReceipt(donationId);
   }
 
   @Get(':churchSlug/:fundSlug')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   getPublicGivingFund(
     @Param('churchSlug') churchSlug: string,
     @Param('fundSlug') fundSlug: string,
@@ -419,6 +424,7 @@ export class PaymentsPublicGivingController {
   }
 
   @Post(':churchSlug/:fundSlug/checkout')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   createGivingCheckout(
     @Param('churchSlug') churchSlug: string,
     @Param('fundSlug') fundSlug: string,
@@ -429,6 +435,7 @@ export class PaymentsPublicGivingController {
 }
 
 @Public()
+@SkipThrottle()
 @Controller('payments/connect')
 export class PaymentsConnectWebhookController {
   constructor(private readonly paymentsService: PaymentsService) {}

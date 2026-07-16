@@ -11,7 +11,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { Public } from '../../common/decorators/public.decorator';
@@ -33,7 +33,6 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { JwtPayload } from './auth.types';
 
 @Controller('auth')
-@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
@@ -138,7 +137,7 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(200)
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -174,6 +173,7 @@ export class AuthController {
   @Public()
   @Post('logout')
   @HttpCode(204)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async logout(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
