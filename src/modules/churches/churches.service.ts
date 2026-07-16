@@ -160,6 +160,10 @@ export class ChurchesService {
     subscriptionStatus: ChurchRecord['subscriptionStatus'];
     trialEndsAt: Date | null;
     pastDueSince?: Date | null;
+    dpaAcceptedAt?: Date | null;
+    dpaVersion?: string | null;
+    deletedAt?: Date | null;
+    purgeAfter?: Date | null;
   }): ChurchRecord {
     return {
       id: church.id,
@@ -169,6 +173,10 @@ export class ChurchesService {
       subscriptionStatus: church.subscriptionStatus,
       trialEndsAt: church.trialEndsAt,
       pastDueSince: church.pastDueSince ?? null,
+      dpaAcceptedAt: church.dpaAcceptedAt ?? null,
+      dpaVersion: church.dpaVersion ?? null,
+      deletedAt: church.deletedAt ?? null,
+      purgeAfter: church.purgeAfter ?? null,
     };
   }
 }

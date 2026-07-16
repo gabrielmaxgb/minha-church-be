@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Patch,
@@ -21,6 +22,7 @@ import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { RegisterChurchDto } from './dto/register-church.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
@@ -91,6 +93,28 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   getMe(@CurrentUser() user: JwtPayload): Promise<AuthResponse> {
     return this.authService.getSession(user);
+  }
+
+  @Get('me/export')
+  @UseGuards(JwtAuthGuard)
+  exportMe(@CurrentUser() user: JwtPayload) {
+    return this.authService.exportUserAccount(user.sub);
+  }
+
+  @Delete('me')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async deleteMe(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: DeleteAccountDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.deleteUserAccount(
+      user.sub,
+      dto.password,
+    );
+    this.authCookiesService.clearAuthCookies(res);
+    return result;
   }
 
   @Patch('me')

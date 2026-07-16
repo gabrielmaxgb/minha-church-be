@@ -9,6 +9,12 @@ import {
   type MinistryRole,
 } from '@prisma/client';
 
+import {
+  hasParentalConsent,
+  isMinorByBirthDate,
+  requiresParentalConsentForAppAccess,
+} from '../../common/utils/parental-consent';
+
 type MinistryRoleAssignment = {
   ministryRole: MinistryRole;
 };
@@ -69,6 +75,15 @@ export interface MemberResponse {
   baptismDate: string | null;
   membershipDate: string | null;
   userId: string | null;
+  /** Menor de 18 com data de nascimento conhecida. */
+  isMinor: boolean;
+  /** Precisa de consentimento parental antes de liberar login. */
+  parentalConsentRequired: boolean;
+  parentalConsentGranted: boolean;
+  parentalConsentAt: string | null;
+  parentalConsentGuardianName: string | null;
+  parentalConsentGuardianEmail: string | null;
+  parentalConsentGuardianMemberId: string | null;
   ministries: MemberMinistryLinkResponse[];
   /**
    * Contribuições mensais abertas (active/past_due/incomplete) vinculadas
@@ -201,6 +216,16 @@ export function toMemberResponse(member: MemberWithMinistries): MemberResponse {
     baptismDate: formatDate(member.baptismDate),
     membershipDate: formatDate(member.membershipDate),
     userId: member.userId,
+    isMinor: isMinorByBirthDate(member.birthDate),
+    parentalConsentRequired: requiresParentalConsentForAppAccess(member),
+    parentalConsentGranted: hasParentalConsent(member),
+    parentalConsentAt: member.parentalConsentAt
+      ? member.parentalConsentAt.toISOString()
+      : null,
+    parentalConsentGuardianName: member.parentalConsentGuardianName ?? null,
+    parentalConsentGuardianEmail: member.parentalConsentGuardianEmail ?? null,
+    parentalConsentGuardianMemberId:
+      member.parentalConsentGuardianMemberId ?? null,
     ministries: member.ministryLinks.map((link) => {
       const roles = mapMinistryRoles(link.roleAssignments);
 

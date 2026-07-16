@@ -148,7 +148,7 @@ export const PERMISSION_TO_USER_PERMISSIONS_KEY: Record<
 };
 
 export const CHURCH_PERMISSION_LABELS: Record<ChurchPermission, string> = {
-  [ChurchPermission.dashboard_access]: 'Dashboard',
+  [ChurchPermission.dashboard_access]: 'Início',
   [ChurchPermission.members_access]: 'Membros',
   [ChurchPermission.ministries_access]: 'Ministérios',
   [ChurchPermission.activities_access]: 'Eventos e Atividades',

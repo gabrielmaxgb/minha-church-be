@@ -54,6 +54,11 @@ export interface AuthChurchResponse {
   trialDaysRemaining?: number | null;
   featuresLocked?: boolean;
   lockReason?: SubscriptionLockReason | null;
+  dpaAcceptedAt?: string | null;
+  dpaVersion?: string | null;
+  dpaAccepted?: boolean;
+  deletedAt?: string | null;
+  purgeAfter?: string | null;
 }
 
 export interface AuthTokensResponse {

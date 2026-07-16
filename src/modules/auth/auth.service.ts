@@ -11,6 +11,10 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
+import { AccountLifecycleService } from '../../common/privacy/account-lifecycle.service';
+import { DataExportService } from '../../common/privacy/data-export.service';
+import { LegalAcceptanceService } from '../../common/privacy/legal-acceptance.service';
+import { DPA_VERSION } from '../../common/privacy/privacy.constants';
 import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
 import { PrismaService } from '../../database/prisma.service';
 import { ChurchesService } from '../churches/churches.service';
@@ -42,6 +46,9 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly legalAcceptance: LegalAcceptanceService,
+    private readonly dataExport: DataExportService,
+    private readonly accountLifecycle: AccountLifecycleService,
   ) {}
 
   async login(
@@ -102,6 +109,12 @@ export class AuthService {
       ownerName: dto.ownerName,
       ownerEmail: email,
       passwordHash,
+    });
+
+    await this.legalAcceptance.recordRegistrationAcceptances({
+      churchId,
+      userId,
+      includeDpa: true,
     });
 
     if (this.isEmailVerificationRequired()) {
@@ -785,6 +798,8 @@ export class AuthService {
 
   private toAuthChurchResponse(church: ChurchRecord): AuthChurchResponse {
     const summary = this.subscriptionPolicy.buildSummary(church);
+    const dpaAccepted =
+      Boolean(church.dpaAcceptedAt) && church.dpaVersion === DPA_VERSION;
 
     return {
       id: church.id,
@@ -796,7 +811,20 @@ export class AuthService {
       trialDaysRemaining: summary.trialDaysRemaining,
       featuresLocked: summary.featuresLocked,
       lockReason: summary.lockReason,
+      dpaAcceptedAt: church.dpaAcceptedAt?.toISOString() ?? null,
+      dpaVersion: church.dpaVersion,
+      dpaAccepted,
+      deletedAt: church.deletedAt?.toISOString() ?? null,
+      purgeAfter: church.purgeAfter?.toISOString() ?? null,
     };
+  }
+
+  exportUserAccount(userId: string) {
+    return this.dataExport.exportUserAccount(userId);
+  }
+
+  deleteUserAccount(userId: string, password: string) {
+    return this.accountLifecycle.deleteUserAccount(userId, password);
   }
 
   private getAccessExpiresInSeconds(): number {

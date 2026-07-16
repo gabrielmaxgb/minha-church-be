@@ -6,6 +6,11 @@ export const AUDIT_ACTIONS = {
   membershipUpdated: 'membership.updated',
   membershipPasswordReset: 'membership.password_reset',
   termsAccepted: 'terms.accepted',
+  dpaAccepted: 'dpa.accepted',
+  privacyPurged: 'privacy.purged',
+  churchClosureRequested: 'church.closure_requested',
+  churchClosureCancelled: 'church.closure_cancelled',
+  userAccountDeleted: 'user.account_deleted',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

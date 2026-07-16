@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 
 import { ChurchesModule } from '../churches/churches.module';
 import { UsersModule } from '../users/users.module';
+import { PrivacyModule } from '../../common/privacy/privacy.module';
 import { AuthCookiesService } from './auth-cookies.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -14,6 +15,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   imports: [
     UsersModule,
     ChurchesModule,
+    PrivacyModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

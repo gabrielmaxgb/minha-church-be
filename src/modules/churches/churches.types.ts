@@ -8,6 +8,10 @@ export interface ChurchRecord {
   subscriptionStatus: SubscriptionStatus;
   trialEndsAt: Date | null;
   pastDueSince: Date | null;
+  dpaAcceptedAt: Date | null;
+  dpaVersion: string | null;
+  deletedAt: Date | null;
+  purgeAfter: Date | null;
 }
 
 export interface RegisterChurchInput {

@@ -8,6 +8,7 @@ import {
 
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { PrismaService } from '../../database/prisma.service';
+import { formatRosterRole } from '../ministries/roster-roles';
 import type {
   NotificationInboxItem,
   NotificationInboxResponse,
@@ -129,7 +130,7 @@ export class NotificationsService {
         id: row.id,
         type: row.type,
         title: row.title,
-        body: row.body,
+        body: formatNotificationBody(row.type, row.body, row.payload),
         href: row.href,
         entityType: row.entityType,
         entityId: row.entityId,
@@ -265,12 +266,14 @@ export class NotificationsService {
       ? `/app/minhas-escalas/${input.ministryId}`
       : '/app/minhas-escalas';
 
+    const roleLabel = formatRosterRole(input.roleLabel);
+
     await this.upsertPersonalNotification({
       churchId: input.churchId,
       type: NotificationType.schedule_roster_assigned,
       userId: member.userId,
       title: input.eventName,
-      body: `Você está na escala como ${input.roleLabel}.`,
+      body: `Você está na escala como ${roleLabel}.`,
       href,
       entityType: 'EventRosterAssignment',
       entityId: `${input.eventId}:${input.memberId}`,
@@ -505,4 +508,28 @@ export class NotificationsService {
 
     return closed;
   }
+}
+
+function formatNotificationBody(
+  type: NotificationType,
+  body: string | null,
+  payload: Prisma.JsonValue,
+): string | null {
+  if (type !== NotificationType.schedule_roster_assigned) {
+    return body;
+  }
+
+  const roleLabel =
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    typeof (payload as { roleLabel?: unknown }).roleLabel === 'string'
+      ? formatRosterRole((payload as { roleLabel: string }).roleLabel)
+      : '';
+
+  if (roleLabel) {
+    return `Você está na escala como ${roleLabel}.`;
+  }
+
+  return body;
 }

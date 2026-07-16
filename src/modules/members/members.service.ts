@@ -20,6 +20,11 @@ import {
   isValidCpf,
   normalizeCpf,
 } from '../../common/utils/cpf';
+import {
+  PARENTAL_CONSENT_VERSION,
+  isMinorByBirthDate,
+  requiresParentalConsentForAppAccess,
+} from '../../common/utils/parental-consent';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
@@ -35,6 +40,7 @@ import {
   ImportMemberRow,
   ImportMembersDto,
   ListMembersQueryDto,
+  RecordParentalConsentDto,
   UpdateMemberDto,
 } from './dto/member.dto';
 import {
@@ -297,6 +303,10 @@ export class MembersService {
     // (que dá acesso à plataforma) é recurso premium.
     if (isActive) {
       await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
+      this.assertParentalConsentForAppAccess({
+        birthDate: parseOptionalDate(dto.birthDate) ?? null,
+        parentalConsentAt: null,
+      });
     }
 
     // Pré-checagens independentes rodam em paralelo (cada uma é ~1 RTT ao Neon).
@@ -540,6 +550,14 @@ export class MembersService {
     }
 
     const status = this.normalizeImportStatus(raw.status);
+    const birthDate = this.normalizeImportDate(raw.birthDate, 'Data de nascimento');
+
+    if (status === MemberStatus.active && isMinorByBirthDate(birthDate ?? null)) {
+      throw new BadRequestException(
+        'Menor de idade: importe como visitante, registre o consentimento parental e depois receba como membro.',
+      );
+    }
+
     if (status === MemberStatus.active && !email && !cpf) {
       throw new BadRequestException(
         'Membro ativo precisa de e-mail ou CPF (é o login de acesso).',
@@ -561,7 +579,7 @@ export class MembersService {
         maritalStatus === MaritalStatus.married
           ? this.normalizeImportDate(raw.weddingAnniversary, 'Aniversário de casamento')
           : undefined,
-      birthDate: this.normalizeImportDate(raw.birthDate, 'Data de nascimento'),
+      birthDate: birthDate ?? undefined,
       street: this.coerceImportString(raw.street),
       number: this.coerceImportString(raw.number),
       complement: this.coerceImportString(raw.complement),
@@ -800,6 +818,14 @@ export class MembersService {
     ) {
       await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
       await this.assertActiveMemberTierAllowed(churchId);
+      const nextBirthDate =
+        dto.birthDate !== undefined
+          ? (parseOptionalDate(dto.birthDate) ?? null)
+          : existing.birthDate;
+      this.assertParentalConsentForAppAccess({
+        birthDate: nextBirthDate,
+        parentalConsentAt: existing.parentalConsentAt,
+      });
     }
 
     if (nextStatus !== MemberStatus.active && existing.userId) {
@@ -954,6 +980,7 @@ export class MembersService {
 
     await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
     await this.assertActiveMemberTierAllowed(churchId);
+    this.assertParentalConsentForAppAccess(member);
 
     let account: MemberAccountCredentials | undefined;
 
@@ -990,6 +1017,125 @@ export class MembersService {
       ...toMemberResponse(updated),
       ...(account ? { account } : {}),
     };
+  }
+
+  async recordParentalConsent(
+    churchId: string,
+    memberId: string,
+    userId: string,
+    dto: RecordParentalConsentDto,
+  ): Promise<MemberResponse> {
+    if (dto.accepted !== true) {
+      throw new BadRequestException(
+        'É necessário aceitar o consentimento parental para continuar.',
+      );
+    }
+
+    const member = await this.getMemberOrThrow(churchId, memberId);
+
+    if (!isMinorByBirthDate(member.birthDate)) {
+      throw new BadRequestException(
+        'Consentimento parental só se aplica a menores de 18 anos com data de nascimento cadastrada.',
+      );
+    }
+
+    const guardianMemberId = dto.guardianMemberId?.trim() || null;
+    let guardianName = dto.guardianName?.trim() || null;
+    let guardianEmail = dto.guardianEmail?.trim().toLowerCase() || null;
+
+    if (guardianMemberId) {
+      const guardian = await this.getMemberOrThrow(churchId, guardianMemberId);
+
+      if (guardian.id === member.id) {
+        throw new BadRequestException(
+          'O responsável não pode ser o próprio menor.',
+        );
+      }
+
+      guardianName = guardian.name;
+      guardianEmail = guardian.email ?? guardianEmail;
+    }
+
+    if (!guardianName || guardianName.length < 2) {
+      throw new BadRequestException(
+        'Informe o responsável (membro da família ou nome).',
+      );
+    }
+
+    const updated = await this.prisma.member.update({
+      where: { id: memberId },
+      data: {
+        parentalConsentAt: new Date(),
+        parentalConsentByUserId: userId,
+        parentalConsentGuardianMemberId: guardianMemberId,
+        parentalConsentGuardianName: guardianName,
+        parentalConsentGuardianEmail: guardianEmail,
+        parentalConsentVersion: PARENTAL_CONSENT_VERSION,
+      },
+      include: memberInclude,
+    });
+
+    return toMemberResponse(updated);
+  }
+
+  async revokeParentalConsent(
+    churchId: string,
+    memberId: string,
+  ): Promise<MemberResponse> {
+    const member = await this.getMemberOrThrow(churchId, memberId);
+
+    if (!member.parentalConsentAt) {
+      throw new BadRequestException(
+        'Não há consentimento parental registrado para este cadastro.',
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      let next = await tx.member.update({
+        where: { id: memberId },
+        data: {
+          parentalConsentAt: null,
+          parentalConsentByUserId: null,
+          parentalConsentGuardianMemberId: null,
+          parentalConsentGuardianName: null,
+          parentalConsentGuardianEmail: null,
+          parentalConsentVersion: null,
+          ...(member.status === MemberStatus.active &&
+          isMinorByBirthDate(member.birthDate)
+            ? { status: MemberStatus.inactive }
+            : {}),
+        },
+        include: memberInclude,
+      });
+
+      if (
+        member.status === MemberStatus.active &&
+        isMinorByBirthDate(member.birthDate)
+      ) {
+        await this.syncMemberAppAccess(tx, churchId, next);
+        next = await tx.member.findUniqueOrThrow({
+          where: { id: memberId },
+          include: memberInclude,
+        });
+      }
+
+      return next;
+    });
+
+    await this.syncMemberCount(churchId);
+
+    return toMemberResponse(updated);
+  }
+
+  private assertParentalConsentForAppAccess(member: {
+    birthDate: Date | string | null | undefined;
+    parentalConsentAt: Date | string | null | undefined;
+  }): void {
+    if (requiresParentalConsentForAppAccess(member)) {
+      throw new BadRequestException(
+        'Menor de idade: registre o consentimento parental antes de liberar o acesso ao painel.',
+      );
+    }
   }
 
   async assignMinistry(

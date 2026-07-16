@@ -93,6 +93,17 @@ export class ChurchPermissionsService {
       return null;
     }
 
+    // Non-owners lose access once the church is marked for closure.
+    if (!membership.isOwner) {
+      const church = await this.prisma.church.findUnique({
+        where: { id: churchId },
+        select: { deletedAt: true },
+      });
+      if (church?.deletedAt) {
+        return null;
+      }
+    }
+
     return this.toAccessContext(membership);
   }
 

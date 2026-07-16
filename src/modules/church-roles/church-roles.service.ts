@@ -72,7 +72,10 @@ export class ChurchRolesService {
       summary: `${actorName} criou o cargo ${role.name}`,
       metadata: {
         roleName: role.name,
-        permissions: role.permissions.map((entry) => entry.permission),
+        permissions: role.permissions.map(
+          (entry) =>
+            CHURCH_PERMISSION_LABELS[entry.permission as ChurchPermission],
+        ),
       },
     });
 

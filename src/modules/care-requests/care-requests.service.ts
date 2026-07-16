@@ -212,7 +212,6 @@ export class CareRequestsService {
       requesterName: requester.name,
       churchName: created.church.name,
       type: created.type,
-      message: created.message,
     }).catch((error: unknown) => {
       this.logger.warn(
         `Falha ao notificar destinatário do pedido ${created.id}: ${
@@ -431,7 +430,6 @@ export class CareRequestsService {
     requesterName: string;
     churchName: string;
     type: CareRequestType;
-    message: string | null;
   }) {
     if (!input.recipientEmail) {
       this.logger.warn(
@@ -448,7 +446,6 @@ export class CareRequestsService {
       requesterName: input.requesterName,
       churchName: input.churchName,
       requestTypeLabel: CARE_REQUEST_TYPE_LABELS[input.type],
-      message: input.message,
       inboxUrl,
       appUrl,
     });

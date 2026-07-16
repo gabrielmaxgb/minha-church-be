@@ -48,8 +48,8 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByEmail(email: string): Promise<UserRecord | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const user = await this.prisma.user.findFirst({
+      where: { email: email.toLowerCase(), deletedAt: null },
     });
 
     if (!user) {
@@ -72,8 +72,8 @@ export class UsersService {
       return null;
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { cpf },
+    const user = await this.prisma.user.findFirst({
+      where: { cpf, deletedAt: null },
     });
 
     if (!user) {
@@ -84,8 +84,8 @@ export class UsersService {
   }
 
   async findById(id: string): Promise<UserRecord | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
     });
 
     if (!user) {
@@ -97,7 +97,10 @@ export class UsersService {
 
   async getMemberships(userId: string): Promise<ChurchMembershipRecord[]> {
     const memberships = await this.prisma.churchMembership.findMany({
-      where: { userId },
+      where: {
+        userId,
+        OR: [{ church: { deletedAt: null } }, { isOwner: true }],
+      },
     });
 
     return memberships.map((membership) => ({

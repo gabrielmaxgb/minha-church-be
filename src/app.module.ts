@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 
 import configuration from './config/configuration';
@@ -22,6 +23,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
 import { CareRequestsModule } from './modules/care-requests/care-requests.module';
 import { PrayerRequestsModule } from './modules/prayer-requests/prayer-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { PrivacyModule } from './common/privacy/privacy.module';
 
 @Module({
   imports: [
@@ -29,11 +31,13 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
       isGlobal: true,
       load: [configuration],
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
       throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
     }),
     DatabaseModule,
     CommonModule,
+    PrivacyModule,
     AuthModule,
     BillingModule,
     PaymentsModule,

@@ -103,6 +103,26 @@ export class CreateMemberDto {
   familyId?: string;
 }
 
+export class RecordParentalConsentDto {
+  /** Responsável já cadastrado na mesma igreja (preferencial). */
+  @IsOptional()
+  @IsString()
+  guardianMemberId?: string;
+
+  /** Nome do responsável quando não há vínculo no grafo. */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  guardianName?: string;
+
+  @IsOptional()
+  @IsEmail()
+  guardianEmail?: string;
+
+  @IsBoolean()
+  accepted: boolean;
+}
+
 /**
  * Uma linha da planilha de importação. Propositalmente permissiva: a validação
  * fina roda por linha no serviço, para que uma linha ruim não derrube o lote

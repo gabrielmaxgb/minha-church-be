@@ -111,11 +111,14 @@ model User {
   mustChangePassword   Boolean   @default(false) @map("must_change_password")
   temporaryPasswordEnc String?   @map("temporary_password_enc")
   emailVerifiedAt      DateTime? @map("email_verified_at")
+  /// Soft-delete de conta; purge/anonimização após retenção operacional.
+  deletedAt            DateTime? @map("deleted_at")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
   memberships                   ChurchMembership[]
   memberProfiles                Member[]
+  parentalConsentsRecorded      Member[]           @relation("ParentalConsentRecordedBy")
   ministryEvents                MinistryEvent[]    @relation("EventCreatedBy")
   auditLogs                     AuditLog[]
   passwordResetTokens           PasswordResetToken[]
@@ -131,7 +134,9 @@ model User {
   financeEntriesCreated            FinanceEntry[] @relation("FinanceEntryCreatedBy")
   notifications                    Notification[]     @relation("NotificationRecipient")
   notificationReads                NotificationRead[]
+  legalAcceptances              LegalAcceptance[]
 
+  @@index([deletedAt])
   @@map("users")
 }
 
@@ -148,6 +153,13 @@ model Church {
   stripePriceId          String?              @map("stripe_price_id")
   cancelAtPeriodEnd      Boolean              @default(false) @map("cancel_at_period_end")
   pastDueSince           DateTime?            @map("past_due_since")
+  /// Aceite do Adendo LGPD (DPA) pelo owner.
+  dpaAcceptedAt          DateTime?            @map("dpa_accepted_at")
+  dpaVersion             String?              @map("dpa_version")
+  /// Encerramento solicitado; acesso bloqueado até cancelar ou purge.
+  deletedAt              DateTime?            @map("deleted_at")
+  /// Data em que o job de retenção pode anonimizar o tenant.
+  purgeAfter             DateTime?            @map("purge_after")
   createdAt              DateTime             @default(now()) @map("created_at")
   updatedAt              DateTime             @updatedAt @map("updated_at")
 
@@ -175,8 +187,35 @@ model Church {
   financeEntries       FinanceEntry[]
   eventTicketPurchases EventTicketPurchase[]
   notifications        Notification[]
+  legalAcceptances     LegalAcceptance[]
 
+  @@index([deletedAt])
+  @@index([purgeAfter])
   @@map("churches")
+}
+
+enum LegalDocumentType {
+  terms
+  privacy
+  dpa
+}
+
+/// Registro de aceite de documentos legais (termos, privacidade, DPA).
+model LegalAcceptance {
+  id           String            @id @default(cuid())
+  churchId     String            @map("church_id")
+  userId       String            @map("user_id")
+  documentType LegalDocumentType @map("document_type")
+  version      String
+  acceptedAt   DateTime          @default(now()) @map("accepted_at")
+  ip           String?
+
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([churchId, documentType])
+  @@index([userId])
+  @@map("legal_acceptances")
 }
 
 model BillingTierUpgradeAcknowledgment {
@@ -573,6 +612,13 @@ model Member {
   baptismDate        DateTime?      @map("baptism_date") @db.Date
   membershipDate     DateTime?      @map("membership_date") @db.Date
   userId             String?        @map("user_id")
+  /// Consentimento parental (MVP): preenchido quando menor de 18 tem acesso liberado.
+  parentalConsentAt               DateTime? @map("parental_consent_at")
+  parentalConsentByUserId         String?   @map("parental_consent_by_user_id")
+  parentalConsentGuardianMemberId String?   @map("parental_consent_guardian_member_id")
+  parentalConsentGuardianName     String?   @map("parental_consent_guardian_name")
+  parentalConsentGuardianEmail    String?   @map("parental_consent_guardian_email")
+  parentalConsentVersion          String?   @map("parental_consent_version")
   deletedAt          DateTime?      @map("deleted_at")
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
@@ -580,6 +626,9 @@ model Member {
   church         Church              @relation(fields: [churchId], references: [id], onDelete: Cascade)
   family         Family?             @relation(fields: [familyId], references: [id], onDelete: SetNull)
   user           User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  parentalConsentByUser User?        @relation("ParentalConsentRecordedBy", fields: [parentalConsentByUserId], references: [id], onDelete: SetNull)
+  parentalConsentGuardian Member?    @relation("ParentalConsentGuardian", fields: [parentalConsentGuardianMemberId], references: [id], onDelete: SetNull)
+  parentalConsentWards Member[]      @relation("ParentalConsentGuardian")
   ministryLinks  MemberMinistry[]
   availabilities EventAvailability[]
   eventRoleProfiles MemberEventRoleProfile[]
@@ -599,6 +648,7 @@ model Member {
   @@unique([churchId, userId])
   @@index([churchId, status])
   @@index([churchId, familyId])
+  @@index([deletedAt])
   @@map("members")
 }
 

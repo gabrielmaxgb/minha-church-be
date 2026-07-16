@@ -12,11 +12,14 @@ export interface CareRequestEmailContent {
   requesterName: string;
   churchName: string;
   requestTypeLabel: string;
-  message: string | null;
   inboxUrl: string;
   appUrl: string;
 }
 
+/**
+ * Aviso genérico — sem corpo da mensagem pastoral.
+ * O conteúdo sensível fica só no app (menor perímetro de vazamento).
+ */
 export function buildCareRequestEmailHtml(
   input: CareRequestEmailContent,
 ): string {
@@ -25,9 +28,6 @@ export function buildCareRequestEmailHtml(
   const churchName = escapeHtml(input.churchName);
   const requestTypeLabel = escapeHtml(input.requestTypeLabel);
   const inboxUrl = escapeHtml(input.inboxUrl);
-  const messageBlock = input.message
-    ? `<p style="margin:16px 0 0;padding:14px 16px;background:#f5f5f2;border-radius:12px;font-size:14px;line-height:1.5;color:#3a3a36;white-space:pre-wrap;">${escapeHtml(input.message)}</p>`
-    : `<p style="margin:16px 0 0;font-size:14px;color:#6f6f6a;">Nenhuma mensagem adicional foi enviada.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -48,7 +48,9 @@ export function buildCareRequestEmailHtml(
               <p style="margin:0;font-size:15px;line-height:1.55;color:#3a3a36;">
                 Olá, ${recipientName}. <strong>${requesterName}</strong> pediu ${requestTypeLabel.toLowerCase()} em <strong>${churchName}</strong>.
               </p>
-              ${messageBlock}
+              <p style="margin:16px 0 0;font-size:14px;line-height:1.5;color:#6f6f6a;">
+                Por privacidade, a mensagem (se houver) aparece somente no app — este e-mail não inclui o conteúdo do pedido.
+              </p>
               <p style="margin:24px 0 0;">
                 <a href="${inboxUrl}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#141413;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">Abrir no app</a>
               </p>
@@ -68,15 +70,13 @@ export function buildCareRequestEmailHtml(
 export function buildCareRequestEmailText(
   input: CareRequestEmailContent,
 ): string {
-  const messagePart = input.message
-    ? `\nMensagem:\n${input.message}\n`
-    : '\nNenhuma mensagem adicional foi enviada.\n';
-
   return [
     `Olá, ${input.recipientName}.`,
     '',
     `${input.requesterName} pediu ${input.requestTypeLabel.toLowerCase()} em ${input.churchName}.`,
-    messagePart,
+    '',
+    'Por privacidade, a mensagem (se houver) aparece somente no app — este e-mail não inclui o conteúdo do pedido.',
+    '',
     `Abrir no app: ${input.inboxUrl}`,
     '',
     'Marque a solicitação como visualizada no app para o solicitante saber que você viu o pedido.',
