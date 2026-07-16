@@ -204,6 +204,27 @@ export class StripeConnectService {
   }
 
   /**
+   * Login link one-shot para o Express Dashboard da conta conectada.
+   * Só funciona depois que o onboarding enviou os dados (`details_submitted`).
+   */
+  async createLoginLink(accountId: string): Promise<Stripe.LoginLink> {
+    this.assertConfigured();
+
+    try {
+      return await this.stripe.accounts.createLoginLink(accountId);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'erro desconhecido';
+      this.logger.warn(
+        `Falha ao criar login link Express para ${accountId}: ${message}`,
+      );
+      throw new BadRequestException(
+        'Não foi possível abrir o painel Stripe. Conclua o cadastro de recebimentos e tente de novo.',
+      );
+    }
+  }
+
+  /**
    * Prefixa o perfil de negócio como organização religiosa (MCC 8661).
    * Rodado na criação e antes do Account Link, pra o onboarding hospedado
    * não parecer e-commerce genérico.

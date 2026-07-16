@@ -1900,6 +1900,35 @@ export class PaymentsService {
     return { url };
   }
 
+  async createExpressDashboardLink(
+    churchId: string,
+  ): Promise<{ url: string }> {
+    this.stripeConnect.assertConfigured();
+
+    const account = await this.prisma.churchPaymentAccount.findUnique({
+      where: { churchId },
+      select: { stripeAccountId: true, detailsSubmitted: true },
+    });
+
+    if (!account?.stripeAccountId) {
+      throw new BadRequestException(
+        'Ative os recebimentos antes de abrir o painel Stripe.',
+      );
+    }
+
+    if (!account.detailsSubmitted) {
+      throw new BadRequestException(
+        'Conclua o cadastro de recebimentos antes de abrir o painel Stripe.',
+      );
+    }
+
+    const link = await this.stripeConnect.createLoginLink(
+      account.stripeAccountId,
+    );
+
+    return { url: link.url };
+  }
+
   async syncConnectAccount(churchId: string): Promise<ConnectStatusResult> {
     this.stripeConnect.assertConfigured();
 
