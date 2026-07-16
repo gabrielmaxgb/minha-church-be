@@ -90,6 +90,12 @@ export class PaymentsController {
     return this.paymentsService.createAccountLink(churchId);
   }
 
+  @Post('connect/dashboard-link')
+  @UseGuards(ChurchOwnerGuard)
+  createExpressDashboardLink(@Param('churchId') churchId: string) {
+    return this.paymentsService.createExpressDashboardLink(churchId);
+  }
+
   @Post('connect/sync')
   @UseGuards(ChurchOwnerGuard)
   syncConnectAccount(@Param('churchId') churchId: string) {
