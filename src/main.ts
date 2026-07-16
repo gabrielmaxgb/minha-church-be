@@ -21,8 +21,16 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  // Suporta uma origem ou lista separada por vírgula
+  // (ex.: https://minhachurch.com,https://www.minhachurch.com).
+  const corsOriginRaw = configService.get<string>('corsOrigin') ?? '';
+  const corsOrigins = corsOriginRaw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: configService.get<string>('corsOrigin'),
+    origin: corsOrigins.length <= 1 ? corsOrigins[0] : corsOrigins,
     credentials: true,
   });
 
