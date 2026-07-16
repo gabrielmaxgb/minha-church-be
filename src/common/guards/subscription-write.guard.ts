@@ -14,11 +14,10 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * Keeps member CRUD + lightweight read-acks usable without an active plan.
  */
 function isAllowedWriteWhenLocked(method: string, path: string): boolean {
+  // Cadastrar membro (visitante/inativo) continua liberado; o
+  // MembersService bloqueia só quando o alvo vira ativo (acesso à plataforma).
+  // Editar membro existente fica bloqueado (sem exceção de PATCH aqui).
   if (method === 'POST' && /\/churches\/[^/]+\/members$/.test(path)) {
-    return true;
-  }
-
-  if (method === 'PATCH' && /\/churches\/[^/]+\/members\/[^/]+$/.test(path)) {
     return true;
   }
 
@@ -34,7 +33,26 @@ function isAllowedWriteWhenLocked(method: string, path: string): boolean {
   if (
     method === 'POST' &&
     (/\/churches\/[^/]+\/announcements\/read-all$/.test(path) ||
-      /\/churches\/[^/]+\/announcements\/[^/]+\/read$/.test(path))
+      /\/churches\/[^/]+\/announcements\/[^/]+\/read$/.test(path) ||
+      /\/churches\/[^/]+\/notifications\/[^/]+\/read$/.test(path))
+  ) {
+    return true;
+  }
+
+  if (
+    method === 'POST' &&
+    (/\/churches\/[^/]+\/care-requests$/.test(path) ||
+      /\/churches\/[^/]+\/care-requests\/mine\/ack-viewed$/.test(path) ||
+      /\/churches\/[^/]+\/care-requests\/[^/]+\/view$/.test(path))
+  ) {
+    return true;
+  }
+
+  if (
+    (method === 'POST' || method === 'DELETE') &&
+    (/\/churches\/[^/]+\/prayer-requests$/.test(path) ||
+      /\/churches\/[^/]+\/prayer-requests\/[^/]+$/.test(path) ||
+      /\/churches\/[^/]+\/prayer-requests\/[^/]+\/pray$/.test(path))
   ) {
     return true;
   }

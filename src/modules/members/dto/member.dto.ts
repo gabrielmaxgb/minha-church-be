@@ -1,6 +1,9 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -98,6 +101,47 @@ export class CreateMemberDto {
   @IsOptional()
   @IsString()
   familyId?: string;
+}
+
+/**
+ * Uma linha da planilha de importação. Propositalmente permissiva: a validação
+ * fina roda por linha no serviço, para que uma linha ruim não derrube o lote
+ * inteiro (sucesso parcial + dry-run). Só o formato bruto é conferido aqui.
+ */
+export interface ImportMemberRow {
+  name?: unknown;
+  email?: unknown;
+  cpf?: unknown;
+  phone?: unknown;
+  phoneSecondary?: unknown;
+  birthDate?: unknown;
+  gender?: unknown;
+  maritalStatus?: unknown;
+  weddingAnniversary?: unknown;
+  street?: unknown;
+  number?: unknown;
+  complement?: unknown;
+  neighborhood?: unknown;
+  city?: unknown;
+  state?: unknown;
+  zipCode?: unknown;
+  status?: unknown;
+  visitorSince?: unknown;
+  baptismDate?: unknown;
+  membershipDate?: unknown;
+  familyId?: unknown;
+}
+
+export class ImportMembersDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(1000)
+  rows: ImportMemberRow[];
+
+  /** Quando true, apenas valida e devolve o relatório — não grava nada. */
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
 }
 
 export class UpdateMemberDto {
@@ -243,6 +287,21 @@ export class CreateMemberRelationDto {
   @IsString()
   toMemberId: string;
 
-  @IsEnum(['spouse', 'parent'] as const)
-  type: 'spouse' | 'parent';
+  @IsEnum([
+    'spouse',
+    'parent',
+    'sibling',
+    'grandparent',
+    'step_parent',
+    'parent_in_law',
+    'uncle',
+  ] as const)
+  type:
+    | 'spouse'
+    | 'parent'
+    | 'sibling'
+    | 'grandparent'
+    | 'step_parent'
+    | 'parent_in_law'
+    | 'uncle';
 }

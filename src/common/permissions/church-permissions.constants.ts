@@ -21,6 +21,8 @@ export const ADMIN_ACTION_PERMISSIONS: readonly ChurchPermission[] = [
   ChurchPermission.communication_manage,
   ChurchPermission.roles_manage,
   ChurchPermission.memberships_manage,
+  ChurchPermission.counseling_receive,
+  ChurchPermission.receivables_manage,
 ] as const;
 
 export const ALL_CHURCH_PERMISSIONS: readonly ChurchPermission[] = [
@@ -80,6 +82,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
         ChurchPermission.events_create_church_wide,
         ChurchPermission.communication_manage,
         ChurchPermission.memberships_manage,
+        ChurchPermission.counseling_receive,
       ],
     },
     {
@@ -104,6 +107,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
         ChurchPermission.dashboard_access,
         ChurchPermission.finances_access,
         ChurchPermission.reports_access,
+        ChurchPermission.receivables_manage,
       ],
     },
     {
@@ -114,7 +118,7 @@ export const DEFAULT_CHURCH_ROLE_TEMPLATES: readonly DefaultChurchRoleTemplate[]
     },
     {
       systemKey: 'member',
-      name: 'Membro',
+      name: 'Membro/todos',
       sortOrder: 60,
       permissions: [...MEMBER_SECTION_ACCESS],
     },
@@ -133,22 +137,24 @@ export const PERMISSION_TO_USER_PERMISSIONS_KEY: Record<
   [ChurchPermission.ministries_manage]: 'ministries',
   [ChurchPermission.events_create_church_wide]: 'activities',
   [ChurchPermission.finances_access]: 'finances',
+  [ChurchPermission.receivables_manage]: 'finances',
   [ChurchPermission.communication_access]: 'communication',
   [ChurchPermission.communication_manage]: 'communication',
   [ChurchPermission.reports_access]: 'reports',
   [ChurchPermission.settings_access]: 'settings',
   [ChurchPermission.roles_manage]: 'roles',
   [ChurchPermission.memberships_manage]: 'memberships',
+  [ChurchPermission.counseling_receive]: 'counseling',
 };
 
 export const CHURCH_PERMISSION_LABELS: Record<ChurchPermission, string> = {
   [ChurchPermission.dashboard_access]: 'Dashboard',
   [ChurchPermission.members_access]: 'Membros',
   [ChurchPermission.ministries_access]: 'Ministérios',
-  [ChurchPermission.activities_access]: 'Atividades',
+  [ChurchPermission.activities_access]: 'Eventos e Atividades',
   [ChurchPermission.schedules_access]: 'Minhas escalas',
   [ChurchPermission.finances_access]: 'Finanças',
-  [ChurchPermission.communication_access]: 'Comunicação',
+  [ChurchPermission.communication_access]: 'Quadro de avisos',
   [ChurchPermission.reports_access]: 'Relatórios',
   [ChurchPermission.settings_access]: 'Configurações',
   [ChurchPermission.members_manage]: 'Gerenciar membros',
@@ -158,4 +164,7 @@ export const CHURCH_PERMISSION_LABELS: Record<ChurchPermission, string> = {
   [ChurchPermission.communication_manage]: 'Gerenciar comunicados',
   [ChurchPermission.roles_manage]: 'Gerenciar cargos da igreja',
   [ChurchPermission.memberships_manage]: 'Atribuir cargos a usuários',
+  [ChurchPermission.counseling_receive]:
+    'Receber pedidos de aconselhamento e visitas',
+  [ChurchPermission.receivables_manage]: 'Gerenciar recebimentos',
 };

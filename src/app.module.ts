@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { BillingModule } from './modules/billing/billing.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MembersModule } from './modules/members/members.module';
 import { MinistriesModule } from './modules/ministries/ministries.module';
@@ -18,6 +19,9 @@ import { ChurchMembershipsModule } from './modules/church-memberships/church-mem
 import { ChurchRolesModule } from './modules/church-roles/church-roles.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
+import { CareRequestsModule } from './modules/care-requests/care-requests.module';
+import { PrayerRequestsModule } from './modules/prayer-requests/prayer-requests.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -32,6 +36,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     CommonModule,
     AuthModule,
     BillingModule,
+    PaymentsModule,
     DashboardModule,
     MembersModule,
     MinistriesModule,
@@ -40,6 +45,9 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     ChurchRolesModule,
     AuditLogsModule,
     AnnouncementsModule,
+    CareRequestsModule,
+    PrayerRequestsModule,
+    NotificationsModule,
   ],
   providers: [
     {

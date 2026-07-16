@@ -28,6 +28,11 @@ import {
   buildMemberAccountLinkedEmailText,
   type MemberAccountLinkedEmailContent,
 } from '../templates/member-account-linked-email.template';
+import {
+  buildCareRequestEmailHtml,
+  buildCareRequestEmailText,
+  type CareRequestEmailContent,
+} from '../templates/care-request-email.template';
 
 @Injectable()
 export class EmailService {
@@ -169,6 +174,28 @@ export class EmailService {
       subject: 'Você foi adicionado a uma igreja — MinhaChurch',
       html: buildMemberAccountLinkedEmailHtml(content),
       text: buildMemberAccountLinkedEmailText(content),
+    });
+  }
+
+  async sendCareRequestEmail(
+    to: string,
+    content: CareRequestEmailContent,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY não configurada — e-mail de aconselhamento/visita não enviado para ${to}.`,
+      );
+      return;
+    }
+
+    const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      subject: `Nova solicitação de ${content.requestTypeLabel.toLowerCase()} — MinhaChurch`,
+      html: buildCareRequestEmailHtml(content),
+      text: buildCareRequestEmailText(content),
     });
   }
 

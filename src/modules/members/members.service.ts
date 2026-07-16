@@ -2,12 +2,13 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MemberStatus, Prisma } from '@prisma/client';
+import { Gender, MaritalStatus, MemberStatus, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { generateTemporaryPassword } from '../../common/utils/credentials';
@@ -21,13 +22,18 @@ import {
 } from '../../common/utils/cpf';
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
+import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BillingService } from '../billing/billing.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PaymentsService } from '../payments/payments.service';
 import { defaultMemberMinistryInstruments } from '../ministries/ministry-service-functions';
 import {
   AssignMemberMinistryDto,
   AckMinistryCatalogNotificationsDto,
   CreateMemberDto,
+  ImportMemberRow,
+  ImportMembersDto,
   ListMembersQueryDto,
   UpdateMemberDto,
 } from './dto/member.dto';
@@ -41,10 +47,13 @@ import {
   parseOptionalDate,
   toMemberResponse,
   type CreateMemberResponse,
+  type ImportMembersResult,
+  type MemberImportRowResult,
   type FamilyGraphResponse,
   type FamilyResponse,
   type MemberAccountCredentials,
   type MemberRelationResponse,
+  type MemberRelationType,
   type MemberResponse,
   type ReceiveMemberResponse,
   type UpdateMemberResponse,
@@ -65,6 +74,22 @@ const memberInclude = {
   },
 } satisfies Prisma.MemberInclude;
 
+/**
+ * Include mínimo para o create: um membro recém-criado nunca tem vínculos de
+ * ministério, então evitamos as queries extras de `ministryLinks`.
+ */
+const memberCreateInclude = { family: true } satisfies Prisma.MemberInclude;
+
+/** Monta a resposta de um membro recém-criado (sem ministérios) evitando reler o banco. */
+function toCreatedMemberResponse(
+  member: Prisma.MemberGetPayload<{ include: typeof memberCreateInclude }>,
+): MemberResponse {
+  return toMemberResponse({
+    ...member,
+    ministryLinks: [],
+  } as MemberWithMinistries);
+}
+
 @Injectable()
 export class MembersService {
   private readonly logger = new Logger(MembersService.name);
@@ -75,6 +100,9 @@ export class MembersService {
     private readonly billingService: BillingService,
     private readonly emailService: EmailService,
     private readonly churchPermissions: ChurchPermissionsService,
+    private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly paymentsService: PaymentsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async findAll(
@@ -140,7 +168,7 @@ export class MembersService {
   async findOne(churchId: string, memberId: string): Promise<MemberResponse> {
     const member = await this.getMemberOrThrow(churchId, memberId);
 
-    return toMemberResponse(member);
+    return this.toMemberResponseWithGiving(churchId, member);
   }
 
   async findMine(userId: string, churchId: string): Promise<MemberResponse> {
@@ -153,7 +181,10 @@ export class MembersService {
       throw new NotFoundException('Cadastro pastoral não encontrado.');
     }
 
-    return toMemberResponse(member as MemberWithMinistries);
+    return this.toMemberResponseWithGiving(
+      churchId,
+      member as MemberWithMinistries,
+    );
   }
 
   async findMyMinistryNotifications(
@@ -250,8 +281,9 @@ export class MembersService {
     const email = dto.email?.trim().toLowerCase() || null;
     const cpf = dto.cpf ? normalizeCpf(dto.cpf) : null;
     const status = dto.status ?? MemberStatus.visitor;
+    const isActive = status === MemberStatus.active;
 
-    if (status === MemberStatus.active && !email && !cpf) {
+    if (isActive && !email && !cpf) {
       throw new BadRequestException(
         'Informe e-mail ou CPF para liberar o acesso ao sistema.',
       );
@@ -261,27 +293,41 @@ export class MembersService {
       throw new BadRequestException('CPF inválido.');
     }
 
-    if (email) {
-      await this.ensureEmailAvailable(churchId, email);
+    // Cadastrar visitante/inativo é sempre liberado; receber como membro ativo
+    // (que dá acesso à plataforma) é recurso premium.
+    if (isActive) {
+      await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
     }
 
-    if (cpf) {
-      await this.ensureCpfAvailable(churchId, cpf);
+    // Pré-checagens independentes rodam em paralelo (cada uma é ~1 RTT ao Neon).
+    // `allSettled` preserva a ordem de prioridade das mensagens de erro.
+    // Login/vínculo multi-igreja fica em syncMemberAppAccess → provisionMemberLogin
+    // (mesmo caminho de update/receive) — não duplicar regra aqui.
+    const settled = await Promise.allSettled([
+      email ? this.ensureEmailAvailable(churchId, email) : Promise.resolve(),
+      cpf ? this.ensureCpfAvailable(churchId, cpf) : Promise.resolve(),
+      isActive
+        ? this.assertActiveMemberTierAllowed(churchId)
+        : Promise.resolve(),
+      this.resolveFamilyId(churchId, dto.familyId),
+    ] as const);
+
+    for (const result of settled) {
+      if (result.status === 'rejected') {
+        throw result.reason;
+      }
     }
 
-    if (status === MemberStatus.active) {
-      await this.ensureUserCredentialsAvailable(email, cpf);
-      await this.assertActiveMemberTierAllowed(churchId);
-    }
-
-    const familyId = await this.resolveFamilyId(churchId, dto.familyId);
+    const familyId = (
+      settled[3] as PromiseFulfilledResult<string | null | undefined>
+    ).value;
 
     const visitorSince =
       parseOptionalDate(dto.visitorSince) ??
       (status === MemberStatus.visitor ? new Date() : null);
     const membershipDate =
       parseOptionalDate(dto.membershipDate) ??
-      (status === MemberStatus.active ? new Date() : null);
+      (isActive ? new Date() : null);
 
     const memberData = {
       churchId,
@@ -311,51 +357,395 @@ export class MembersService {
       membershipDate,
     };
 
-    if (status !== MemberStatus.active) {
+    if (!isActive) {
       const member = await this.prisma.member.create({
         data: memberData,
-        include: memberInclude,
+        include: memberCreateInclude,
       });
 
-      await this.syncMemberCount(churchId);
-
-      return toMemberResponse(member);
+      // Visitante/inativo não altera a contagem de membros ativos, então
+      // pulamos o recount + sync de billing.
+      return toCreatedMemberResponse(member);
     }
 
-    let account!: MemberAccountCredentials;
-
-    const member = await this.prisma.$transaction(async (tx) => {
+    // Membro ativo: criar cadastro pastoral e provisionar login pelo MESMO
+    // caminho de update/receive (link de conta existente ou User novo).
+    // Evita regressão de regra de negócio espalhada em dois fluxos.
+    const { member, account } = await this.prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
         data: memberData,
-        include: memberInclude,
+        include: memberCreateInclude,
       });
 
-      const provisioned = await this.syncMemberAppAccess(tx, churchId, created);
+      const provisioned = await this.syncMemberAppAccess(tx, churchId, {
+        id: created.id,
+        name: created.name,
+        email: created.email,
+        cpf: created.cpf,
+        userId: created.userId,
+        status: created.status,
+      });
 
-      if (!provisioned) {
-        throw new BadRequestException(
-          'Não foi possível liberar o acesso ao sistema.',
-        );
-      }
-
-      account = provisioned;
-
-      return tx.member.findUniqueOrThrow({
+      const refreshed = await tx.member.findFirstOrThrow({
         where: { id: created.id },
-        include: memberInclude,
+        include: memberCreateInclude,
       });
+
+      return { member: refreshed, account: provisioned };
     });
 
     await this.syncMemberCount(churchId);
 
-    if (account.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    if (account) {
+      await this.emitAccountAccessNotifications(churchId, account, member.name);
     }
 
     return {
-      ...toMemberResponse(member),
-      account,
+      ...toCreatedMemberResponse(member),
+      ...(account ? { account } : {}),
     };
+  }
+
+  /**
+   * Importa vários membros de uma vez (planilha).
+   *
+   * - `dryRun` valida sem gravar (alimenta a pré-visualização).
+   * - Processa linha a linha com **sucesso parcial**: uma linha inválida vira
+   *   um erro no relatório em vez de derrubar o lote.
+   * - Reusa `create()` na execução real, preservando TODAS as regras (CPF/email
+   *   únicos, provisionamento de login de ativo, defaults de data, limite de plano).
+   * - Detecta duplicados dentro da própria planilha antes de tocar o banco.
+   *
+   * O cruzamento de faixa de plano (tier) é resolvido ANTES pelo cliente (uma
+   * confirmação do dono); aqui cada ativo ainda passa por `create()`, que só
+   * erra se o dono não tiver autorizado a faixa.
+   */
+  async importMembers(
+    churchId: string,
+    dto: ImportMembersDto,
+  ): Promise<ImportMembersResult> {
+    const rows = Array.isArray(dto.rows) ? dto.rows : [];
+    const dryRun = dto.dryRun === true;
+
+    const results: MemberImportRowResult[] = [];
+    const seenEmail = new Map<string, number>();
+    const seenCpf = new Map<string, number>();
+    let created = 0;
+    let errors = 0;
+    let activeCount = 0;
+
+    for (let index = 0; index < rows.length; index++) {
+      const raw = rows[index] ?? {};
+      const displayName = this.coerceImportString(raw.name) ?? null;
+
+      try {
+        const { dto: rowDto, email, cpf, status } =
+          this.buildCreateDtoFromRow(raw);
+
+        // Duplicados dentro da própria planilha (a linha 1 é o cabeçalho).
+        if (email && seenEmail.has(email)) {
+          throw new BadRequestException(
+            `E-mail repetido na planilha (linha ${seenEmail.get(email)! + 2}).`,
+          );
+        }
+        if (cpf && seenCpf.has(cpf)) {
+          throw new BadRequestException(
+            `CPF repetido na planilha (linha ${seenCpf.get(cpf)! + 2}).`,
+          );
+        }
+        if (email) seenEmail.set(email, index);
+        if (cpf) seenCpf.set(cpf, index);
+
+        if (dryRun) {
+          await this.validateImportRowAgainstDb(churchId, {
+            email,
+            cpf,
+            familyId: rowDto.familyId,
+          });
+          results.push({ index, name: rowDto.name, outcome: 'valid', status });
+        } else {
+          await this.create(churchId, rowDto);
+          results.push({
+            index,
+            name: rowDto.name,
+            outcome: 'created',
+            status,
+          });
+          created++;
+        }
+
+        if (status === MemberStatus.active) {
+          activeCount++;
+        }
+      } catch (error) {
+        results.push({
+          index,
+          name: displayName,
+          outcome: 'error',
+          status: null,
+          reason: this.importErrorMessage(error),
+        });
+        errors++;
+      }
+    }
+
+    return {
+      dryRun,
+      total: rows.length,
+      created,
+      errors,
+      activeCount,
+      results,
+    };
+  }
+
+  /** Checagens de banco read-only para o dry-run (sem gravar). */
+  private async validateImportRowAgainstDb(
+    churchId: string,
+    { email, cpf, familyId }: { email?: string; cpf?: string; familyId?: string },
+  ): Promise<void> {
+    await Promise.all([
+      email ? this.ensureEmailAvailable(churchId, email) : Promise.resolve(),
+      cpf ? this.ensureCpfAvailable(churchId, cpf) : Promise.resolve(),
+      familyId
+        ? this.resolveFamilyId(churchId, familyId)
+        : Promise.resolve(undefined),
+    ]);
+  }
+
+  /** Constrói um CreateMemberDto validado a partir de uma linha bruta da planilha. */
+  private buildCreateDtoFromRow(raw: ImportMemberRow): {
+    dto: CreateMemberDto;
+    email?: string;
+    cpf?: string;
+    status: MemberStatus;
+  } {
+    const name = this.coerceImportString(raw.name);
+    if (!name || name.length < 2) {
+      throw new BadRequestException('Nome é obrigatório (mínimo 2 letras).');
+    }
+
+    const email = this.coerceImportString(raw.email)?.toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('E-mail inválido.');
+    }
+
+    let cpf: string | undefined;
+    const rawCpf = this.coerceImportString(raw.cpf);
+    if (rawCpf) {
+      cpf = normalizeCpf(rawCpf);
+      if (!isValidCpf(cpf)) {
+        throw new BadRequestException('CPF inválido.');
+      }
+    }
+
+    const status = this.normalizeImportStatus(raw.status);
+    if (status === MemberStatus.active && !email && !cpf) {
+      throw new BadRequestException(
+        'Membro ativo precisa de e-mail ou CPF (é o login de acesso).',
+      );
+    }
+
+    const maritalStatus = this.normalizeImportMaritalStatus(raw.maritalStatus);
+
+    const dto: CreateMemberDto = {
+      name,
+      email,
+      cpf,
+      status,
+      phone: this.coerceImportString(raw.phone),
+      phoneSecondary: this.coerceImportString(raw.phoneSecondary),
+      gender: this.normalizeImportGender(raw.gender),
+      maritalStatus,
+      weddingAnniversary:
+        maritalStatus === MaritalStatus.married
+          ? this.normalizeImportDate(raw.weddingAnniversary, 'Aniversário de casamento')
+          : undefined,
+      birthDate: this.normalizeImportDate(raw.birthDate, 'Data de nascimento'),
+      street: this.coerceImportString(raw.street),
+      number: this.coerceImportString(raw.number),
+      complement: this.coerceImportString(raw.complement),
+      neighborhood: this.coerceImportString(raw.neighborhood),
+      city: this.coerceImportString(raw.city),
+      state: this.coerceImportString(raw.state)?.toUpperCase().slice(0, 2),
+      zipCode: this.coerceImportString(raw.zipCode)?.replace(/\D/g, '') || undefined,
+      visitorSince: this.normalizeImportDate(raw.visitorSince, 'Membro desde (visita)'),
+      baptismDate: this.normalizeImportDate(raw.baptismDate, 'Data de batismo'),
+      membershipDate: this.normalizeImportDate(raw.membershipDate, 'Data de membresia'),
+      familyId: this.coerceImportString(raw.familyId),
+    };
+
+    return { dto, email, cpf, status };
+  }
+
+  private coerceImportString(value: unknown): string | undefined {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    return undefined;
+  }
+
+  /** Normaliza texto para comparação: minúsculas, sem acento. */
+  private canonImportToken(value: unknown): string | undefined {
+    const str = this.coerceImportString(value);
+    return str
+      ? str
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+      : undefined;
+  }
+
+  private normalizeImportStatus(value: unknown): MemberStatus {
+    const token = this.canonImportToken(value);
+    if (!token) {
+      return MemberStatus.visitor;
+    }
+    const map: Record<string, MemberStatus> = {
+      visitor: MemberStatus.visitor,
+      visitante: MemberStatus.visitor,
+      visita: MemberStatus.visitor,
+      active: MemberStatus.active,
+      ativo: MemberStatus.active,
+      membro: MemberStatus.active,
+      inactive: MemberStatus.inactive,
+      inativo: MemberStatus.inactive,
+    };
+    const status = map[token];
+    if (!status) {
+      throw new BadRequestException(
+        'Situação inválida (use visitante, ativo ou inativo).',
+      );
+    }
+    return status;
+  }
+
+  private normalizeImportGender(value: unknown): Gender | undefined {
+    const token = this.canonImportToken(value);
+    if (!token) {
+      return undefined;
+    }
+    const ignored = new Set([
+      'other',
+      'outro',
+      'prefer_not_to_say',
+      'prefiro nao dizer',
+      'prefiro nao informar',
+      'nao informar',
+      'nao informado',
+    ]);
+    if (ignored.has(token)) {
+      return undefined;
+    }
+
+    const map: Record<string, Gender> = {
+      male: Gender.male,
+      masculino: Gender.male,
+      m: Gender.male,
+      female: Gender.female,
+      feminino: Gender.female,
+      f: Gender.female,
+    };
+    const gender = map[token];
+    if (!gender) {
+      throw new BadRequestException(
+        'Sexo inválido (use masculino ou feminino).',
+      );
+    }
+    return gender;
+  }
+
+  private normalizeImportMaritalStatus(
+    value: unknown,
+  ): MaritalStatus | undefined {
+    const token = this.canonImportToken(value);
+    if (!token) {
+      return undefined;
+    }
+    const map: Record<string, MaritalStatus> = {
+      single: MaritalStatus.single,
+      solteiro: MaritalStatus.single,
+      solteira: MaritalStatus.single,
+      married: MaritalStatus.married,
+      casado: MaritalStatus.married,
+      casada: MaritalStatus.married,
+      divorced: MaritalStatus.divorced,
+      divorciado: MaritalStatus.divorced,
+      divorciada: MaritalStatus.divorced,
+      widowed: MaritalStatus.widowed,
+      viuvo: MaritalStatus.widowed,
+      viuva: MaritalStatus.widowed,
+    };
+    const marital = map[token];
+    if (!marital) {
+      throw new BadRequestException(
+        'Estado civil inválido (use solteiro, casado, divorciado ou viúvo).',
+      );
+    }
+    return marital;
+  }
+
+  /** Aceita DD/MM/AAAA (preferido) ou AAAA-MM-DD e devolve ISO (AAAA-MM-DD). */
+  private normalizeImportDate(
+    value: unknown,
+    label: string,
+  ): string | undefined {
+    const str = this.coerceImportString(value);
+    if (!str) {
+      return undefined;
+    }
+
+    let year: number;
+    let month: number;
+    let day: number;
+
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(str);
+
+    if (br) {
+      day = Number(br[1]);
+      month = Number(br[2]);
+      year = Number(br[3]);
+    } else if (iso) {
+      year = Number(iso[1]);
+      month = Number(iso[2]);
+      day = Number(iso[3]);
+    } else {
+      throw new BadRequestException(
+        `${label} inválida (use DD/MM/AAAA, ex.: 20/05/1990).`,
+      );
+    }
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+    const valid =
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day;
+    if (!valid) {
+      throw new BadRequestException(`${label} inválida.`);
+    }
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${year}-${pad(month)}-${pad(day)}`;
+  }
+
+  private importErrorMessage(error: unknown): string {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (typeof response === 'string') {
+        return response;
+      }
+      if (response && typeof response === 'object' && 'message' in response) {
+        const message = (response as { message: unknown }).message;
+        return Array.isArray(message) ? message.join('; ') : String(message);
+      }
+      return error.message;
+    }
+    return 'Erro inesperado ao importar esta linha.';
   }
 
   async update(
@@ -408,6 +798,7 @@ export class MembersService {
       nextStatus === MemberStatus.active &&
       existing.status !== MemberStatus.active
     ) {
+      await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
       await this.assertActiveMemberTierAllowed(churchId);
     }
 
@@ -504,12 +895,26 @@ export class MembersService {
 
     await this.syncMemberCount(churchId);
 
-    if (account?.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    if (account) {
+      await this.emitAccountAccessNotifications(
+        churchId,
+        account,
+        member.name,
+      );
+    }
+
+    if (
+      previousStatus === MemberStatus.active &&
+      nextStatus !== MemberStatus.active
+    ) {
+      await this.paymentsService.cancelOpenGivingSubscriptionsForMember(
+        churchId,
+        memberId,
+      );
     }
 
     return {
-      ...toMemberResponse(member),
+      ...(await this.toMemberResponseWithGiving(churchId, member)),
       ...(account ? { account } : {}),
     };
   }
@@ -521,6 +926,12 @@ export class MembersService {
       where: { id: memberId },
       data: { deletedAt: new Date() },
     });
+
+    // Após soft-delete: ainda vinculados por donorMemberId — cancela cobranças futuras.
+    await this.paymentsService.cancelOpenGivingSubscriptionsForMember(
+      churchId,
+      memberId,
+    );
 
     await this.syncMemberCount(churchId);
   }
@@ -541,6 +952,7 @@ export class MembersService {
       );
     }
 
+    await this.subscriptionPolicy.assertCanUseGatedFeature(churchId);
     await this.assertActiveMemberTierAllowed(churchId);
 
     let account: MemberAccountCredentials | undefined;
@@ -566,8 +978,12 @@ export class MembersService {
 
     await this.syncMemberCount(churchId);
 
-    if (account?.kind === 'linked') {
-      await this.notifyExistingUserLinkedToChurch(churchId, account.login);
+    if (account) {
+      await this.emitAccountAccessNotifications(
+        churchId,
+        account,
+        updated.name,
+      );
     }
 
     return {
@@ -731,6 +1147,22 @@ export class MembersService {
         'Sem permissão para gerenciar a equipe deste ministério.',
       );
     }
+  }
+
+  private async toMemberResponseWithGiving(
+    churchId: string,
+    member: MemberWithMinistries,
+  ): Promise<MemberResponse> {
+    const activeGivingSubscriptionsCount =
+      await this.paymentsService.countOpenGivingSubscriptionsForMember(
+        churchId,
+        member.id,
+      );
+
+    return {
+      ...toMemberResponse(member),
+      activeGivingSubscriptionsCount,
+    };
   }
 
   private async getMemberOrThrow(
@@ -935,11 +1367,12 @@ export class MembersService {
       login: loginIdentifier,
       temporaryPassword,
       mustChangePassword: true,
+      userId: user.id,
     };
   }
 
   private async findExistingUserForLogin(
-    tx: Prisma.TransactionClient,
+    tx: Prisma.TransactionClient | PrismaService,
     email: string | null,
     cpf: string | null,
   ): Promise<{
@@ -1106,12 +1539,38 @@ export class MembersService {
       kind: 'linked',
       login,
       linkedExistingAccount: true,
+      userId: user.id,
     };
+  }
+
+  private async emitAccountAccessNotifications(
+    churchId: string,
+    account: MemberAccountCredentials,
+    memberName: string,
+  ): Promise<void> {
+    if (account.kind === 'linked') {
+      await this.notifyExistingUserLinkedToChurch(
+        churchId,
+        account.login,
+        account.userId,
+      );
+      return;
+    }
+
+    this.notificationsService.schedule(
+      this.notificationsService.emitPendingAccess({
+        churchId,
+        pendingUserId: account.userId,
+        pendingUserName: memberName,
+      }),
+      'pending_access',
+    );
   }
 
   private async notifyExistingUserLinkedToChurch(
     churchId: string,
     login: string,
+    userId: string,
   ): Promise<void> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
@@ -1122,6 +1581,15 @@ export class MembersService {
       return;
     }
 
+    this.notificationsService.schedule(
+      this.notificationsService.emitAccountLinked({
+        churchId,
+        userId,
+        churchName: church.name,
+      }),
+      'account_linked',
+    );
+
     const email = login.includes('@') ? login.trim().toLowerCase() : null;
 
     if (!email || this.isCpfInternalEmail(email)) {
@@ -1129,7 +1597,7 @@ export class MembersService {
     }
 
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { id: userId },
       select: { name: true, email: true },
     });
 
@@ -1328,7 +1796,12 @@ export class MembersService {
   private async assertActiveMemberTierAllowed(churchId: string): Promise<void> {
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
-      select: { memberCount: true },
+      select: {
+        memberCount: true,
+        subscriptionStatus: true,
+        stripeSubscriptionId: true,
+        stripePriceId: true,
+      },
     });
 
     if (!church) {
@@ -1338,6 +1811,7 @@ export class MembersService {
     await this.billingService.assertActiveMemberIncreaseAllowed(
       churchId,
       church.memberCount + 1,
+      church,
     );
   }
 
@@ -1572,7 +2046,11 @@ export class MembersService {
   async createMemberRelation(
     churchId: string,
     familyId: string,
-    dto: { fromMemberId: string; toMemberId: string; type: 'spouse' | 'parent' },
+    dto: {
+      fromMemberId: string;
+      toMemberId: string;
+      type: MemberRelationType;
+    },
   ): Promise<MemberRelationResponse> {
     if (dto.fromMemberId === dto.toMemberId) {
       throw new BadRequestException('Escolha duas pessoas diferentes.');
@@ -1606,16 +2084,19 @@ export class MembersService {
     let fromMemberId = dto.fromMemberId;
     let toMemberId = dto.toMemberId;
 
-    // Cônjuge: guarda uma aresta canônica (ordem estável) e impede duplicata invertida.
-    if (dto.type === 'spouse') {
+    // Undirected bonds: store a canonical edge and block the reverse duplicate.
+    const undirected =
+      dto.type === 'spouse' || dto.type === 'sibling';
+
+    if (undirected) {
       const ordered = [dto.fromMemberId, dto.toMemberId].sort();
       fromMemberId = ordered[0];
       toMemberId = ordered[1];
 
-      const existingSpouse = await this.prisma.memberRelation.findFirst({
+      const existing = await this.prisma.memberRelation.findFirst({
         where: {
           churchId,
-          type: 'spouse',
+          type: dto.type,
           OR: [
             { fromMemberId, toMemberId },
             { fromMemberId: toMemberId, toMemberId: fromMemberId },
@@ -1623,8 +2104,12 @@ export class MembersService {
         },
       });
 
-      if (existingSpouse) {
-        throw new ConflictException('Essas pessoas já estão como cônjuges.');
+      if (existing) {
+        throw new ConflictException(
+          dto.type === 'spouse'
+            ? 'Essas pessoas já estão como cônjuges.'
+            : 'Essas pessoas já estão como irmãos(ãs).',
+        );
       }
     }
 

@@ -81,6 +81,44 @@ export class EventsController {
     return this.eventsService.findOne(churchId, eventId, user.sub);
   }
 
+  /** Lista de inscritos — apenas quem gerencia o evento. */
+  @Get(':eventId/ticket-registrations')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  listTicketRegistrations(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.eventsService.listTicketRegistrations(
+      churchId,
+      eventId,
+      user.sub,
+    );
+  }
+
+  /** Inscrição gratuita (sem Stripe). Eventos pagos usam ticket-checkout. */
+  @Post(':eventId/register')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  registerForFreeEvent(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.eventsService.registerForFreeEvent(
+      churchId,
+      eventId,
+      user.sub,
+    );
+  }
+
   @Post()
   create(
     @Param('churchId') churchId: string,

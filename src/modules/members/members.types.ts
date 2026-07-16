@@ -70,6 +70,11 @@ export interface MemberResponse {
   membershipDate: string | null;
   userId: string | null;
   ministries: MemberMinistryLinkResponse[];
+  /**
+   * Contribuições mensais abertas (active/past_due/incomplete) vinculadas
+   * a este membro. Preenchido em findOne; pode ser omitido em listagens.
+   */
+  activeGivingSubscriptionsCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -83,7 +88,14 @@ export interface FamilyResponse {
   updatedAt: string;
 }
 
-export type MemberRelationType = 'spouse' | 'parent';
+export type MemberRelationType =
+  | 'spouse'
+  | 'parent'
+  | 'sibling'
+  | 'grandparent'
+  | 'step_parent'
+  | 'parent_in_law'
+  | 'uncle';
 
 export interface MemberRelationResponse {
   id: string;
@@ -114,11 +126,13 @@ export type MemberAccountCredentials =
       login: string;
       temporaryPassword: string;
       mustChangePassword: true;
+      userId: string;
     }
   | {
       kind: 'linked';
       login: string;
       linkedExistingAccount: true;
+      userId: string;
     };
 
 export interface CreateMemberResponse extends MemberResponse {
@@ -218,4 +232,30 @@ export function parseOptionalDate(
   }
 
   return new Date(`${value}T00:00:00.000Z`);
+}
+
+/** Resultado por linha de uma importação de membros. */
+export interface MemberImportRowResult {
+  /** Índice da linha na planilha enviada (0-based). */
+  index: number;
+  name: string | null;
+  /**
+   * `valid`  → passou na validação (só em dry-run).
+   * `created`→ criado com sucesso (execução real).
+   * `error`  → rejeitado (ver `reason`).
+   */
+  outcome: 'valid' | 'created' | 'error';
+  status: MemberStatus | null;
+  reason?: string;
+}
+
+/** Resumo da importação de membros (dry-run ou execução). */
+export interface ImportMembersResult {
+  dryRun: boolean;
+  total: number;
+  created: number;
+  errors: number;
+  /** Quantos dos criados/válidos são membros ativos (contam pro plano). */
+  activeCount: number;
+  results: MemberImportRowResult[];
 }

@@ -32,6 +32,18 @@ export async function seedDefaultChurchRoles(
     skipDuplicates: true,
   });
 
+  // Atualiza nome/ordem de cargos sistema já existentes (ex.: renomear Membro → Membro/todos).
+  for (const role of roles) {
+    await prisma.churchRole.updateMany({
+      where: { churchId, systemKey: role.systemKey },
+      data: {
+        name: role.name,
+        sortOrder: role.sortOrder,
+        isSystem: true,
+      },
+    });
+  }
+
   const roleIds = roles.map((role) => role.id);
 
   await prisma.churchRolePermission.deleteMany({
@@ -46,10 +58,18 @@ export async function seedDefaultChurchRoles(
   );
 
   if (permissions.length > 0) {
-    await prisma.churchRolePermission.createMany({
-      data: permissions,
-      skipDuplicates: true,
-    });
+    // Enums via create/createMany quebram no @prisma/adapter-pg (InvalidInputValue).
+    const valuesSql = permissions
+      .map((_, index) => `($${index * 2 + 1}, $${index * 2 + 2}::"ChurchPermission")`)
+      .join(', ');
+    const params = permissions.flatMap((row) => [row.roleId, row.permission]);
+
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "church_role_permissions" ("role_id", "permission")
+       VALUES ${valuesSql}
+       ON CONFLICT ("role_id", "permission") DO NOTHING`,
+      ...params,
+    );
   }
 }
 

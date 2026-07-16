@@ -21,7 +21,8 @@ CREATE TYPE "ChurchPermission" AS ENUM (
   'settings_access',
   'roles_manage',
   'memberships_manage',
-  'communication_manage'
+  'communication_manage',
+  'counseling_receive'
 );
 
 -- Rede de segurança: garante que não reste nenhuma linha com o valor morto

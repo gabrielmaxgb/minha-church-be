@@ -62,6 +62,10 @@ export interface MinistryEventResponse {
   usesRoster: boolean;
   rosterOpen: boolean;
   visibleToChurch: boolean;
+  /** Quando true, membros podem se inscrever. */
+  registrationOpen: boolean;
+  /** Centavos; null = inscrição gratuita (quando registrationOpen). */
+  priceCents: number | null;
   rosterSlots?: EventRosterSlotResponse[];
   createdAt: string;
   updatedAt: string;
@@ -332,6 +336,8 @@ export function toMinistryEventResponse(
     usesRoster: event.usesRoster,
     rosterOpen: event.rosterOpen,
     visibleToChurch: event.visibleToChurch,
+    registrationOpen: event.registrationOpen,
+    priceCents: event.priceCents ?? null,
     rosterSlots: event.rosterSlots
       ? event.rosterSlots.map(toEventRosterSlotResponse)
       : undefined,

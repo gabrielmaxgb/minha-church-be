@@ -57,6 +57,8 @@ export default () => ({
   trial: {
     enforcement: process.env.TRIAL_ENFORCEMENT === 'true',
     durationDays: parseInt(process.env.TRIAL_DURATION_DAYS ?? '30', 10),
+    /** Dias que a página pública de doação continua no ar após entrar em past_due. */
+    pastDueGraceDays: parseInt(process.env.PAST_DUE_GRACE_DAYS ?? '7', 10),
   },
   email: {
     /** Força deduplicação Gmail (+tag) mesmo fora de produção. */
@@ -70,7 +72,18 @@ export default () => ({
   },
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY ?? '',
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+    connectWebhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? '',
     prices: stripePricesFromEnv(),
+  },
+  payments: {
+    /** Taxa da plataforma por transação, em basis points (100 = 1%). Default 0 no lançamento. */
+    platformFeeBps: parseInt(process.env.PAYMENTS_PLATFORM_FEE_BPS ?? '0', 10),
+    /** Métodos habilitados para cobranças da igreja (capabilities solicitadas no Connect). */
+    enabledMethods: (process.env.PAYMENTS_ENABLED_METHODS ?? 'pix,card,boleto')
+      .split(',')
+      .map((method) => method.trim())
+      .filter(Boolean),
   },
 });

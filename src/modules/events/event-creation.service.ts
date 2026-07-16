@@ -35,6 +35,8 @@ export interface CreateEventData {
   rosterRoles?: string[];
   rosterSlotPlan?: RosterSlotPlanItem[];
   visibleToChurch?: boolean;
+  registrationOpen?: boolean;
+  priceCents?: number | null;
 }
 
 export interface ApplyRecurrenceUpdateData {
@@ -52,6 +54,8 @@ export interface ApplyRecurrenceUpdateData {
   usesRoster: boolean;
   rosterOpen: boolean;
   visibleToChurch: boolean;
+  registrationOpen: boolean;
+  priceCents: number | null;
   rosterSlotPlan: RosterSlotPlanItem[];
 }
 
@@ -101,6 +105,8 @@ export class EventCreationService {
           usesRoster,
           rosterOpen,
           visibleToChurch,
+          registrationOpen: data.registrationOpen ?? false,
+          priceCents: data.priceCents ?? null,
         },
         include: eventInclude,
       });
@@ -160,6 +166,8 @@ export class EventCreationService {
             usesRoster,
             rosterOpen,
             visibleToChurch,
+            registrationOpen: data.registrationOpen ?? false,
+            priceCents: data.priceCents ?? null,
           })),
         });
 
@@ -263,6 +271,8 @@ export class EventCreationService {
             usesRoster: data.usesRoster,
             rosterOpen: data.rosterOpen,
             visibleToChurch: data.visibleToChurch,
+            registrationOpen: data.registrationOpen,
+            priceCents: data.priceCents,
             recurrenceSeriesId: null,
           },
           include: eventInclude,
@@ -391,6 +401,8 @@ export class EventCreationService {
             usesRoster: data.usesRoster,
             rosterOpen: data.rosterOpen,
             visibleToChurch: data.visibleToChurch,
+            registrationOpen: data.registrationOpen,
+            priceCents: data.priceCents,
             recurrenceSeriesId: series.id,
             deletedAt: null,
           },
@@ -419,6 +431,8 @@ export class EventCreationService {
               usesRoster: data.usesRoster,
               rosterOpen: data.rosterOpen,
               visibleToChurch: data.visibleToChurch,
+              registrationOpen: data.registrationOpen,
+              priceCents: data.priceCents,
             })),
           });
         }

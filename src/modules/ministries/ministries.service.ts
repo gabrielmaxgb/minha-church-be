@@ -1148,25 +1148,26 @@ export class MinistriesService {
     eventId: string,
     userId: string,
     dto: UpdateEventAvailabilityDto,
-  ): Promise<RosterProfileResponse> {
-    const ministry = await this.getMinistryOrThrow(churchId, ministryId);
-    const memberLink = await this.getActiveMinistryMemberLink(
-      churchId,
-      ministryId,
-      userId,
-    );
-
-    const event = await this.prisma.ministryEvent.findFirst({
-      where: {
-        id: eventId,
-        churchId,
-        ministryId,
-        deletedAt: null,
-      },
-      include: {
-        rosterSlots: { orderBy: { sortOrder: 'asc' } },
-      },
-    });
+  ): Promise<void> {
+    // Parallel lookups — remote DB RTT compounds badly when sequential.
+    const [ministry, memberLink, event] = await Promise.all([
+      this.getMinistryOrThrow(churchId, ministryId),
+      this.getActiveMinistryMemberLink(churchId, ministryId, userId),
+      this.prisma.ministryEvent.findFirst({
+        where: {
+          id: eventId,
+          churchId,
+          ministryId,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          usesRoster: true,
+          rosterOpen: true,
+          startsAt: true,
+        },
+      }),
+    ]);
 
     if (!event) {
       throw new NotFoundException('Evento não encontrado.');
@@ -1197,7 +1198,10 @@ export class MinistriesService {
           memberId: memberLink.memberId,
         },
       });
-    } else if (
+      return;
+    }
+
+    if (
       memberNeedsServiceFunctions(
         memberLink.instruments,
         ministry.serviceFunctions,
@@ -1206,47 +1210,27 @@ export class MinistriesService {
       throw new BadRequestException(
         'Configure suas funções no perfil antes de marcar disponibilidade.',
       );
-    } else if (dto.status === 'available') {
-      await this.prisma.eventAvailability.upsert({
-        where: {
-          eventId_memberId: {
-            eventId,
-            memberId: memberLink.memberId,
-          },
-        },
-        create: {
-          eventId,
-          memberId: memberLink.memberId,
-          status: dto.status,
-          roleLabels: [],
-        },
-        update: {
-          status: dto.status,
-          roleLabels: [],
-        },
-      });
-    } else {
-      await this.prisma.eventAvailability.upsert({
-        where: {
-          eventId_memberId: {
-            eventId,
-            memberId: memberLink.memberId,
-          },
-        },
-        create: {
-          eventId,
-          memberId: memberLink.memberId,
-          status: dto.status,
-          roleLabels: [],
-        },
-        update: {
-          status: dto.status,
-          roleLabels: [],
-        },
-      });
     }
 
-    return this.getRosterProfile(churchId, ministryId, userId);
+    // available | unavailable — same upsert shape.
+    await this.prisma.eventAvailability.upsert({
+      where: {
+        eventId_memberId: {
+          eventId,
+          memberId: memberLink.memberId,
+        },
+      },
+      create: {
+        eventId,
+        memberId: memberLink.memberId,
+        status: dto.status,
+        roleLabels: [],
+      },
+      update: {
+        status: dto.status,
+        roleLabels: [],
+      },
+    });
   }
 
   private async resolveAvailabilityRoleLabels(
@@ -1351,29 +1335,34 @@ export class MinistriesService {
     ministryId: string,
     userId: string,
   ) {
-    const member = await this.prisma.member.findFirst({
-      where: {
-        churchId,
-        userId,
-        deletedAt: null,
-      },
-    });
-
-    if (!member) {
-      throw new ForbiddenException(
-        'Seu usuário não está vinculado a um cadastro pastoral nesta igreja.',
-      );
-    }
-
     const link = await this.prisma.memberMinistry.findFirst({
       where: {
         ministryId,
-        memberId: member.id,
         endedAt: null,
+        member: {
+          churchId,
+          userId,
+          deletedAt: null,
+        },
       },
     });
 
     if (!link) {
+      const member = await this.prisma.member.findFirst({
+        where: {
+          churchId,
+          userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      if (!member) {
+        throw new ForbiddenException(
+          'Seu usuário não está vinculado a um cadastro pastoral nesta igreja.',
+        );
+      }
+
       throw new ForbiddenException(
         'Você precisa fazer parte deste ministério para marcar disponibilidade.',
       );

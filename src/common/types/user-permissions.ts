@@ -14,10 +14,11 @@ export interface UserPermissions {
     ministryIds: string[];
   };
   schedules: { access: boolean };
-  finances: { access: boolean };
+  finances: { access: boolean; manage: boolean };
   communication: { access: boolean; manage: boolean };
   reports: { access: boolean };
   settings: { access: boolean };
   roles: { manage: boolean };
   memberships: { manage: boolean };
+  counseling: { receive: boolean };
 }

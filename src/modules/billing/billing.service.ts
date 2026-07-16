@@ -76,6 +76,17 @@ export interface ConfirmTierCrossingResult {
   projectedTierId: BillingTierId;
 }
 
+/**
+ * Snapshot mínimo da igreja para avaliar cruzamento de faixa sem reler o banco
+ * quem já buscou esses campos (ex.: create de membro ativo).
+ */
+export interface TierCrossingChurchSnapshot {
+  memberCount: number;
+  subscriptionStatus: SubscriptionStatus;
+  stripeSubscriptionId: string | null;
+  stripePriceId: string | null;
+}
+
 export interface TierCrossingRequestResult {
   id: string;
   status: BillingTierUpgradeRequestStatus;
@@ -320,20 +331,23 @@ export class BillingService {
   async previewTierCrossing(
     churchId: string,
     projectedMemberCount: number,
+    churchSnapshot?: TierCrossingChurchSnapshot,
   ): Promise<TierCrossingPreviewResult> {
     if (!Number.isInteger(projectedMemberCount) || projectedMemberCount < 0) {
       throw new BadRequestException('Quantidade de membros inválida.');
     }
 
-    const church = await this.prisma.church.findUnique({
-      where: { id: churchId },
-      select: {
-        memberCount: true,
-        subscriptionStatus: true,
-        stripeSubscriptionId: true,
-        stripePriceId: true,
-      },
-    });
+    const church =
+      churchSnapshot ??
+      (await this.prisma.church.findUnique({
+        where: { id: churchId },
+        select: {
+          memberCount: true,
+          subscriptionStatus: true,
+          stripeSubscriptionId: true,
+          stripePriceId: true,
+        },
+      }));
 
     if (!church) {
       throw new NotFoundException('Igreja não encontrada.');
@@ -447,10 +461,12 @@ export class BillingService {
   async assertActiveMemberIncreaseAllowed(
     churchId: string,
     projectedActiveCount: number,
+    churchSnapshot?: TierCrossingChurchSnapshot,
   ): Promise<void> {
     const preview = await this.previewTierCrossing(
       churchId,
       projectedActiveCount,
+      churchSnapshot,
     );
 
     if (!preview.requiresConfirmation) {
@@ -1251,6 +1267,7 @@ export class BillingService {
         stripeSubscriptionId: null,
         stripePriceId: null,
         cancelAtPeriodEnd: false,
+        pastDueSince: null,
       },
     });
 
@@ -1265,6 +1282,17 @@ export class BillingService {
     const subscriptionStatus = this.mapStripeStatus(subscription.status);
     const schedule = this.readStripeSubscriptionSchedule(subscription);
 
+    // Marca quando entrou em past_due (preserva a data original) e limpa ao sair;
+    // é a base da janela de graça da página pública de doação.
+    const current = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { pastDueSince: true },
+    });
+    const pastDueSince =
+      subscriptionStatus === SubscriptionStatus.past_due
+        ? (current?.pastDueSince ?? new Date())
+        : null;
+
     await this.prisma.church.update({
       where: { id: churchId },
       data: {
@@ -1272,6 +1300,7 @@ export class BillingService {
         stripeSubscriptionId: subscription.id,
         stripePriceId: priceId,
         cancelAtPeriodEnd: schedule.cancelAtPeriodEnd,
+        pastDueSince,
       },
     });
   }

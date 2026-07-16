@@ -12,6 +12,7 @@ export interface E2eLoginResponse {
     subscriptionStatus?: string;
     trialEndsAt?: string | null;
     featuresLocked?: boolean;
+    lockReason?: string | null;
   };
   tokens: { expiresIn: number; accessToken?: string };
   permissions?: {
