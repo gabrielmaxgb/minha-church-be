@@ -1405,6 +1405,12 @@ export class MinistriesService {
     this.assertMinistryActive(ministry);
     await this.assertCanManageEvents(userId, churchId, ministryId);
 
+    const visibleToChurch = await this.resolveVisibleToChurch(
+      userId,
+      churchId,
+      dto.visibleToChurch,
+    );
+
     const usesRoster = dto.usesRoster ?? true;
     const rosterOpen = usesRoster ? (dto.rosterOpen ?? false) : false;
 
@@ -1427,7 +1433,7 @@ export class MinistriesService {
         rosterSlotPlan: dto.rosterSlotPlan,
         rosterRoles: dto.rosterRoles,
       }),
-      visibleToChurch: dto.visibleToChurch,
+      visibleToChurch,
     });
 
     const eventWithSlots = await this.prisma.ministryEvent.findFirstOrThrow({
@@ -1480,6 +1486,30 @@ export class MinistriesService {
     await this.getEventOrThrow(churchId, ministryId, eventId);
 
     await this.eventsService.remove(churchId, eventId, userId, scope);
+  }
+
+  private async resolveVisibleToChurch(
+    userId: string,
+    churchId: string,
+    requested?: boolean,
+  ): Promise<boolean> {
+    if (!requested) {
+      return false;
+    }
+
+    const allowed = await this.churchPermissions.hasPermission(
+      userId,
+      churchId,
+      ChurchPermission.events_create_church_wide,
+    );
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Sem permissão para exibir eventos na agenda da igreja inteira.',
+      );
+    }
+
+    return true;
   }
 
   private async assertCanManageEvents(

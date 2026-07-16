@@ -32,6 +32,7 @@ import {
 import { memberNeedsServiceFunctions } from '../members/member-ministry-notifications';
 import { NotificationsService } from '../notifications/notifications.service';
 import { GIVING_MIN_AMOUNT_CENTS } from '../payments/dto/create-giving-checkout.dto';
+import { PaymentsService } from '../payments/payments.service';
 import { EventCreationService } from './event-creation.service';
 import { resolveEventRegistrationFields } from './event-registration-fields';
 import { syncEventRosterSlots, RosterSlotSyncError, resolveRosterSlotPlan, syncRosterCollectionState, wasRosterFullyStaffed } from './event-roster-slots';
@@ -83,6 +84,7 @@ export class EventsService {
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly eventCreation: EventCreationService,
     private readonly notificationsService: NotificationsService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   async findOne(
@@ -915,10 +917,18 @@ export class EventsService {
       await this.assertCanManageChurchEvents(userId, churchId);
     }
 
+    const visibleToChurch = await this.resolveVisibleToChurch({
+      userId,
+      churchId,
+      ministryId: dto.ministryId ?? null,
+      requested: dto.visibleToChurch,
+    });
+
     const { registrationOpen, priceCents } = resolveEventRegistrationFields({
       registrationOpen: dto.registrationOpen,
       priceCents: dto.priceCents,
     });
+    await this.assertCanChargePaidRegistration(churchId, priceCents);
 
     const { event, occurrencesCreated } = await this.eventCreation.createEvent({
       churchId,
@@ -939,7 +949,7 @@ export class EventsService {
         rosterSlotPlan: dto.rosterSlotPlan,
         rosterRoles: dto.rosterRoles,
       }),
-      visibleToChurch: dto.ministryId ? dto.visibleToChurch : true,
+      visibleToChurch,
       registrationOpen,
       priceCents,
     });
@@ -1001,9 +1011,13 @@ export class EventsService {
           : existing.rosterOpen
         : false;
       const visibleToChurch = existing.ministryId
-        ? dto.visibleToChurch !== undefined
-          ? dto.visibleToChurch
-          : existing.visibleToChurch
+        ? await this.resolveVisibleToChurch({
+            userId,
+            churchId,
+            ministryId: existing.ministryId,
+            requested: dto.visibleToChurch,
+            existingValue: existing.visibleToChurch,
+          })
         : true;
 
       const { registrationOpen, priceCents } = resolveEventRegistrationFields({
@@ -1012,6 +1026,11 @@ export class EventsService {
         existingRegistrationOpen: existing.registrationOpen,
         existingPriceCents: existing.priceCents,
       });
+      await this.assertCanChargePaidRegistration(
+        churchId,
+        priceCents,
+        existing.priceCents,
+      );
 
       const rosterPlanUpdateRequested =
         dto.rosterSlotPlan !== undefined || dto.rosterRoles !== undefined;
@@ -1120,6 +1139,33 @@ export class EventsService {
         : null;
     }
 
+    if (
+      dto.registrationOpen !== undefined ||
+      dto.priceCents !== undefined
+    ) {
+      const resolved = resolveEventRegistrationFields({
+        registrationOpen: dto.registrationOpen,
+        priceCents: dto.priceCents,
+        existingRegistrationOpen: existing.registrationOpen,
+        existingPriceCents: existing.priceCents,
+      });
+      await this.assertCanChargePaidRegistration(
+        churchId,
+        resolved.priceCents,
+        existing.priceCents,
+      );
+    }
+
+    const nextVisibleToChurch =
+      dto.visibleToChurch !== undefined && existing.ministryId
+        ? await this.resolveVisibleToChurch({
+            userId,
+            churchId,
+            ministryId: existing.ministryId,
+            requested: dto.visibleToChurch,
+          })
+        : undefined;
+
     await this.prisma.$transaction(
       targets.map((target) => {
         const data: Prisma.MinistryEventUpdateInput = {};
@@ -1175,8 +1221,8 @@ export class EventsService {
           data.rosterOpen = nextUsesRoster ? dto.rosterOpen : false;
         }
 
-        if (dto.visibleToChurch !== undefined && target.ministryId) {
-          data.visibleToChurch = dto.visibleToChurch;
+        if (nextVisibleToChurch !== undefined && target.ministryId) {
+          data.visibleToChurch = nextVisibleToChurch;
         }
 
         if (
@@ -1557,6 +1603,65 @@ export class EventsService {
     }
 
     await this.assertCanManageChurchEvents(userId, churchId);
+  }
+
+  private async assertCanChargePaidRegistration(
+    churchId: string,
+    priceCents: number | null,
+    existingPriceCents?: number | null,
+  ): Promise<void> {
+    if (priceCents == null || priceCents < GIVING_MIN_AMOUNT_CENTS) {
+      return;
+    }
+
+    const hadPaid =
+      existingPriceCents != null &&
+      existingPriceCents >= GIVING_MIN_AMOUNT_CENTS;
+
+    if (hadPaid && existingPriceCents === priceCents) {
+      return;
+    }
+
+    const connect = await this.paymentsService.getConnectStatus(churchId);
+    if (!connect.canReceivePayments) {
+      throw new BadRequestException(
+        'Ative os recebimentos da igreja antes de abrir inscrição paga neste evento.',
+      );
+    }
+  }
+
+  private async resolveVisibleToChurch(params: {
+    userId: string;
+    churchId: string;
+    ministryId: string | null;
+    requested?: boolean;
+    existingValue?: boolean;
+  }): Promise<boolean> {
+    if (!params.ministryId) {
+      return true;
+    }
+
+    if (params.requested === undefined) {
+      return params.existingValue ?? false;
+    }
+
+    if (!params.requested) {
+      return false;
+    }
+
+    const allowed = await this.churchPermissions.hasPermission(
+      params.userId,
+      params.churchId,
+      ChurchPermission.events_create_church_wide,
+    );
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Sem permissão para exibir eventos na agenda da igreja inteira.',
+      );
+    }
+
+    return true;
   }
 
   private async assertCanManageChurchEvents(userId: string, churchId: string) {
