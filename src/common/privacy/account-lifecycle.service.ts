@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
@@ -12,13 +13,19 @@ import {
 } from '../audit/audit.constants';
 import { AuditService } from '../services/audit.service';
 import { PrismaService } from '../../database/prisma.service';
+import { BillingService } from '../../modules/billing/billing.service';
+import { PaymentsService } from '../../modules/payments/payments.service';
 import { purgeAfterFrom } from './privacy.constants';
 
 @Injectable()
 export class AccountLifecycleService {
+  private readonly logger = new Logger(AccountLifecycleService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly paymentsService: PaymentsService,
+    private readonly billingService: BillingService,
   ) {}
 
   async requestChurchClosure(
@@ -47,10 +54,42 @@ export class AccountLifecycleService {
     const deletedAt = new Date();
     const purgeAfter = purgeAfterFrom(deletedAt);
 
+    // Soft-delete primeiro para bloquear novos checkouts imediatamente.
     await this.prisma.church.update({
       where: { id: churchId },
       data: { deletedAt, purgeAfter },
     });
+
+    // Best-effort: cancela giving recorrente (local sempre; Stripe com warn se falhar).
+    let canceledGivingSubscriptions = 0;
+    try {
+      canceledGivingSubscriptions =
+        await this.paymentsService.cancelOpenGivingSubscriptionsForChurch(
+          churchId,
+        );
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao cancelar contribuições mensais no encerramento da igreja ${churchId}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+
+    // Assinatura SaaS: cancela no fim do período (não na hora).
+    let saasCancelScheduled = false;
+    try {
+      const result =
+        await this.billingService.scheduleSubscriptionCancelAtPeriodEnd(
+          churchId,
+        );
+      saasCancelScheduled = result.scheduled;
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao agendar cancelamento da assinatura SaaS no encerramento da igreja ${churchId}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
 
     await this.audit.log({
       churchId,
@@ -59,7 +98,11 @@ export class AccountLifecycleService {
       targetType: AUDIT_TARGET_TYPES.church,
       targetId: churchId,
       summary: 'Encerramento da igreja solicitado',
-      metadata: { purgeAfter: purgeAfter.toISOString() },
+      metadata: {
+        purgeAfter: purgeAfter.toISOString(),
+        canceledGivingSubscriptions,
+        saasCancelScheduled,
+      },
     });
 
     return {
@@ -91,6 +134,17 @@ export class AccountLifecycleService {
       where: { id: churchId },
       data: { deletedAt: null, purgeAfter: null },
     });
+
+    // Reabre renovação da assinatura SaaS se ainda estiver no período pago.
+    try {
+      await this.billingService.clearScheduledSubscriptionCancel(churchId);
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao reverter cancelamento agendado da assinatura SaaS (igreja ${churchId}): ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
 
     await this.audit.log({
       churchId,

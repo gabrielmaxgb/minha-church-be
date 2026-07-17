@@ -26,6 +26,7 @@ import { isValidCnpj, normalizeCnpj } from '../../common/utils/cnpj';
 import { isValidCpf, normalizeCpf } from '../../common/utils/cpf';
 import { SubscriptionPolicyService } from '../../common/services/subscription-policy.service';
 import { PrismaService } from '../../database/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { UpsertFiscalProfileDto } from './dto/upsert-fiscal-profile.dto';
 import {
   CreateGivingCheckoutDto,
@@ -82,6 +83,7 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly stripeConnect: StripeConnectService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getFiscalProfile(
@@ -851,6 +853,19 @@ export class PaymentsService {
       },
     });
 
+    this.notificationsService.schedule(
+      this.notificationsService.emitGivingDonationRefunded({
+        churchId,
+        donationId: updated.id,
+        donorMemberId: updated.donorMemberId,
+        amountCents: updated.amountCents,
+        currency: updated.currency,
+        fundName: updated.fund.name,
+        resetRead: true,
+      }),
+      `giving_donation_refunded:${updated.id}`,
+    );
+
     return this.toGivingDonationResult(updated);
   }
 
@@ -1320,14 +1335,14 @@ export class PaymentsService {
     donorMemberId: string | null;
     metadataExtra: Record<string, string>;
   }): Promise<GivingCheckoutResult> {
-    const paymentMethodTypes = this.resolveCheckoutPaymentMethodTypes({
+    const allowedPaymentMethodTypes = this.resolveCheckoutPaymentMethodTypes({
       allowPix: params.allowPix,
       allowCard: params.allowCard,
       allowBoleto: params.allowBoleto,
       account: params.accountCapabilities,
     });
 
-    if (paymentMethodTypes.length === 0) {
+    if (allowedPaymentMethodTypes.length === 0) {
       throw new BadRequestException(
         'Este fundo não tem meios de pagamento disponíveis no momento.',
       );
@@ -1358,7 +1373,8 @@ export class PaymentsService {
         applicationFeeAmount,
         receiptEmail: params.payerEmail ?? undefined,
         description: `${params.fundName} — ${params.churchName}`,
-        paymentMethodTypes,
+        allowedPaymentMethodTypes,
+        idempotencyKey: `giving_pi_${donation.id}`,
         metadata: {
           minhachurch_donation_id: donation.id,
           minhachurch_church_id: params.churchId,
@@ -1494,8 +1510,10 @@ export class PaymentsService {
         stripeAccountId: params.stripeAccountId,
         customerId: customer.id,
         amountCents: params.amountCents,
+        fundId: params.fundId,
         productName: `${params.fundName} — ${params.churchName}`,
         applicationFeePercent,
+        idempotencyKey: `giving_sub_${localSub.id}`,
         metadata: {
           minhachurch_subscription_id: localSub.id,
           minhachurch_donation_id: donation.id,
@@ -1696,10 +1714,32 @@ export class PaymentsService {
     churchId: string,
     memberId: string,
   ): Promise<number> {
+    return this.cancelOpenGivingSubscriptions({
+      churchId,
+      donorMemberId: memberId,
+    });
+  }
+
+  /**
+   * Cancela todas as contribuições mensais abertas da igreja.
+   * Usado no encerramento da igreja — best-effort no Stripe, sempre cancela local.
+   */
+  async cancelOpenGivingSubscriptionsForChurch(
+    churchId: string,
+  ): Promise<number> {
+    return this.cancelOpenGivingSubscriptions({ churchId });
+  }
+
+  private async cancelOpenGivingSubscriptions(filter: {
+    churchId: string;
+    donorMemberId?: string;
+  }): Promise<number> {
     const open = await this.prisma.givingSubscription.findMany({
       where: {
-        churchId,
-        donorMemberId: memberId,
+        churchId: filter.churchId,
+        ...(filter.donorMemberId
+          ? { donorMemberId: filter.donorMemberId }
+          : {}),
         status: {
           in: [
             GivingSubscriptionStatus.active,
@@ -1720,11 +1760,16 @@ export class PaymentsService {
     }
 
     for (const subscription of open) {
-      await this.cancelOpenGivingSubscriptionRecord(subscription, churchId);
+      await this.cancelOpenGivingSubscriptionRecord(
+        subscription,
+        filter.churchId,
+      );
     }
 
     this.logger.log(
-      `Canceladas ${open.length} contribuição(ões) mensal(is) do membro ${memberId} (igreja ${churchId}).`,
+      filter.donorMemberId
+        ? `Canceladas ${open.length} contribuição(ões) mensal(is) do membro ${filter.donorMemberId} (igreja ${filter.churchId}).`
+        : `Canceladas ${open.length} contribuição(ões) mensal(is) da igreja ${filter.churchId} (encerramento).`,
     );
 
     return open.length;
@@ -1825,6 +1870,7 @@ export class PaymentsService {
 
   async startConnectOnboarding(churchId: string): Promise<{ url: string }> {
     this.stripeConnect.assertConfigured();
+    await this.assertChurchNotClosed(churchId);
 
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
@@ -1895,6 +1941,7 @@ export class PaymentsService {
 
   async createAccountLink(churchId: string): Promise<{ url: string }> {
     this.stripeConnect.assertConfigured();
+    await this.assertChurchNotClosed(churchId);
 
     const account = await this.prisma.churchPaymentAccount.findUnique({
       where: { churchId },
@@ -1916,6 +1963,7 @@ export class PaymentsService {
     churchId: string,
   ): Promise<{ url: string }> {
     this.stripeConnect.assertConfigured();
+    await this.assertChurchNotClosed(churchId);
 
     const account = await this.prisma.churchPaymentAccount.findUnique({
       where: { churchId },
@@ -1943,6 +1991,7 @@ export class PaymentsService {
 
   async syncConnectAccount(churchId: string): Promise<ConnectStatusResult> {
     this.stripeConnect.assertConfigured();
+    await this.assertChurchNotClosed(churchId);
 
     const account = await this.prisma.churchPaymentAccount.findUnique({
       where: { churchId },
@@ -1984,17 +2033,30 @@ export class PaymentsService {
       throw new BadRequestException('Assinatura do webhook inválida.');
     }
 
-    const alreadyProcessed = await this.prisma.connectWebhookEvent.findUnique({
-      where: { id: event.id },
-    });
-
-    if (alreadyProcessed) {
-      return { received: true, duplicate: true };
+    // Insert-first: unique on event.id serializa entregas concorrentes.
+    // Se o dispatch falhar, removemos o claim para o Stripe poder retentar.
+    try {
+      await this.prisma.connectWebhookEvent.create({
+        data: { id: event.id },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return { received: true, duplicate: true };
+      }
+      throw error;
     }
 
-    await this.dispatchConnectEvent(event);
-
-    await this.prisma.connectWebhookEvent.create({ data: { id: event.id } });
+    try {
+      await this.dispatchConnectEvent(event);
+    } catch (error) {
+      await this.prisma.connectWebhookEvent
+        .delete({ where: { id: event.id } })
+        .catch(() => undefined);
+      throw error;
+    }
 
     return { received: true };
   }
@@ -2080,18 +2142,18 @@ export class PaymentsService {
     const donationId = charge.metadata?.minhachurch_donation_id;
 
     if (donationId) {
-      await this.prisma.givingDonation.updateMany({
-        where: { id: donationId },
-        data: { status: GivingDonationStatus.refunded },
-      });
+      await this.markGivingDonationRefundedAndNotify(donationId);
       return;
     }
 
     if (paymentIntentId) {
-      await this.prisma.givingDonation.updateMany({
+      const donation = await this.prisma.givingDonation.findFirst({
         where: { stripePaymentIntentId: paymentIntentId },
-        data: { status: GivingDonationStatus.refunded },
+        select: { id: true },
       });
+      if (donation) {
+        await this.markGivingDonationRefundedAndNotify(donation.id);
+      }
     }
   }
 
@@ -2100,10 +2162,7 @@ export class PaymentsService {
   ): Promise<void> {
     const donationId = refund.metadata?.minhachurch_donation_id;
     if (donationId) {
-      await this.prisma.givingDonation.updateMany({
-        where: { id: donationId },
-        data: { status: GivingDonationStatus.refunded },
-      });
+      await this.markGivingDonationRefundedAndNotify(donationId);
       return;
     }
 
@@ -2113,11 +2172,61 @@ export class PaymentsService {
         : refund.payment_intent?.id;
 
     if (paymentIntentId) {
-      await this.prisma.givingDonation.updateMany({
+      const donation = await this.prisma.givingDonation.findFirst({
         where: { stripePaymentIntentId: paymentIntentId },
-        data: { status: GivingDonationStatus.refunded },
+        select: { id: true },
       });
+      if (donation) {
+        await this.markGivingDonationRefundedAndNotify(donation.id);
+      }
     }
+  }
+
+  /**
+   * Marca doação como estornada e notifica o doador (se tiver conta no app).
+   * Idempotente: se já estava refunded, não reemite (API + webhook).
+   */
+  private async markGivingDonationRefundedAndNotify(
+    donationId: string,
+  ): Promise<void> {
+    const donation = await this.prisma.givingDonation.findUnique({
+      where: { id: donationId },
+      select: {
+        id: true,
+        churchId: true,
+        amountCents: true,
+        currency: true,
+        status: true,
+        donorMemberId: true,
+        fund: { select: { name: true } },
+      },
+    });
+
+    if (!donation) {
+      return;
+    }
+
+    if (donation.status === GivingDonationStatus.refunded) {
+      return;
+    }
+
+    await this.prisma.givingDonation.update({
+      where: { id: donation.id },
+      data: { status: GivingDonationStatus.refunded },
+    });
+
+    this.notificationsService.schedule(
+      this.notificationsService.emitGivingDonationRefunded({
+        churchId: donation.churchId,
+        donationId: donation.id,
+        donorMemberId: donation.donorMemberId,
+        amountCents: donation.amountCents,
+        currency: donation.currency,
+        fundName: donation.fund.name,
+        resetRead: true,
+      }),
+      `giving_donation_refunded_webhook:${donation.id}`,
+    );
   }
 
   private async syncDonationFromPaymentIntent(
@@ -2318,8 +2427,14 @@ export class PaymentsService {
 
     const church = await this.prisma.church.findUnique({
       where: { id: churchId },
-      select: { name: true },
+      select: { name: true, deletedAt: true },
     });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    this.assertChurchAcceptsPayments(church.deletedAt);
 
     const member = await this.requireActiveMember(churchId, userId);
     const account = await this.prisma.churchPaymentAccount.findUnique({
@@ -2363,19 +2478,21 @@ export class PaymentsService {
     const applicationFeeAmount =
       feeBps > 0 ? Math.floor((event.priceCents * feeBps) / 10_000) : 0;
 
-    const paymentMethodTypes: Array<'pix' | 'card' | 'boleto'> = [];
+    const allowedPaymentMethodTypes: Array<'pix' | 'card' | 'boleto'> = [];
     if (account.cardStatus === ConnectCapabilityStatus.active) {
-      paymentMethodTypes.push('card');
+      allowedPaymentMethodTypes.push('card');
     }
     if (account.pixStatus === ConnectCapabilityStatus.active) {
-      paymentMethodTypes.push('pix');
+      allowedPaymentMethodTypes.push('pix');
     }
     if (account.boletoStatus === ConnectCapabilityStatus.active) {
-      paymentMethodTypes.push('boleto');
+      allowedPaymentMethodTypes.push('boleto');
     }
 
-    if (paymentMethodTypes.length === 0) {
-      paymentMethodTypes.push('card');
+    if (allowedPaymentMethodTypes.length === 0) {
+      throw new BadRequestException(
+        'Nenhum meio de pagamento ativo na conta de recebimentos.',
+      );
     }
 
     const reusable = await this.resolveReusableEventTicketCheckout({
@@ -2409,7 +2526,8 @@ export class PaymentsService {
         applicationFeeAmount,
         receiptEmail: payerEmail ?? undefined,
         description: `Inscrição — ${event.name} (${church?.name ?? 'Igreja'})`,
-        paymentMethodTypes,
+        allowedPaymentMethodTypes,
+        idempotencyKey: `ticket_pi_${ticket.id}`,
         metadata: {
           minhachurch_ticket_id: ticket.id,
           minhachurch_church_id: churchId,
@@ -2603,6 +2721,33 @@ export class PaymentsService {
     });
   }
 
+  /**
+   * Bloqueia criação de cobranças / onboarding Connect após encerramento.
+   * Soft-delete da igreja (deletedAt) — não apaga a conta Express no Stripe.
+   */
+  private assertChurchAcceptsPayments(
+    deletedAt: Date | null | undefined,
+  ): void {
+    if (deletedAt) {
+      throw new ForbiddenException(
+        'Esta igreja encerrou as atividades e não está recebendo pagamentos.',
+      );
+    }
+  }
+
+  private async assertChurchNotClosed(churchId: string): Promise<void> {
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { deletedAt: true },
+    });
+
+    if (!church) {
+      throw new NotFoundException('Igreja não encontrada.');
+    }
+
+    this.assertChurchAcceptsPayments(church.deletedAt);
+  }
+
   private async requireActiveMember(churchId: string, userId: string) {
     const member = await this.prisma.member.findFirst({
       where: { churchId, userId, deletedAt: null },
@@ -2662,6 +2807,7 @@ export class PaymentsService {
         id: true,
         name: true,
         slug: true,
+        deletedAt: true,
         subscriptionStatus: true,
         trialEndsAt: true,
         pastDueSince: true,
@@ -2680,6 +2826,8 @@ export class PaymentsService {
     if (!church) {
       throw new NotFoundException('Igreja não encontrada.');
     }
+
+    this.assertChurchAcceptsPayments(church.deletedAt);
 
     if (!this.subscriptionPolicy.isPublicGivingEntitled(church)) {
       throw new ForbiddenException(
@@ -2761,6 +2909,7 @@ export class PaymentsService {
         id: true,
         name: true,
         slug: true,
+        deletedAt: true,
         subscriptionStatus: true,
         trialEndsAt: true,
         pastDueSince: true,
@@ -2779,6 +2928,8 @@ export class PaymentsService {
     if (!church) {
       throw new NotFoundException('Página de contribuição não encontrada.');
     }
+
+    this.assertChurchAcceptsPayments(church.deletedAt);
 
     // Recebimentos são premium: página pública fica no ar com plano ativo / trial
     // válido e, em past_due, durante a janela de graça. Fora disso, indisponível.

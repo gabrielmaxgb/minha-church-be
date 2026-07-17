@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   BillingTierUpgradeRequestStatus,
   ChurchPermission,
+  Prisma,
   SubscriptionStatus,
 } from '@prisma/client';
 import Stripe from 'stripe';
@@ -127,7 +128,7 @@ export interface BillingInvoiceResult {
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
-  private readonly stripe: Stripe;
+  private readonly stripeClient: Stripe | null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -136,9 +137,42 @@ export class BillingService {
     private readonly emailService: EmailService,
     private readonly churchPermissions: ChurchPermissionsService,
   ) {
-    const secretKey = this.configService.get<string>('stripe.secretKey') ?? '';
+    const secretKey =
+      this.configService.get<string>('stripe.secretKey')?.trim() ?? '';
+    const nodeEnv = this.configService.get<string>('nodeEnv') ?? 'development';
 
-    this.stripe = new Stripe(secretKey || 'sk_test_placeholder');
+    if (!secretKey) {
+      if (nodeEnv === 'production') {
+        throw new Error(
+          'STRIPE_SECRET_KEY é obrigatória em produção (preferir Restricted API Key rk_...).',
+        );
+      }
+      this.logger.warn(
+        'STRIPE_SECRET_KEY ausente — operações de billing falharão até configurar. Preferir rk_ (Restricted API Key) em vez de sk_.',
+      );
+      this.stripeClient = null;
+    } else {
+      if (secretKey.startsWith('sk_')) {
+        this.logger.warn(
+          'STRIPE_SECRET_KEY usa sk_ — prefira Restricted API Key (rk_) com least privilege.',
+        );
+      } else if (!secretKey.startsWith('rk_')) {
+        this.logger.warn(
+          'STRIPE_SECRET_KEY não parece sk_/rk_ — verifique a chave no Dashboard.',
+        );
+      }
+      this.stripeClient = new Stripe(secretKey);
+    }
+  }
+
+  /** Cliente Stripe; falha se a secret key não estiver configurada. */
+  private get stripe(): Stripe {
+    if (!this.stripeClient) {
+      throw new BadRequestException(
+        'Pagamentos ainda não configurados no servidor.',
+      );
+    }
+    return this.stripeClient;
   }
 
   getPricingCatalog() {
@@ -953,6 +987,145 @@ export class BillingService {
     await this.syncSubscriptionToChurch(churchId, updated);
   }
 
+  /**
+   * Agenda cancelamento da assinatura SaaS ao fim do período atual.
+   * Usado no encerramento da igreja — não cancela na hora.
+   * No-op se não houver subscription (ex.: trial sem Stripe).
+   */
+  async scheduleSubscriptionCancelAtPeriodEnd(
+    churchId: string,
+  ): Promise<{ scheduled: boolean; alreadyScheduled: boolean }> {
+    if (!this.isStripeConfigured()) {
+      return { scheduled: false, alreadyScheduled: false };
+    }
+
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: {
+        stripeSubscriptionId: true,
+        cancelAtPeriodEnd: true,
+      },
+    });
+
+    if (!church?.stripeSubscriptionId) {
+      return { scheduled: false, alreadyScheduled: false };
+    }
+
+    if (church.cancelAtPeriodEnd) {
+      return { scheduled: true, alreadyScheduled: true };
+    }
+
+    const updated = await this.stripe.subscriptions.update(
+      church.stripeSubscriptionId,
+      {
+        cancel_at_period_end: true,
+        metadata: {
+          minhachurch_cancel_reason: 'church_closure',
+        },
+      },
+    );
+
+    await this.syncSubscriptionToChurch(churchId, updated);
+
+    this.logger.log(
+      `Assinatura SaaS ${church.stripeSubscriptionId} agendada para cancelar ao fim do período (igreja ${churchId}).`,
+    );
+
+    return { scheduled: true, alreadyScheduled: false };
+  }
+
+  /**
+   * Remove cancelamento agendado se a assinatura ainda estiver vigente.
+   * Usado ao cancelar o encerramento da igreja dentro da janela de retenção.
+   */
+  async clearScheduledSubscriptionCancel(
+    churchId: string,
+  ): Promise<{ cleared: boolean }> {
+    if (!this.isStripeConfigured()) {
+      return { cleared: false };
+    }
+
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: {
+        stripeSubscriptionId: true,
+        cancelAtPeriodEnd: true,
+        subscriptionStatus: true,
+      },
+    });
+
+    if (
+      !church?.stripeSubscriptionId ||
+      !church.cancelAtPeriodEnd ||
+      church.subscriptionStatus === SubscriptionStatus.canceled
+    ) {
+      return { cleared: false };
+    }
+
+    const updated = await this.stripe.subscriptions.update(
+      church.stripeSubscriptionId,
+      {
+        cancel_at_period_end: false,
+        metadata: {
+          minhachurch_cancel_reason: '',
+        },
+      },
+    );
+
+    await this.syncSubscriptionToChurch(churchId, updated);
+
+    this.logger.log(
+      `Cancelamento agendado da assinatura SaaS ${church.stripeSubscriptionId} revertido (igreja ${churchId}).`,
+    );
+
+    return { cleared: true };
+  }
+
+  /**
+   * Cancela a assinatura SaaS imediatamente (safety net no purge).
+   * Preferir scheduleSubscriptionCancelAtPeriodEnd no encerramento.
+   */
+  async cancelSubscriptionImmediately(
+    churchId: string,
+  ): Promise<{ canceled: boolean }> {
+    if (!this.isStripeConfigured()) {
+      return { canceled: false };
+    }
+
+    const church = await this.prisma.church.findUnique({
+      where: { id: churchId },
+      select: { stripeSubscriptionId: true },
+    });
+
+    if (!church?.stripeSubscriptionId) {
+      return { canceled: false };
+    }
+
+    try {
+      await this.stripe.subscriptions.cancel(church.stripeSubscriptionId);
+    } catch (error) {
+      // Já cancelada / inexistente — segue limpando estado local.
+      this.logger.warn(
+        `Falha ao cancelar assinatura SaaS ${church.stripeSubscriptionId} no purge: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+
+    await this.prisma.church.update({
+      where: { id: churchId },
+      data: {
+        subscriptionStatus: SubscriptionStatus.canceled,
+        stripeSubscriptionId: null,
+        stripePriceId: null,
+        cancelAtPeriodEnd: false,
+        pastDueSince: null,
+      },
+    });
+
+    return { canceled: true };
+  }
+
   async createPortalSession(churchId: string): Promise<{ url: string }> {
     this.assertStripeConfigured();
 
@@ -1042,19 +1215,30 @@ export class BillingService {
       throw new BadRequestException('Assinatura do webhook inválida.');
     }
 
-    const alreadyProcessed = await this.prisma.stripeWebhookEvent.findUnique({
-      where: { id: event.id },
-    });
-
-    if (alreadyProcessed) {
-      return { received: true, duplicate: true };
+    // Insert-first: unique on event.id serializa entregas concorrentes.
+    // Se o dispatch falhar, removemos o claim para o Stripe poder retentar.
+    try {
+      await this.prisma.stripeWebhookEvent.create({
+        data: { id: event.id },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return { received: true, duplicate: true };
+      }
+      throw error;
     }
 
-    await this.dispatchWebhookEvent(event);
-
-    await this.prisma.stripeWebhookEvent.create({
-      data: { id: event.id },
-    });
+    try {
+      await this.dispatchWebhookEvent(event);
+    } catch (error) {
+      await this.prisma.stripeWebhookEvent
+        .delete({ where: { id: event.id } })
+        .catch(() => undefined);
+      throw error;
+    }
 
     return { received: true };
   }
@@ -1462,10 +1646,15 @@ export class BillingService {
     return priceId;
   }
 
-  private assertStripeConfigured(): void {
-    const secretKey = this.configService.get<string>('stripe.secretKey');
+  private isStripeConfigured(): boolean {
+    return Boolean(
+      this.stripeClient &&
+        this.configService.get<string>('stripe.secretKey')?.trim(),
+    );
+  }
 
-    if (!secretKey) {
+  private assertStripeConfigured(): void {
+    if (!this.isStripeConfigured()) {
       throw new BadRequestException(
         'Pagamentos ainda não configurados no servidor.',
       );

@@ -93,14 +93,18 @@ export class NotificationsService {
           )
         : new Set<string>();
 
-    const closedRegistrationEventIds = await this.findClosedRegistrationEventIds(
-      rows
-        .filter(
-          (row) =>
-            row.type === NotificationType.registration_open && row.entityId,
-        )
-        .map((row) => row.entityId!),
-    );
+    const closedRegistrationEntityIds =
+      await this.findClosedRegistrationEntityIds(
+        rows
+          .filter(
+            (row) =>
+              row.type === NotificationType.registration_open && row.entityId,
+          )
+          .map((row) => ({
+            entityId: row.entityId!,
+            entityType: row.entityType,
+          })),
+      );
 
     const items: NotificationInboxItem[] = [];
 
@@ -116,7 +120,7 @@ export class NotificationsService {
       if (
         row.type === NotificationType.registration_open &&
         row.entityId &&
-        closedRegistrationEventIds.has(row.entityId)
+        closedRegistrationEntityIds.has(row.entityId)
       ) {
         continue;
       }
@@ -212,9 +216,17 @@ export class NotificationsService {
     }
 
     const audienceUserIds = await this.resolveRegistrationAudience(event);
+    if (audienceUserIds.length === 0) {
+      this.logger.warn(
+        `registration_open sem audiência (event=${event.id}, ministry=${event.ministryId ?? 'none'}, visibleToChurch=${event.visibleToChurch}). Só membros ativos com conta de acesso recebem o sino.`,
+      );
+      return;
+    }
+
     const href = `/app/atividades/${event.id}`;
     const title = event.name;
     const body = 'Inscrições abertas — confirme sua participação';
+    // Uma notificação por série (recurrenceSeriesId), não por ocorrência.
     const entityId = event.recurrenceSeriesId ?? event.id;
 
     for (const userId of audienceUserIds) {
@@ -229,7 +241,9 @@ export class NotificationsService {
           ? 'EventRecurrenceSeries'
           : 'MinistryEvent',
         entityId,
-        expiresAt: event.startsAt,
+        // Não expira em startsAt: inscrição pode continuar aberta depois do
+        // horário de início. sumiço fica a cargo de findClosedRegistrationEventIds.
+        expiresAt: null,
         payload: {
           eventId: event.id,
           recurrenceSeriesId: event.recurrenceSeriesId ?? null,
@@ -302,6 +316,64 @@ export class NotificationsService {
       entityType: 'Church',
       entityId: input.churchId,
       resetRead: true,
+    });
+  }
+
+  /**
+   * Avisa o doador (membro com userId) que a contribuição foi estornada.
+   * No-op se a doação for pública/guest (sem donorMemberId / sem conta).
+   */
+  async emitGivingDonationRefunded(input: {
+    churchId: string;
+    donationId: string;
+    donorMemberId: string | null;
+    amountCents: number;
+    currency?: string;
+    fundName?: string | null;
+    resetRead?: boolean;
+  }): Promise<void> {
+    if (!input.donorMemberId) {
+      return;
+    }
+
+    const member = await this.prisma.member.findFirst({
+      where: {
+        id: input.donorMemberId,
+        churchId: input.churchId,
+        deletedAt: null,
+        userId: { not: null },
+      },
+      select: { userId: true },
+    });
+
+    if (!member?.userId) {
+      return;
+    }
+
+    const amountLabel = new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: (input.currency ?? 'brl').toUpperCase(),
+    }).format(input.amountCents / 100);
+
+    const fundSuffix = input.fundName?.trim()
+      ? ` (${input.fundName.trim()})`
+      : '';
+
+    await this.upsertPersonalNotification({
+      churchId: input.churchId,
+      type: NotificationType.giving_donation_refunded,
+      userId: member.userId,
+      title: 'Contribuição estornada',
+      body: `O valor de ${amountLabel}${fundSuffix} foi estornado e deve voltar ao seu meio de pagamento.`,
+      href: '/app/configuracoes/usuario?section=my-contributions',
+      entityType: 'GivingDonation',
+      entityId: input.donationId,
+      payload: {
+        donationId: input.donationId,
+        amountCents: input.amountCents,
+        fundName: input.fundName ?? null,
+      },
+      resetRead: input.resetRead ?? true,
     });
   }
 
@@ -464,26 +536,52 @@ export class NotificationsService {
     ];
   }
 
-  private async findClosedRegistrationEventIds(
-    entityIds: string[],
+  /**
+   * Decide quais notificações registration_open devem sumir do inbox.
+   * - MinistryEvent: fecha se a ocorrência fechou/apagou.
+   * - EventRecurrenceSeries: fecha se nenhuma ocorrência futura da série
+   *   está com inscrição aberta.
+   * Nunca tratar id de evento avulso como seriesId (bug que escondia tudo).
+   */
+  private async findClosedRegistrationEntityIds(
+    refs: Array<{ entityId: string; entityType: string | null }>,
   ): Promise<Set<string>> {
-    if (entityIds.length === 0) {
+    if (refs.length === 0) {
       return new Set();
     }
 
-    const closedEvents = await this.prisma.ministryEvent.findMany({
-      where: {
-        id: { in: entityIds },
-        OR: [{ registrationOpen: false }, { deletedAt: { not: null } }],
-      },
-      select: { id: true },
-    });
+    const seriesIds = [
+      ...new Set(
+        refs
+          .filter((ref) => ref.entityType === 'EventRecurrenceSeries')
+          .map((ref) => ref.entityId),
+      ),
+    ];
+    const seriesIdSet = new Set(seriesIds);
+    // Tudo que não for série = ocorrência (inclui entityType null legado).
+    const eventIds = [
+      ...new Set(
+        refs
+          .filter((ref) => !seriesIdSet.has(ref.entityId))
+          .map((ref) => ref.entityId),
+      ),
+    ];
 
-    const closed = new Set(closedEvents.map((event) => event.id));
+    const closed = new Set<string>();
 
-    // entityId pode ser recurrenceSeriesId — considera fechado se nenhuma
-    // ocorrência futura da série ainda tem inscrição aberta.
-    const seriesIds = entityIds.filter((id) => !closed.has(id));
+    if (eventIds.length > 0) {
+      const closedEvents = await this.prisma.ministryEvent.findMany({
+        where: {
+          id: { in: eventIds },
+          OR: [{ registrationOpen: false }, { deletedAt: { not: null } }],
+        },
+        select: { id: true },
+      });
+      for (const event of closedEvents) {
+        closed.add(event.id);
+      }
+    }
+
     if (seriesIds.length > 0) {
       const openInSeries = await this.prisma.ministryEvent.findMany({
         where: {

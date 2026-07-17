@@ -18,6 +18,7 @@ describe('notifications inbox helpers (smoke)', () => {
         'schedule_roster_assigned',
         'account_linked',
         'pending_access',
+        'giving_donation_refunded',
       ]),
     );
   });

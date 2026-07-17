@@ -7,6 +7,8 @@ import {
 } from '../audit/audit.constants';
 import { AuditService } from '../services/audit.service';
 import { PrismaService } from '../../database/prisma.service';
+import { BillingService } from '../../modules/billing/billing.service';
+import { PaymentsService } from '../../modules/payments/payments.service';
 import {
   ANONYMIZED_NAME,
   retentionCutoff,
@@ -19,6 +21,8 @@ export class RetentionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly paymentsService: PaymentsService,
+    private readonly billingService: BillingService,
   ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
@@ -201,6 +205,35 @@ export class RetentionService {
 
     await this.prisma.churchFiscalProfile.deleteMany({ where: { churchId } });
 
+    // Safety net: cancel any leftover open giving before dropping Connect link.
+    try {
+      await this.paymentsService.cancelOpenGivingSubscriptionsForChurch(
+        churchId,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao cancelar contribuições no purge da igreja ${churchId}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+
+    // Safety net: se o período SaaS ainda não acabou (ex.: anual), cancela agora.
+    try {
+      await this.billingService.cancelSubscriptionImmediately(churchId);
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao cancelar assinatura SaaS no purge da igreja ${churchId}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+
+    // Remove local Connect binding only — Express account remains in Stripe.
+    await this.prisma.churchPaymentAccount.deleteMany({
+      where: { churchId },
+    });
+
     await this.prisma.church.update({
       where: { id: churchId },
       data: {
@@ -209,6 +242,7 @@ export class RetentionService {
         stripeCustomerId: null,
         stripeSubscriptionId: null,
         stripePriceId: null,
+        cancelAtPeriodEnd: false,
       },
     });
   }

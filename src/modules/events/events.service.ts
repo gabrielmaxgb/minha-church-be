@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -79,6 +80,8 @@ const eventDetailInclude = {
 
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly churchPermissions: ChurchPermissionsService,
@@ -1450,9 +1453,20 @@ export class EventsService {
     eventId: string,
     recurrenceSeriesId: string | null,
   ): Promise<void> {
-    // Uma notificação por série (próxima ocorrência), para não poluir o sininho
-    // com um item por data recorrente.
-    const event = recurrenceSeriesId
+    // Uma notificação por série (próxima ocorrência útil), para não poluir o
+    // sininho com um item por data recorrente.
+    const select = {
+      id: true,
+      churchId: true,
+      name: true,
+      startsAt: true,
+      ministryId: true,
+      visibleToChurch: true,
+      registrationOpen: true,
+      recurrenceSeriesId: true,
+    } as const;
+
+    let event = recurrenceSeriesId
       ? await this.prisma.ministryEvent.findFirst({
           where: {
             churchId,
@@ -1462,16 +1476,7 @@ export class EventsService {
             startsAt: { gte: new Date() },
           },
           orderBy: { startsAt: 'asc' },
-          select: {
-            id: true,
-            churchId: true,
-            name: true,
-            startsAt: true,
-            ministryId: true,
-            visibleToChurch: true,
-            registrationOpen: true,
-            recurrenceSeriesId: true,
-          },
+          select,
         })
       : await this.prisma.ministryEvent.findFirst({
           where: {
@@ -1480,19 +1485,28 @@ export class EventsService {
             deletedAt: null,
             registrationOpen: true,
           },
-          select: {
-            id: true,
-            churchId: true,
-            name: true,
-            startsAt: true,
-            ministryId: true,
-            visibleToChurch: true,
-            registrationOpen: true,
-            recurrenceSeriesId: true,
-          },
+          select,
         });
 
+    // Série cuja próxima data já passou do filtro "futuro", mas ainda tem
+    // ocorrência com inscrição aberta (ex.: evento de hoje que acabou de começar).
+    if (!event && recurrenceSeriesId) {
+      event = await this.prisma.ministryEvent.findFirst({
+        where: {
+          churchId,
+          recurrenceSeriesId,
+          deletedAt: null,
+          registrationOpen: true,
+        },
+        orderBy: { startsAt: 'asc' },
+        select,
+      });
+    }
+
     if (!event) {
+      this.logger.warn(
+        `registration_open: nenhuma ocorrência elegível (event=${eventId}, series=${recurrenceSeriesId ?? 'none'}).`,
+      );
       return;
     }
 

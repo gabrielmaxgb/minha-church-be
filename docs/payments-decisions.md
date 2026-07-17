@@ -138,4 +138,25 @@ O onboarding hospedado do Stripe continua com copy genérica de “empresa”, m
 o setor/MCC e a descrição já saem alinhados a igreja — evita o usuário cair em
 categorias de e-commerce (ex.: “Roupas e acessórios”).
 
+---
+
+## 7. Stripe Tax (automatic_tax) — não aplicar no BR
+
+**Decisão:** **não** habilitar `automatic_tax` no Checkout/Billing SaaS nem no
+Connect.
+
+- O [Stripe Tax](https://docs.stripe.com/tax/supported-countries) **não lista o
+  Brasil** como país suportado (nem como localização do negócio nem do cliente
+  para cálculo de ISS).
+- No BR, SaaS/assinatura é serviço sujeito a **ISS municipal** + emissão de
+  **NFS-e**. Isso não é resolvido pelo Stripe Tax; exige contabilidade /
+  emissor fiscal brasileiro (ex.: integração NFS-e a partir de
+  `invoice.paid` / `checkout.session.completed`).
+- Ligar `automatic_tax[enabled]=true` sem registro suportado só devolveria
+  imposto zero e daria falsa sensação de compliance.
+
+**Pendente operacional (fora do Stripe):** emitir NFS-e das assinaturas Minha
+Church via ferramenta fiscal BR; doações nas contas Connect ficam a cargo
+fiscal de cada igreja (MoR).
+
 

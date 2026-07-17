@@ -32,7 +32,7 @@ export interface CreateConnectedAccountInput {
 @Injectable()
 export class StripeConnectService {
   private readonly logger = new Logger(StripeConnectService.name);
-  private readonly stripe: Stripe;
+  private readonly stripeClient: Stripe | null;
 
   /** MCC 8661 = Religious Organizations (Stripe). */
   private static readonly CHURCH_MCC = '8661';
@@ -43,13 +43,45 @@ export class StripeConnectService {
   private static readonly CHURCH_BUSINESS_URL = 'https://www.minhachurch.com';
 
   constructor(private readonly configService: ConfigService) {
-    const secretKey = this.configService.get<string>('stripe.secretKey') ?? '';
+    const secretKey =
+      this.configService.get<string>('stripe.secretKey')?.trim() ?? '';
+    const nodeEnv = this.configService.get<string>('nodeEnv') ?? 'development';
 
-    this.stripe = new Stripe(secretKey || 'sk_test_placeholder');
+    if (!secretKey) {
+      if (nodeEnv === 'production') {
+        throw new Error(
+          'STRIPE_SECRET_KEY é obrigatória em produção (preferir Restricted API Key rk_...).',
+        );
+      }
+      this.logger.warn(
+        'STRIPE_SECRET_KEY ausente — Connect/pagamentos falharão até configurar. Preferir rk_ (Restricted API Key) em vez de sk_.',
+      );
+      this.stripeClient = null;
+    } else {
+      if (secretKey.startsWith('sk_')) {
+        this.logger.warn(
+          'STRIPE_SECRET_KEY usa sk_ — prefira Restricted API Key (rk_) com least privilege.',
+        );
+      } else if (!secretKey.startsWith('rk_')) {
+        this.logger.warn(
+          'STRIPE_SECRET_KEY não parece sk_/rk_ — verifique a chave no Dashboard.',
+        );
+      }
+      this.stripeClient = new Stripe(secretKey);
+    }
+  }
+
+  /** Cliente Stripe; falha se a secret key não estiver configurada. */
+  private get stripe(): Stripe {
+    this.assertConfigured();
+    return this.stripeClient!;
   }
 
   isConfigured(): boolean {
-    return Boolean(this.configService.get<string>('stripe.secretKey'));
+    return Boolean(
+      this.stripeClient &&
+        this.configService.get<string>('stripe.secretKey')?.trim(),
+    );
   }
 
   assertConfigured(): void {
@@ -262,6 +294,10 @@ export class StripeConnectService {
   /**
    * Direct charge na conta conectada (igreja = MoR).
    * `application_fee_amount` opcional (taxa da plataforma em centavos).
+   *
+   * Usa dynamic payment methods (`automatic_payment_methods`) e restringe
+   * Pix/cartão/boleto via `excluded_payment_method_types` — nunca
+   * `payment_method_types` (best practice Stripe).
    */
   async createPaymentIntent(params: {
     stripeAccountId: string;
@@ -271,25 +307,38 @@ export class StripeConnectService {
     metadata: Record<string, string>;
     receiptEmail?: string;
     description?: string;
-    /** Stripe payment_method_types to allow (pix, card, boleto). */
-    paymentMethodTypes: Array<'pix' | 'card' | 'boleto'>;
+    /** Meios do produto permitidos neste checkout (pix, card, boleto). */
+    allowedPaymentMethodTypes: Array<'pix' | 'card' | 'boleto'>;
+    /** Chave de idempotência Stripe (ex.: donation/ticket id). */
+    idempotencyKey: string;
   }): Promise<Stripe.PaymentIntent> {
     this.assertConfigured();
 
-    if (params.paymentMethodTypes.length === 0) {
+    if (params.allowedPaymentMethodTypes.length === 0) {
       throw new BadRequestException(
         'Nenhum meio de pagamento disponível para este fundo.',
       );
     }
 
+    const allowed = new Set(params.allowedPaymentMethodTypes);
+    const excludedPaymentMethodTypes = (
+      ['pix', 'card', 'boleto'] as const
+    ).filter((method) => !allowed.has(method));
+
     const createParams: Stripe.PaymentIntentCreateParams = {
       amount: params.amountCents,
       currency: params.currency ?? 'brl',
-      payment_method_types: params.paymentMethodTypes,
+      automatic_payment_methods: { enabled: true },
       metadata: params.metadata,
       description: params.description,
       receipt_email: params.receiptEmail,
     };
+
+    if (excludedPaymentMethodTypes.length > 0) {
+      createParams.excluded_payment_method_types = [
+        ...excludedPaymentMethodTypes,
+      ];
+    }
 
     if (
       typeof params.applicationFeeAmount === 'number' &&
@@ -300,6 +349,7 @@ export class StripeConnectService {
 
     return this.stripe.paymentIntents.create(createParams, {
       stripeAccount: params.stripeAccountId,
+      idempotencyKey: params.idempotencyKey,
     });
   }
 
@@ -366,6 +416,7 @@ export class StripeConnectService {
 
   /**
    * Subscription mensal na conta conectada (cartão).
+   * Reusa Product (por fundo) + Price (por valor) via lookup_key.
    * Retorna subscription com latest_invoice.confirmation_secret
    * (API Basil+; payment_intent saiu do Invoice).
    * Expand máximo: 4 níveis — nunca latest_invoice.payments.data.payment.payment_intent.
@@ -375,37 +426,40 @@ export class StripeConnectService {
     customerId: string;
     amountCents: number;
     currency?: string;
+    fundId: string;
     productName: string;
     applicationFeePercent?: number;
     metadata: Record<string, string>;
+    idempotencyKey: string;
   }): Promise<Stripe.Subscription> {
     this.assertConfigured();
 
-    const product = await this.stripe.products.create(
-      {
-        name: params.productName,
-        metadata: params.metadata,
+    const currency = params.currency ?? 'brl';
+    const priceId = await this.getOrCreateGivingPrice({
+      stripeAccountId: params.stripeAccountId,
+      fundId: params.fundId,
+      productName: params.productName,
+      amountCents: params.amountCents,
+      currency,
+      metadata: {
+        minhachurch_fund_id: params.fundId,
+        minhachurch_church_id:
+          params.metadata.minhachurch_church_id ?? '',
       },
-      { stripeAccount: params.stripeAccountId },
-    );
+    });
 
     const createParams: Stripe.SubscriptionCreateParams = {
       customer: params.customerId,
       payment_behavior: 'default_incomplete',
+      // Recorrência de doação = só cartão (produto). Pix/boleto não
+      // funcionam bem como “débito automático” mensal; restringimos no
+      // PaymentIntent da invoice para o Elements não oferecer boleto/Pix.
+      // Doação avulsa continua com dynamic methods + excluded.
       payment_settings: {
         save_default_payment_method: 'on_subscription',
         payment_method_types: ['card'],
       },
-      items: [
-        {
-          price_data: {
-            currency: params.currency ?? 'brl',
-            unit_amount: params.amountCents,
-            recurring: { interval: 'month' },
-            product: product.id,
-          },
-        },
-      ],
+      items: [{ price: priceId }],
       metadata: params.metadata,
       // Stripe limita expand a 4 níveis. Não use
       // latest_invoice.payments.data.payment.payment_intent (5 níveis).
@@ -424,7 +478,147 @@ export class StripeConnectService {
 
     return this.stripe.subscriptions.create(createParams, {
       stripeAccount: params.stripeAccountId,
+      idempotencyKey: params.idempotencyKey,
     });
+  }
+
+  /**
+   * Um Product por fundo (metadata) + um Price por (fundo, valor, moeda, intervalo)
+   * via lookup_key. Evita criar Product/Price ad hoc a cada assinatura.
+   */
+  private async getOrCreateGivingPrice(params: {
+    stripeAccountId: string;
+    fundId: string;
+    productName: string;
+    amountCents: number;
+    currency: string;
+    metadata: Record<string, string>;
+  }): Promise<string> {
+    const requestOpts = { stripeAccount: params.stripeAccountId };
+    const priceLookupKey =
+      `mc_giving_${params.fundId}_${params.amountCents}_${params.currency}_month`.slice(
+        0,
+        200,
+      );
+
+    const existingPrices = await this.stripe.prices.list(
+      { lookup_keys: [priceLookupKey], active: true, limit: 1 },
+      requestOpts,
+    );
+    if (existingPrices.data[0]) {
+      return existingPrices.data[0].id;
+    }
+
+    const productId = await this.getOrCreateGivingProduct({
+      stripeAccountId: params.stripeAccountId,
+      fundId: params.fundId,
+      productName: params.productName,
+      metadata: params.metadata,
+    });
+
+    const price = await this.stripe.prices.create(
+      {
+        currency: params.currency,
+        unit_amount: params.amountCents,
+        recurring: { interval: 'month' },
+        product: productId,
+        lookup_key: priceLookupKey,
+        metadata: params.metadata,
+      },
+      {
+        ...requestOpts,
+        idempotencyKey: `mc_price_${priceLookupKey}`.slice(0, 255),
+      },
+    );
+
+    return price.id;
+  }
+
+  private async getOrCreateGivingProduct(params: {
+    stripeAccountId: string;
+    fundId: string;
+    productName: string;
+    metadata: Record<string, string>;
+  }): Promise<string> {
+    const existingId = await this.findProductIdByFundId(
+      params.fundId,
+      params.stripeAccountId,
+    );
+    if (existingId) {
+      return existingId;
+    }
+
+    try {
+      const product = await this.stripe.products.create(
+        {
+          name: params.productName,
+          metadata: {
+            ...params.metadata,
+            minhachurch_fund_id: params.fundId,
+          },
+        },
+        {
+          stripeAccount: params.stripeAccountId,
+          idempotencyKey: `mc_prod_fund_${params.fundId}`.slice(0, 255),
+        },
+      );
+      return product.id;
+    } catch (error) {
+      const again = await this.findProductIdByFundId(
+        params.fundId,
+        params.stripeAccountId,
+      );
+      if (again) {
+        return again;
+      }
+      throw error;
+    }
+  }
+
+  private async findProductIdByFundId(
+    fundId: string,
+    stripeAccountId: string,
+  ): Promise<string | null> {
+    const requestOpts = { stripeAccount: stripeAccountId };
+
+    try {
+      const searched = await this.stripe.products.search(
+        {
+          query: `metadata['minhachurch_fund_id']:'${fundId}'`,
+          limit: 1,
+        },
+        requestOpts,
+      );
+      if (searched.data[0]) {
+        return searched.data[0].id;
+      }
+    } catch {
+      // Search pode não estar disponível na conta conectada — fallback list.
+    }
+
+    let startingAfter: string | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const listed = await this.stripe.products.list(
+        {
+          active: true,
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        },
+        requestOpts,
+      );
+      const match = listed.data.find(
+        (product) => product.metadata?.minhachurch_fund_id === fundId,
+      );
+      if (match) {
+        return match.id;
+      }
+      if (!listed.has_more || listed.data.length === 0) {
+        break;
+      }
+      startingAfter = listed.data[listed.data.length - 1]?.id;
+    }
+
+    return null;
   }
 
   async cancelSubscription(
