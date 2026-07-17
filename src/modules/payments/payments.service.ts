@@ -49,7 +49,12 @@ import {
 } from './giving-receipt-token';
 import { StripeConnectService } from './stripe-connect.service';
 import type {
+  ConnectPayoutsOverviewResult,
+  ConnectPayoutResult,
+  ConnectPayoutStatus,
   ConnectStatusResult,
+  EventTicketPurchaseListResult,
+  EventTicketPurchaseResult,
   FiscalProfileResult,
   GivingCheckoutResult,
   GivingDonationListResult,
@@ -58,6 +63,7 @@ import type {
   GivingDonationResult,
   GivingFundResult,
   GivingSubscriptionResult,
+  ListEventTicketPurchasesOptions,
   ListGivingDonationsOptions,
   FinanceEntryListResult,
   FinanceEntryResult,
@@ -650,8 +656,12 @@ export class PaymentsService {
       churchId,
       options,
     );
+    const ticketWhere = this.buildSucceededEventTicketsDateWhere(
+      churchId,
+      options,
+    );
 
-    const [incomeAgg, expenseAgg, donationAgg] = await Promise.all([
+    const [incomeAgg, expenseAgg, donationAgg, ticketAgg] = await Promise.all([
       this.prisma.financeEntry.aggregate({
         where: { ...entryWhere, type: FinanceEntryType.income },
         _sum: { amountCents: true },
@@ -664,18 +674,100 @@ export class PaymentsService {
         where: donationWhere,
         _sum: { amountCents: true },
       }),
+      this.prisma.eventTicketPurchase.aggregate({
+        where: ticketWhere,
+        _sum: { amountCents: true },
+      }),
     ]);
 
     const incomeCents = incomeAgg._sum.amountCents ?? 0;
     const expenseCents = expenseAgg._sum.amountCents ?? 0;
     const onlineDonationCents = donationAgg._sum.amountCents ?? 0;
+    const eventTicketCents = ticketAgg._sum.amountCents ?? 0;
 
     return {
       incomeCents,
       expenseCents,
-      balanceCents: incomeCents + onlineDonationCents - expenseCents,
+      balanceCents:
+        incomeCents + onlineDonationCents + eventTicketCents - expenseCents,
       onlineDonationCents,
+      eventTicketCents,
     };
+  }
+
+  async listEventTicketPurchases(
+    churchId: string,
+    options?: ListEventTicketPurchasesOptions,
+  ): Promise<EventTicketPurchaseListResult> {
+    const page = Math.max(options?.page ?? 1, 1);
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
+    const where = this.buildEventTicketPurchasesWhere(churchId, options);
+
+    const [total, purchases] = await this.prisma.$transaction([
+      this.prisma.eventTicketPurchase.count({ where }),
+      this.prisma.eventTicketPurchase.findMany({
+        where,
+        include: {
+          event: { select: { id: true, name: true } },
+          member: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      items: purchases.map((purchase) =>
+        this.toEventTicketPurchaseResult(purchase),
+      ),
+      page,
+      limit,
+      total,
+    };
+  }
+
+  async exportEventTicketPurchasesCsv(
+    churchId: string,
+    options?: ListEventTicketPurchasesOptions,
+  ): Promise<string> {
+    const where = this.buildEventTicketPurchasesWhere(churchId, options);
+    const purchases = await this.prisma.eventTicketPurchase.findMany({
+      where,
+      include: {
+        event: { select: { id: true, name: true } },
+        member: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    });
+
+    const header = [
+      'Data',
+      'Evento',
+      'Valor',
+      'Moeda',
+      'Status',
+      'Participante',
+      'E-mail',
+      'ID do membro',
+    ];
+    const rows = purchases.map((purchase) =>
+      [
+        formatCsvDateTime(purchase.createdAt),
+        purchase.event.name,
+        formatCsvCurrency(purchase.amountCents),
+        purchase.currency.toUpperCase(),
+        formatEventTicketStatusLabel(purchase.status),
+        purchase.member?.name ?? purchase.buyerName ?? '',
+        purchase.buyerEmail ?? '',
+        purchase.memberId ?? '',
+      ]
+        .map(escapeCsvCell)
+        .join(','),
+    );
+
+    return `\uFEFF${header.join(',')}\n${rows.join('\n')}\n`;
   }
 
   async exportFinanceEntriesCsv(
@@ -687,8 +779,12 @@ export class PaymentsService {
       churchId,
       options,
     );
+    const ticketWhere = this.buildSucceededEventTicketsDateWhere(
+      churchId,
+      options,
+    );
 
-    const [entries, donations] = await Promise.all([
+    const [entries, donations, tickets] = await Promise.all([
       this.prisma.financeEntry.findMany({
         where: entryWhere,
         include: { fund: { select: { name: true } } },
@@ -704,10 +800,19 @@ export class PaymentsService {
         orderBy: { createdAt: 'desc' },
         take: 5000,
       }),
+      this.prisma.eventTicketPurchase.findMany({
+        where: ticketWhere,
+        include: {
+          event: { select: { name: true } },
+          member: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5000,
+      }),
     ]);
 
     type ExportRow = {
-      source: 'manual' | 'online';
+      source: 'manual' | 'online' | 'event_ticket';
       type: FinanceEntryType | 'income';
       date: Date;
       category: string;
@@ -741,6 +846,17 @@ export class PaymentsService {
         method: 'online' as const,
         note: donation.donorMember?.name ?? donation.payerName ?? '',
       })),
+      ...tickets.map((ticket) => ({
+        source: 'event_ticket' as const,
+        type: 'income' as const,
+        date: ticket.createdAt,
+        category: `Inscrição — ${ticket.event.name}`,
+        fund: ticket.event.name,
+        amountCents: ticket.amountCents,
+        currency: ticket.currency,
+        method: 'online' as const,
+        note: ticket.member?.name ?? ticket.buyerName ?? '',
+      })),
     ];
 
     rows.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -760,9 +876,9 @@ export class PaymentsService {
       [
         formatFinanceEntrySourceLabel(row.source),
         formatFinanceEntryTypeLabel(row.type),
-        row.source === 'online'
-          ? formatCsvDateTime(row.date)
-          : formatCsvDate(row.date),
+        row.source === 'manual'
+          ? formatCsvDate(row.date)
+          : formatCsvDateTime(row.date),
         row.category,
         row.fund,
         formatCsvCurrency(row.amountCents),
@@ -867,6 +983,182 @@ export class PaymentsService {
     );
 
     return this.toGivingDonationResult(updated);
+  }
+
+  async refundEventTicketPurchase(
+    churchId: string,
+    ticketId: string,
+  ): Promise<EventTicketPurchaseResult> {
+    this.stripeConnect.assertConfigured();
+
+    const purchase = await this.prisma.eventTicketPurchase.findFirst({
+      where: { id: ticketId, churchId },
+      include: {
+        event: { select: { id: true, name: true } },
+        member: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!purchase) {
+      throw new NotFoundException('Inscrição paga não encontrada.');
+    }
+
+    if (purchase.status === EventTicketStatus.refunded) {
+      return this.toEventTicketPurchaseResult(purchase);
+    }
+
+    if (purchase.status !== EventTicketStatus.succeeded) {
+      throw new BadRequestException(
+        'Só é possível estornar inscrições confirmadas.',
+      );
+    }
+
+    if (!purchase.stripePaymentIntentId) {
+      throw new BadRequestException(
+        'Esta inscrição não possui cobrança Stripe para estornar.',
+      );
+    }
+
+    const account = await this.prisma.churchPaymentAccount.findUnique({
+      where: { churchId },
+      select: { stripeAccountId: true },
+    });
+
+    if (!account?.stripeAccountId) {
+      throw new BadRequestException(
+        'Conta de recebimentos não encontrada para esta igreja.',
+      );
+    }
+
+    try {
+      await this.stripeConnect.createRefund({
+        stripeAccountId: account.stripeAccountId,
+        paymentIntentId: purchase.stripePaymentIntentId,
+        metadata: {
+          minhachurch_ticket_id: purchase.id,
+          minhachurch_event_id: purchase.eventId,
+          minhachurch_church_id: churchId,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao estornar inscrição ${purchase.id}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+      throw new BadRequestException(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível estornar esta inscrição.',
+      );
+    }
+
+    const updated = await this.prisma.eventTicketPurchase.update({
+      where: { id: purchase.id },
+      data: { status: EventTicketStatus.refunded },
+      include: {
+        event: { select: { id: true, name: true } },
+        member: { select: { id: true, name: true } },
+      },
+    });
+
+    return this.toEventTicketPurchaseResult(updated);
+  }
+
+  private buildEventTicketPurchasesWhere(
+    churchId: string,
+    options?: ListEventTicketPurchasesOptions,
+  ): Prisma.EventTicketPurchaseWhereInput {
+    const where: Prisma.EventTicketPurchaseWhereInput = { churchId };
+
+    if (options?.eventId) {
+      where.eventId = options.eventId;
+    }
+
+    if (options?.memberId) {
+      where.memberId = options.memberId;
+    }
+
+    if (options?.status) {
+      const status = options.status as EventTicketStatus;
+      if (Object.values(EventTicketStatus).includes(status)) {
+        where.status = status;
+      }
+    }
+
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (options?.from) {
+      const from = new Date(options.from);
+      if (!Number.isNaN(from.getTime())) {
+        createdAt.gte = from;
+      }
+    }
+    if (options?.to) {
+      const to = new Date(options.to);
+      if (!Number.isNaN(to.getTime())) {
+        createdAt.lte = to;
+      }
+    }
+    if (Object.keys(createdAt).length > 0) {
+      where.createdAt = createdAt;
+    }
+
+    return where;
+  }
+
+  private buildSucceededEventTicketsDateWhere(
+    churchId: string,
+    options?: { from?: string; to?: string },
+  ): Prisma.EventTicketPurchaseWhereInput {
+    const where: Prisma.EventTicketPurchaseWhereInput = {
+      churchId,
+      status: EventTicketStatus.succeeded,
+    };
+
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (options?.from) {
+      const from = new Date(options.from);
+      if (!Number.isNaN(from.getTime())) {
+        createdAt.gte = from;
+      }
+    }
+    if (options?.to) {
+      const to = new Date(options.to);
+      if (!Number.isNaN(to.getTime())) {
+        createdAt.lte = to;
+      }
+    }
+    if (Object.keys(createdAt).length > 0) {
+      where.createdAt = createdAt;
+    }
+
+    return where;
+  }
+
+  private toEventTicketPurchaseResult(purchase: {
+    id: string;
+    amountCents: number;
+    currency: string;
+    status: string;
+    buyerName: string | null;
+    buyerEmail: string | null;
+    createdAt: Date;
+    event: { id: string; name: string };
+    member: { id: string; name: string } | null;
+  }): EventTicketPurchaseResult {
+    return {
+      id: purchase.id,
+      eventId: purchase.event.id,
+      eventName: purchase.event.name,
+      amountCents: purchase.amountCents,
+      currency: purchase.currency,
+      status: purchase.status,
+      buyerName: purchase.buyerName,
+      buyerEmail: purchase.buyerEmail,
+      memberId: purchase.member?.id ?? null,
+      memberName: purchase.member?.name ?? null,
+      createdAt: purchase.createdAt.toISOString(),
+    };
   }
 
   private buildGivingDonationsWhere(
@@ -1987,6 +2279,100 @@ export class PaymentsService {
     );
 
     return { url: link.url };
+  }
+
+  /**
+   * Visão de repasses Stripe → banco da igreja.
+   * Read-only: não altera agenda de payout nem dados bancários.
+   */
+  async getConnectPayoutsOverview(
+    churchId: string,
+    options?: { limit?: number },
+  ): Promise<ConnectPayoutsOverviewResult> {
+    this.stripeConnect.assertConfigured();
+    await this.assertChurchNotClosed(churchId);
+
+    const account = await this.prisma.churchPaymentAccount.findUnique({
+      where: { churchId },
+      select: {
+        stripeAccountId: true,
+        payoutsEnabled: true,
+        detailsSubmitted: true,
+      },
+    });
+
+    if (!account?.stripeAccountId || !account.detailsSubmitted) {
+      throw new BadRequestException(
+        'Ative e conclua os recebimentos para ver os repasses ao banco.',
+      );
+    }
+
+    const limit = Math.min(Math.max(options?.limit ?? 20, 1), 50);
+
+    const [balance, payoutList] = await Promise.all([
+      this.stripeConnect.retrieveConnectBalance(account.stripeAccountId),
+      this.stripeConnect.listConnectPayouts(account.stripeAccountId, {
+        limit,
+      }),
+    ]);
+
+    const toBalanceAmounts = (
+      items: Array<{ amount: number; currency: string }>,
+    ) =>
+      items.map((item) => ({
+        amountCents: item.amount,
+        currency: item.currency,
+      }));
+
+    return {
+      payoutsEnabled: account.payoutsEnabled,
+      available: toBalanceAmounts(balance.available),
+      pending: toBalanceAmounts(balance.pending),
+      payouts: payoutList.data.map((payout) =>
+        this.toConnectPayoutResult(payout),
+      ),
+      hasMore: payoutList.has_more,
+    };
+  }
+
+  private toConnectPayoutResult(payout: {
+    id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    arrival_date: number;
+    created: number;
+    method: string;
+    description: string | null;
+    failure_message: string | null;
+  }): ConnectPayoutResult {
+    const status = this.normalizeConnectPayoutStatus(payout.status);
+    const arrival = new Date(payout.arrival_date * 1000);
+
+    return {
+      id: payout.id,
+      amountCents: payout.amount,
+      currency: payout.currency,
+      status,
+      arrivalDate: arrival.toISOString().slice(0, 10),
+      createdAt: new Date(payout.created * 1000).toISOString(),
+      method: payout.method,
+      description: payout.description,
+      failureMessage: payout.failure_message,
+    };
+  }
+
+  private normalizeConnectPayoutStatus(status: string): ConnectPayoutStatus {
+    switch (status) {
+      case 'paid':
+      case 'pending':
+      case 'in_transit':
+      case 'canceled':
+      case 'failed':
+        return status;
+      default:
+        return 'pending';
+    }
   }
 
   async syncConnectAccount(churchId: string): Promise<ConnectStatusResult> {
@@ -3501,8 +3887,29 @@ function formatGivingDonationStatusLabel(
   }
 }
 
-function formatFinanceEntrySourceLabel(source: 'manual' | 'online'): string {
-  return source === 'manual' ? 'Manual' : 'Online';
+function formatFinanceEntrySourceLabel(
+  source: 'manual' | 'online' | 'event_ticket',
+): string {
+  if (source === 'manual') return 'Manual';
+  if (source === 'event_ticket') return 'Inscrição';
+  return 'Online';
+}
+
+function formatEventTicketStatusLabel(status: EventTicketStatus): string {
+  switch (status) {
+    case EventTicketStatus.pending:
+      return 'Pendente';
+    case EventTicketStatus.succeeded:
+      return 'Confirmada';
+    case EventTicketStatus.failed:
+      return 'Falhou';
+    case EventTicketStatus.canceled:
+      return 'Cancelada';
+    case EventTicketStatus.refunded:
+      return 'Estornada';
+    default:
+      return status;
+  }
 }
 
 function formatFinanceEntryTypeLabel(type: FinanceEntryType | 'income'): string {

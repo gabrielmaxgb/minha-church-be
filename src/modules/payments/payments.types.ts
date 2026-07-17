@@ -212,6 +212,79 @@ export interface FinanceEntriesSummaryResult {
   expenseCents: number;
   balanceCents: number;
   onlineDonationCents: number;
+  /** Inscrições pagas de eventos (EventTicketPurchase succeeded) no período. */
+  eventTicketCents: number;
+}
+
+export interface EventTicketPurchaseResult {
+  id: string;
+  eventId: string;
+  eventName: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  buyerName: string | null;
+  buyerEmail: string | null;
+  memberId: string | null;
+  memberName: string | null;
+  createdAt: string;
+}
+
+export interface EventTicketPurchaseListResult {
+  items: EventTicketPurchaseResult[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface ListEventTicketPurchasesOptions {
+  eventId?: string;
+  status?: string;
+  memberId?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}
+
+/** Status de um repasse Stripe → banco (Payout). */
+export type ConnectPayoutStatus =
+  | 'paid'
+  | 'pending'
+  | 'in_transit'
+  | 'canceled'
+  | 'failed';
+
+export interface ConnectPayoutResult {
+  id: string;
+  amountCents: number;
+  currency: string;
+  status: ConnectPayoutStatus;
+  /** Data estimada de chegada no banco (ISO date YYYY-MM-DD). */
+  arrivalDate: string;
+  createdAt: string;
+  method: string;
+  description: string | null;
+  failureMessage: string | null;
+}
+
+export interface ConnectBalanceAmount {
+  amountCents: number;
+  currency: string;
+}
+
+/**
+ * Visão read-only do dinheiro na conta Connect e dos repasses ao banco.
+ * Não representa gastos da igreja nem extrato bancário.
+ */
+export interface ConnectPayoutsOverviewResult {
+  payoutsEnabled: boolean;
+  /** Saldo liberado na Connect, ainda não enviado ao banco. */
+  available: ConnectBalanceAmount[];
+  /** Saldo ainda em liquidação na Connect. */
+  pending: ConnectBalanceAmount[];
+  payouts: ConnectPayoutResult[];
+  hasMore: boolean;
 }
 
 /** Campos que o Stripe Express ainda devolve após o onboarding (subset). */

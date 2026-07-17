@@ -257,6 +257,44 @@ export class StripeConnectService {
   }
 
   /**
+   * Saldo da conta Connect (disponível vs. a liquidar).
+   * Escopo: conta conectada — não é o saldo do banco da igreja.
+   */
+  async retrieveConnectBalance(
+    stripeAccountId: string,
+  ): Promise<Stripe.Balance> {
+    this.assertConfigured();
+
+    return this.stripe.balance.retrieve(
+      {},
+      { stripeAccount: stripeAccountId },
+    );
+  }
+
+  /**
+   * Repasses Stripe → conta bancária cadastrada na Connect.
+   * Não inclui gastos feitos depois que o dinheiro caiu no banco.
+   */
+  async listConnectPayouts(
+    stripeAccountId: string,
+    options?: { limit?: number; startingAfter?: string },
+  ): Promise<Stripe.ApiList<Stripe.Payout>> {
+    this.assertConfigured();
+
+    const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
+
+    return this.stripe.payouts.list(
+      {
+        limit,
+        ...(options?.startingAfter
+          ? { starting_after: options.startingAfter }
+          : {}),
+      },
+      { stripeAccount: stripeAccountId },
+    );
+  }
+
+  /**
    * Prefixa o perfil de negócio como organização religiosa (MCC 8661).
    * Rodado na criação e antes do Account Link, pra o onboarding hospedado
    * não parecer e-commerce genérico.

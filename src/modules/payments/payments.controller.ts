@@ -97,6 +97,21 @@ export class PaymentsController {
     return this.paymentsService.createExpressDashboardLink(churchId);
   }
 
+  @Get('connect/payouts')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  getConnectPayoutsOverview(
+    @Param('churchId') churchId: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.paymentsService.getConnectPayoutsOverview(churchId, {
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
   @Post('connect/sync')
   @UseGuards(ChurchOwnerGuard)
   syncConnectAccount(@Param('churchId') churchId: string) {
@@ -224,6 +239,71 @@ export class PaymentsController {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });
+  }
+
+  @Get('event-tickets')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  listEventTicketPurchases(
+    @Param('churchId') churchId: string,
+    @Query('eventId') eventId?: string,
+    @Query('status') status?: string,
+    @Query('memberId') memberId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.paymentsService.listEventTicketPurchases(churchId, {
+      eventId,
+      status,
+      memberId,
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Get('event-tickets/export')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.finances_access,
+    ChurchPermission.receivables_manage,
+  )
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header(
+    'Content-Disposition',
+    'attachment; filename="inscricoes-pagas.csv"',
+  )
+  exportEventTicketPurchases(
+    @Param('churchId') churchId: string,
+    @Query('eventId') eventId?: string,
+    @Query('status') status?: string,
+    @Query('memberId') memberId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.paymentsService.exportEventTicketPurchasesCsv(churchId, {
+      eventId,
+      status,
+      memberId,
+      from,
+      to,
+    });
+  }
+
+  @Post('event-tickets/:ticketId/refund')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
+  refundEventTicketPurchase(
+    @Param('churchId') churchId: string,
+    @Param('ticketId') ticketId: string,
+  ) {
+    return this.paymentsService.refundEventTicketPurchase(churchId, ticketId);
   }
 
   @Get('donations/export')
