@@ -42,6 +42,10 @@ import {
   UpdateFinanceEntryDto,
 } from './dto/finance-entry.dto';
 import { isOwnerOnboardingMinimumComplete } from './fiscal-profile-completeness';
+import {
+  createGivingReceiptToken,
+  verifyGivingReceiptToken,
+} from './giving-receipt-token';
 import { StripeConnectService } from './stripe-connect.service';
 import type {
   ConnectStatusResult,
@@ -1091,11 +1095,17 @@ export class PaymentsService {
   /**
    * Recibo pós-checkout: sincroniza com o Stripe quando há PI e devolve
    * outcome estável para a UI (sem confiar em redirect_status).
-   * O donationId (cuid) é o segredo do link — não expõe PII.
+   * Exige receiptToken emitido no checkout (não basta conhecer o donationId).
    */
   async getGivingDonationReceipt(
     donationId: string,
+    receiptToken: string | undefined,
   ): Promise<GivingDonationReceiptResult> {
+    const secret = this.configService.getOrThrow<string>('jwt.secret');
+    if (!verifyGivingReceiptToken(donationId, receiptToken, secret)) {
+      throw new NotFoundException('Contribuição não encontrada.');
+    }
+
     const donation = await this.prisma.givingDonation.findFirst({
       where: { id: donationId },
       include: {
@@ -1374,6 +1384,7 @@ export class PaymentsService {
 
       return {
         donationId: donation.id,
+        receiptToken: this.issueGivingReceiptToken(donation.id),
         subscriptionId: null,
         mode: 'payment',
         clientSecret: paymentIntent.client_secret,
@@ -1520,6 +1531,7 @@ export class PaymentsService {
 
       return {
         donationId: donation.id,
+        receiptToken: this.issueGivingReceiptToken(donation.id),
         subscriptionId: localSub.id,
         mode: 'subscription',
         clientSecret,
@@ -2419,6 +2431,7 @@ export class PaymentsService {
 
       return {
         donationId: ticket.id,
+        receiptToken: this.issueGivingReceiptToken(ticket.id),
         subscriptionId: null,
         mode: 'payment',
         clientSecret: paymentIntent.client_secret,
@@ -2531,6 +2544,7 @@ export class PaymentsService {
 
         reusable = {
           donationId: ticket.id,
+          receiptToken: this.issueGivingReceiptToken(ticket.id),
           subscriptionId: null,
           mode: 'payment',
           clientSecret: paymentIntent.client_secret,
@@ -2557,6 +2571,11 @@ export class PaymentsService {
     }
 
     return reusable;
+  }
+
+  private issueGivingReceiptToken(donationId: string): string {
+    const secret = this.configService.getOrThrow<string>('jwt.secret');
+    return createGivingReceiptToken(donationId, secret);
   }
 
   private async cancelEventTicketCheckoutAttempt(

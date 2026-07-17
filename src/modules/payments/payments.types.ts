@@ -99,6 +99,8 @@ export interface PublicGivingFundResult {
 
 export interface GivingCheckoutResult {
   donationId: string;
+  /** Token de acesso ao recibo público (expira). */
+  receiptToken: string;
   subscriptionId?: string | null;
   mode: 'payment' | 'subscription';
   clientSecret: string;

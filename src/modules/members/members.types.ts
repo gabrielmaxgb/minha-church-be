@@ -245,6 +245,45 @@ export function toMemberResponse(member: MemberWithMinistries): MemberResponse {
   };
 }
 
+/**
+ * Lista para líderes de equipe / quem não tem members_access|manage:
+ * mantém id/nome/e-mail/status (necessário p/ adicionar a ministérios)
+ * e remove PII sensível (CPF, endereço, datas pastorais, consentimento).
+ */
+export function redactMemberDirectoryPii(
+  member: MemberResponse,
+): MemberResponse {
+  return {
+    ...member,
+    cpf: null,
+    phone: null,
+    phoneSecondary: null,
+    birthDate: null,
+    gender: null,
+    maritalStatus: null,
+    weddingAnniversary: null,
+    street: null,
+    number: null,
+    complement: null,
+    neighborhood: null,
+    city: null,
+    state: null,
+    zipCode: null,
+    visitorSince: null,
+    baptismDate: null,
+    membershipDate: null,
+    isMinor: false,
+    parentalConsentRequired: false,
+    parentalConsentGranted: false,
+    parentalConsentAt: null,
+    parentalConsentGuardianName: null,
+    parentalConsentGuardianEmail: null,
+    parentalConsentGuardianMemberId: null,
+    familyId: null,
+    family: null,
+  };
+}
+
 export function parseOptionalDate(
   value?: string | null,
 ): Date | null | undefined {

@@ -52,10 +52,7 @@ export class MembersController {
 
   @Get('export')
   @UseGuards(PermissionsGuard)
-  @RequirePermission(
-    ChurchPermission.members_access,
-    ChurchPermission.members_manage,
-  )
+  @RequirePermission(ChurchPermission.members_manage)
   async exportMembers(
     @Param('churchId') churchId: string,
     @Query('format') format: string | undefined,

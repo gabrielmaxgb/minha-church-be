@@ -219,6 +219,18 @@ export class ChurchMembershipsService {
       throw new NotFoundException('Usuário não encontrado nesta igreja.');
     }
 
+    if (membership.isOwner) {
+      throw new ForbiddenException(
+        'Não é possível gerar senha temporária para o proprietário da igreja. Use a recuperação de senha por e-mail ou peça ao proprietário para alterar a senha no perfil.',
+      );
+    }
+
+    if (userId === actorUserId) {
+      throw new BadRequestException(
+        'Use a alteração de senha do próprio perfil para atualizar sua senha.',
+      );
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -306,6 +318,7 @@ export class ChurchMembershipsService {
       isSystem: boolean;
       systemKey?: string;
       sortOrder: number;
+      singleHolder: boolean;
     }>
   > {
     const actorAccess = await this.churchPermissions.getMembershipAccess(
@@ -351,6 +364,7 @@ export class ChurchMembershipsService {
         isSystem: role.isSystem,
         systemKey: role.systemKey ?? undefined,
         sortOrder: role.sortOrder,
+        singleHolder: role.singleHolder,
       }));
   }
 
@@ -364,7 +378,7 @@ export class ChurchMembershipsService {
       throw new BadRequestException('Você não pode alterar o próprio acesso.');
     }
 
-    if (dto.roleIds === undefined && dto.isOwner === undefined) {
+    if (dto.roleIds === undefined) {
       throw new BadRequestException('Nenhuma alteração informada.');
     }
 
@@ -399,8 +413,11 @@ export class ChurchMembershipsService {
       throw new NotFoundException('Usuário não encontrado nesta igreja.');
     }
 
-    if (dto.isOwner === true && !membership.isOwner) {
-      this.assertCanReceiveOwnership(membership, churchId);
+    // Propriedade só muda pelo fluxo dedicado transferOwnership (com senha).
+    if (membership.isOwner && !actorAccess.isOwner) {
+      throw new ForbiddenException(
+        'Somente o proprietário pode alterar cargos do proprietário.',
+      );
     }
 
     const targetPermissions = new Set<ChurchPermission>();
@@ -426,118 +443,87 @@ export class ChurchMembershipsService {
       );
     }
 
-    if (dto.isOwner !== undefined) {
-      if (!actorAccess.isOwner) {
-        throw new ForbiddenException(
-          'Somente o proprietário pode transferir a propriedade.',
-        );
-      }
+    const memberRole = await this.prisma.churchRole.findFirst({
+      where: { churchId, systemKey: 'member' },
+      select: { id: true },
+    });
 
-      if (dto.isOwner === false && membership.isOwner) {
-        await this.ensureAnotherOwnerRemains(churchId, targetUserId);
+    const uniqueRoleIds = [
+      ...new Set([
+        ...dto.roleIds,
+        ...(memberRole ? [memberRole.id] : []),
+      ]),
+    ];
+
+    if (uniqueRoleIds.length === 0 && !membership.isOwner) {
+      throw new BadRequestException(
+        'O usuário precisa ter pelo menos um cargo ou ser proprietário.',
+      );
+    }
+
+    const rolePermissions = await this.churchRolesService.findRolePermissions(
+      churchId,
+      uniqueRoleIds,
+    );
+
+    if (rolePermissions.size !== uniqueRoleIds.length) {
+      throw new BadRequestException('Um ou mais cargos são inválidos.');
+    }
+
+    const requestedPermissions = new Set<ChurchPermission>();
+    for (const permissions of rolePermissions.values()) {
+      for (const permission of permissions) {
+        requestedPermissions.add(permission);
       }
     }
 
-    if (dto.roleIds !== undefined) {
-      const memberRole = await this.prisma.churchRole.findFirst({
-        where: { churchId, systemKey: 'member' },
-        select: { id: true },
-      });
-
-      const uniqueRoleIds = [
-        ...new Set([
-          ...dto.roleIds,
-          ...(memberRole ? [memberRole.id] : []),
-        ]),
-      ];
-
-      if (
-        uniqueRoleIds.length === 0 &&
-        !membership.isOwner &&
-        dto.isOwner !== true
-      ) {
-        throw new BadRequestException(
-          'O usuário precisa ter pelo menos um cargo ou ser proprietário.',
-        );
-      }
-
-      const rolePermissions = await this.churchRolesService.findRolePermissions(
-        churchId,
-        uniqueRoleIds,
+    if (
+      !actorAccess.isOwner &&
+      !this.churchPermissions.permissionsAreSubsetOf(
+        requestedPermissions,
+        actorPermissions,
+      )
+    ) {
+      throw new ForbiddenException(
+        'Você não pode atribuir cargos com permissões superiores às suas.',
       );
-
-      if (rolePermissions.size !== uniqueRoleIds.length) {
-        throw new BadRequestException('Um ou mais cargos são inválidos.');
-      }
-
-      const requestedPermissions = new Set<ChurchPermission>();
-      for (const permissions of rolePermissions.values()) {
-        for (const permission of permissions) {
-          requestedPermissions.add(permission);
-        }
-      }
-
-      if (
-        !actorAccess.isOwner &&
-        !this.churchPermissions.permissionsAreSubsetOf(
-          requestedPermissions,
-          actorPermissions,
-        )
-      ) {
-        throw new ForbiddenException(
-          'Você não pode atribuir cargos com permissões superiores às suas.',
-        );
-      }
-
-      // Persist the forced member role for the transaction below.
-      dto.roleIds = uniqueRoleIds;
     }
 
     const beforeRoleNames = membership.roleAssignments
       .map((assignment) => assignment.role.name)
       .sort();
-    const beforeIsOwner = membership.isOwner;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (dto.isOwner !== undefined) {
-        await tx.churchMembership.update({
-          where: { id: membership.id },
-          data: { isOwner: dto.isOwner },
+      const singleHolderRoles = await tx.churchRole.findMany({
+        where: {
+          churchId,
+          id: { in: uniqueRoleIds },
+          singleHolder: true,
+        },
+        select: { id: true },
+      });
+
+      for (const role of singleHolderRoles) {
+        await tx.churchMembershipRole.deleteMany({
+          where: {
+            roleId: role.id,
+            membershipId: { not: membership.id },
+            membership: { churchId },
+          },
         });
       }
 
-      if (dto.roleIds !== undefined) {
-        const singleHolderRoles = await tx.churchRole.findMany({
-          where: {
-            churchId,
-            id: { in: dto.roleIds },
-            singleHolder: true,
-          },
-          select: { id: true },
+      await tx.churchMembershipRole.deleteMany({
+        where: { membershipId: membership.id },
+      });
+
+      if (uniqueRoleIds.length > 0) {
+        await tx.churchMembershipRole.createMany({
+          data: uniqueRoleIds.map((roleId) => ({
+            membershipId: membership.id,
+            roleId,
+          })),
         });
-
-        for (const role of singleHolderRoles) {
-          await tx.churchMembershipRole.deleteMany({
-            where: {
-              roleId: role.id,
-              membershipId: { not: membership.id },
-              membership: { churchId },
-            },
-          });
-        }
-
-        await tx.churchMembershipRole.deleteMany({
-          where: { membershipId: membership.id },
-        });
-
-        if (dto.roleIds.length > 0) {
-          await tx.churchMembershipRole.createMany({
-            data: dto.roleIds.map((roleId) => ({
-              membershipId: membership.id,
-              roleId,
-            })),
-          });
-        }
       }
 
       return tx.churchMembership.findUniqueOrThrow({
@@ -551,12 +537,9 @@ export class ChurchMembershipsService {
     const response = this.toResponse(updated, churchId);
     const afterRoleNames = response.roles.map((role) => role.name).sort();
     const rolesChanged =
-      dto.roleIds !== undefined &&
       JSON.stringify(beforeRoleNames) !== JSON.stringify(afterRoleNames);
-    const ownerChanged =
-      dto.isOwner !== undefined && beforeIsOwner !== response.isOwner;
 
-    if (rolesChanged || ownerChanged) {
+    if (rolesChanged) {
       const actor = await this.prisma.user.findUnique({
         where: { id: actorUserId },
         select: { name: true },
@@ -564,42 +547,20 @@ export class ChurchMembershipsService {
       const actorName = actor?.name ?? 'Usuário';
       const targetName = membership.user.name;
 
-      let summary = `${actorName} alterou o acesso de ${targetName}`;
-
-      if (ownerChanged && response.isOwner) {
-        summary = `${actorName} tornou ${targetName} proprietário da igreja`;
-      } else if (ownerChanged && !response.isOwner) {
-        summary = `${actorName} removeu a propriedade de ${targetName}`;
-      } else if (rolesChanged) {
-        summary = `${actorName} alterou cargos de ${targetName}`;
-      }
-
       await this.auditService.log({
         churchId,
         actorUserId,
         action: AUDIT_ACTIONS.membershipUpdated,
         targetType: AUDIT_TARGET_TYPES.membership,
         targetId: membership.id,
-        summary,
+        summary: `${actorName} alterou cargos de ${targetName}`,
         metadata: {
           targetUserId: membership.userId,
           targetEmail: membership.user.email,
-          ...(rolesChanged
-            ? {
-                roles: {
-                  before: beforeRoleNames,
-                  after: afterRoleNames,
-                },
-              }
-            : {}),
-          ...(ownerChanged
-            ? {
-                isOwner: {
-                  before: beforeIsOwner,
-                  after: response.isOwner,
-                },
-              }
-            : {}),
+          roles: {
+            before: beforeRoleNames,
+            after: afterRoleNames,
+          },
         },
       });
     }
@@ -608,10 +569,6 @@ export class ChurchMembershipsService {
       churchId,
       targetUserId,
     );
-
-    if (ownerChanged && response.isOwner) {
-      await this.requireOwnerVerificationOnPromotion(targetUserId);
-    }
 
     return response;
   }

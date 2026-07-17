@@ -51,6 +51,7 @@ import {
 import {
   MemberWithMinistries,
   parseOptionalDate,
+  redactMemberDirectoryPii,
   toMemberResponse,
   type CreateMemberResponse,
   type ImportMembersResult,
@@ -127,6 +128,16 @@ export class MembersService {
     if (!canList) {
       throw new ForbiddenException('Permissão insuficiente.');
     }
+
+    const permissions = await this.churchPermissions.getUserPermissions(
+      userId,
+      churchId,
+    );
+    const canViewFullMemberPii =
+      permissions.members.access ||
+      permissions.members.manage ||
+      permissions.ministries.manage;
+
     const page = Math.max(query.page ?? 1, 1);
     const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
     const skip = (page - 1) * limit;
@@ -145,8 +156,17 @@ export class MembersService {
             OR: [
               { name: { contains: query.search, mode: 'insensitive' } },
               { email: { contains: query.search, mode: 'insensitive' } },
-              { cpf: { contains: normalizeCpf(query.search) } },
-              { phone: { contains: query.search, mode: 'insensitive' } },
+              ...(canViewFullMemberPii
+                ? [
+                    { cpf: { contains: normalizeCpf(query.search) } },
+                    {
+                      phone: {
+                        contains: query.search,
+                        mode: 'insensitive' as const,
+                      },
+                    },
+                  ]
+                : []),
             ],
           }
         : {}),
@@ -164,9 +184,12 @@ export class MembersService {
     ]);
 
     return {
-      data: members.map((member) =>
-        toMemberResponse(member as MemberWithMinistries),
-      ),
+      data: members.map((member) => {
+        const response = toMemberResponse(member as MemberWithMinistries);
+        return canViewFullMemberPii
+          ? response
+          : redactMemberDirectoryPii(response);
+      }),
       meta: { total, page, limit },
     };
   }

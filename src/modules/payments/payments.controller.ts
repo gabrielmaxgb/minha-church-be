@@ -410,8 +410,11 @@ export class PaymentsPublicGivingController {
   /** Declarado antes das rotas :churchSlug para não ser capturado por elas. */
   @Get('donations/:donationId/receipt')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  getGivingDonationReceipt(@Param('donationId') donationId: string) {
-    return this.paymentsService.getGivingDonationReceipt(donationId);
+  getGivingDonationReceipt(
+    @Param('donationId') donationId: string,
+    @Query('token') token: string | undefined,
+  ) {
+    return this.paymentsService.getGivingDonationReceipt(donationId, token);
   }
 
   @Get(':churchSlug/:fundSlug')
