@@ -135,6 +135,7 @@ model User {
   financeEntriesCreated            FinanceEntry[] @relation("FinanceEntryCreatedBy")
   notifications                    Notification[]     @relation("NotificationRecipient")
   notificationReads                NotificationRead[]
+  pushSubscriptions                PushSubscription[]
   legalAcceptances              LegalAcceptance[]
 
   @@index([deletedAt])
@@ -1160,4 +1161,21 @@ model NotificationRead {
   @@unique([notificationId, userId])
   @@index([userId])
   @@map("notification_reads")
+}
+
+/// Subscription Web Push (PWA). Um registro por endpoint/device.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
 }

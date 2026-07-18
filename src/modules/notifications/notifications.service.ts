@@ -13,6 +13,7 @@ import type {
   NotificationInboxItem,
   NotificationInboxResponse,
 } from './notifications.types';
+import { PushService } from './push.service';
 
 type RegistrationOpenEvent = {
   id: string;
@@ -33,6 +34,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly churchPermissions: ChurchPermissionsService,
+    private readonly pushService: PushService,
   ) {}
 
   async listForUser(
@@ -408,7 +410,7 @@ export class NotificationsService {
       return;
     }
 
-    await this.prisma.notification.create({
+    const created = await this.prisma.notification.create({
       data: {
         churchId: input.churchId,
         type: NotificationType.pending_access,
@@ -419,6 +421,14 @@ export class NotificationsService {
         entityType: 'User',
         entityId: input.pendingUserId,
       },
+    });
+
+    const staffUserIds = await this.findMembershipManagers(input.churchId);
+    this.pushService.scheduleSendToUsers(staffUserIds, {
+      title,
+      body,
+      href,
+      tag: created.id,
     });
   }
 
@@ -470,10 +480,19 @@ export class NotificationsService {
             : {}),
         },
       });
+
+      if (input.resetRead) {
+        this.pushService.scheduleSendToUser(input.userId, {
+          title: input.title,
+          body: input.body,
+          href: input.href,
+          tag: existing.id,
+        });
+      }
       return;
     }
 
-    await this.prisma.notification.create({
+    const created = await this.prisma.notification.create({
       data: {
         churchId: input.churchId,
         type: input.type,
@@ -487,6 +506,49 @@ export class NotificationsService {
         payload: input.payload ?? undefined,
       },
     });
+
+    this.pushService.scheduleSendToUser(input.userId, {
+      title: input.title,
+      body: input.body,
+      href: input.href,
+      tag: created.id,
+    });
+  }
+
+  /** Owners + quem tem memberships_manage (audiência de pending_access). */
+  private async findMembershipManagers(churchId: string): Promise<string[]> {
+    const memberships = await this.prisma.churchMembership.findMany({
+      where: { churchId },
+      select: {
+        userId: true,
+        isOwner: true,
+        roleAssignments: {
+          select: {
+            role: {
+              select: {
+                permissions: { select: { permission: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return [
+      ...new Set(
+        memberships
+          .filter(
+            (membership) =>
+              membership.isOwner ||
+              membership.roleAssignments.some((assignment) =>
+                assignment.role.permissions.some(
+                  (row) => row.permission === ChurchPermission.memberships_manage,
+                ),
+              ),
+          )
+          .map((membership) => membership.userId),
+      ),
+    ];
   }
 
   private async resolveRegistrationAudience(

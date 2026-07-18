@@ -86,4 +86,11 @@ export default () => ({
       .map((method) => method.trim())
       .filter(Boolean),
   },
+  /** Web Push (PWA). Sem chaves, subscribe/send ficam no-op. */
+  webPush: {
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY?.trim() ?? '',
+    vapidPrivateKey: process.env.VAPID_PRIVATE_KEY?.trim() ?? '',
+    vapidSubject:
+      process.env.VAPID_SUBJECT?.trim() ?? 'https://minhachurch.com',
+  },
 });

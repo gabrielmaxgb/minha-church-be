@@ -58,7 +58,8 @@
     "reflect-metadata": "^0.2.2",
     "resend": "^6.16.0",
     "rxjs": "^7.8.1",
-    "stripe": "^22.3.1"
+    "stripe": "^22.3.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -74,6 +75,7 @@
     "@types/passport-jwt": "^4.0.1",
     "@types/pg": "^8.20.0",
     "@types/supertest": "^7.0.0",
+    "@types/web-push": "^3.6.4",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",

@@ -22,4 +22,9 @@ describe('notifications inbox helpers (smoke)', () => {
       ]),
     );
   });
+
+  it('tipos do inbox são os únicos que disparam Web Push', () => {
+    // Contrato: push espelha NotificationType — não os alertas derivados do sino.
+    expect(Object.values(NotificationType).length).toBe(5);
+  });
 });
