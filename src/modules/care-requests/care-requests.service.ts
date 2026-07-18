@@ -16,6 +16,7 @@ import {
 import { ChurchPermissionsService } from '../../common/services/church-permissions.service';
 import { EmailService } from '../../common/services/email.service';
 import { PrismaService } from '../../database/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateCareRequestDto } from './dto/care-request.dto';
 import {
   CARE_REQUEST_TYPE_LABELS,
@@ -36,6 +37,7 @@ export class CareRequestsService {
     private readonly churchPermissions: ChurchPermissionsService,
     private readonly emailService: EmailService,
     private readonly config: ConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async listRecipients(
@@ -220,6 +222,17 @@ export class CareRequestsService {
       );
     });
 
+    this.notificationsService.schedule(
+      this.notificationsService.emitCareRequestReceived({
+        churchId,
+        careRequestId: created.id,
+        recipientUserId: recipient.userId,
+        requesterName: requester.name,
+        type: created.type,
+      }),
+      `care_request_received:${created.id}`,
+    );
+
     return toCareRequestResponse(created);
   }
 
@@ -234,7 +247,7 @@ export class CareRequestsService {
     const existing = await this.prisma.careRequest.findFirst({
       where: { id: requestId, churchId },
       include: {
-        requester: { select: memberSelect },
+        requester: { select: { id: true, name: true, userId: true } },
         recipient: { select: memberSelect },
       },
     });
@@ -265,6 +278,19 @@ export class CareRequestsService {
         recipient: { select: memberSelect },
       },
     });
+
+    if (existing.requester.userId) {
+      this.notificationsService.schedule(
+        this.notificationsService.emitCareRequestViewed({
+          churchId,
+          careRequestId: updated.id,
+          requesterUserId: existing.requester.userId,
+          recipientName: recipient.name,
+          type: updated.type,
+        }),
+        `care_request_viewed:${updated.id}`,
+      );
+    }
 
     return toCareRequestResponse(updated);
   }

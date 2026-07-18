@@ -92,6 +92,8 @@ enum NotificationType {
   account_linked
   pending_access
   giving_donation_refunded
+  care_request_received
+  care_request_viewed
 }
 
 enum EventRecurrenceFrequency {

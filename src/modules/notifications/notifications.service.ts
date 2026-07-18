@@ -379,6 +379,63 @@ export class NotificationsService {
     });
   }
 
+  async emitCareRequestReceived(input: {
+    churchId: string;
+    careRequestId: string;
+    recipientUserId: string;
+    requesterName: string;
+    type: 'counseling' | 'visit';
+  }): Promise<void> {
+    const typeLabel =
+      input.type === 'visit' ? 'visita' : 'aconselhamento';
+
+    await this.upsertPersonalNotification({
+      churchId: input.churchId,
+      type: NotificationType.care_request_received,
+      userId: input.recipientUserId,
+      title:
+        input.type === 'visit' ? 'Pedido de visita' : 'Pedido de aconselhamento',
+      body: `${input.requesterName} pediu ${typeLabel}.`,
+      href: '/app/aconselhamentos',
+      entityType: 'CareRequest',
+      entityId: input.careRequestId,
+      payload: {
+        careRequestId: input.careRequestId,
+        type: input.type,
+        requesterName: input.requesterName,
+      },
+      resetRead: true,
+    });
+  }
+
+  async emitCareRequestViewed(input: {
+    churchId: string;
+    careRequestId: string;
+    requesterUserId: string;
+    recipientName: string;
+    type: 'counseling' | 'visit';
+  }): Promise<void> {
+    const typeLabel =
+      input.type === 'visit' ? 'visita' : 'aconselhamento';
+
+    await this.upsertPersonalNotification({
+      churchId: input.churchId,
+      type: NotificationType.care_request_viewed,
+      userId: input.requesterUserId,
+      title: 'Seu pedido foi lido',
+      body: `${input.recipientName} leu seu pedido de ${typeLabel}.`,
+      href: '/app/aconselhamentos',
+      entityType: 'CareRequest',
+      entityId: `${input.careRequestId}:viewed`,
+      payload: {
+        careRequestId: input.careRequestId,
+        type: input.type,
+        recipientName: input.recipientName,
+      },
+      resetRead: true,
+    });
+  }
+
   async emitPendingAccess(input: {
     churchId: string;
     pendingUserId: string;

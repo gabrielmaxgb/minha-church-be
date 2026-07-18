@@ -19,12 +19,14 @@ describe('notifications inbox helpers (smoke)', () => {
         'account_linked',
         'pending_access',
         'giving_donation_refunded',
+        'care_request_received',
+        'care_request_viewed',
       ]),
     );
   });
 
   it('tipos do inbox são os únicos que disparam Web Push', () => {
     // Contrato: push espelha NotificationType — não os alertas derivados do sino.
-    expect(Object.values(NotificationType).length).toBe(5);
+    expect(Object.values(NotificationType).length).toBe(7);
   });
 });
