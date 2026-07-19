@@ -8,6 +8,8 @@ import {
 } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { StripeConnectService } from './stripe-connect.service';
+import { TreasuryController } from './treasury.controller';
+import { TreasuryService } from './treasury.service';
 
 @Module({
   imports: [NotificationsModule],
@@ -15,8 +17,9 @@ import { StripeConnectService } from './stripe-connect.service';
     PaymentsController,
     PaymentsPublicGivingController,
     PaymentsConnectWebhookController,
+    TreasuryController,
   ],
-  providers: [PaymentsService, StripeConnectService],
-  exports: [PaymentsService],
+  providers: [PaymentsService, StripeConnectService, TreasuryService],
+  exports: [PaymentsService, TreasuryService],
 })
 export class PaymentsModule {}

@@ -135,6 +135,8 @@ model User {
   billingTierUpgradeRequestsResolved BillingTierUpgradeRequest[]       @relation("BillingTierUpgradeResolvedBy")
   billingTierUpgradeStaffNoticeReads BillingTierUpgradeStaffNoticeRead[]
   financeEntriesCreated            FinanceEntry[] @relation("FinanceEntryCreatedBy")
+  financeAccountsCreated           FinanceAccount[] @relation("FinanceAccountCreatedBy")
+  financialPeriodsClosed           FinancialPeriod[] @relation("FinancialPeriodClosedBy")
   notifications                    Notification[]     @relation("NotificationRecipient")
   notificationReads                NotificationRead[]
   pushSubscriptions                PushSubscription[]
@@ -188,7 +190,9 @@ model Church {
   givingFunds          GivingFund[]
   givingDonations      GivingDonation[]
   givingSubscriptions  GivingSubscription[]
+  financeAccounts      FinanceAccount[]
   financeEntries       FinanceEntry[]
+  financialPeriods     FinancialPeriod[]
   eventTicketPurchases EventTicketPurchase[]
   notifications        Notification[]
   legalAcceptances     LegalAcceptance[]
@@ -356,6 +360,57 @@ enum FinanceEntryMethod {
   other
 }
 
+enum FinanceAccountKind {
+  income
+  expense
+}
+
+/// Conta do plano de contas da igreja (receita ou despesa).
+/// Contas de sistema (systemKey) agregam doações online e ingressos nos relatórios.
+model FinanceAccount {
+  id              String             @id @default(cuid())
+  churchId        String             @map("church_id")
+  name            String
+  kind            FinanceAccountKind
+  /// Chave estável para contas geradas pelo sistema (ex.: online_donations).
+  systemKey       String?            @map("system_key")
+  isActive        Boolean            @default(true) @map("is_active")
+  sortOrder       Int                @default(0) @map("sort_order")
+  createdByUserId String?            @map("created_by_user_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  church    Church         @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  createdBy User?          @relation("FinanceAccountCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  entries   FinanceEntry[]
+
+  @@unique([churchId, systemKey])
+  @@index([churchId, kind, isActive])
+  @@map("finance_accounts")
+}
+
+/// Fechamento mensal da tesouraria — trava lançamentos manuais do período.
+model FinancialPeriod {
+  id             String    @id @default(cuid())
+  churchId       String    @map("church_id")
+  /// Ano civil (ex.: 2026).
+  year           Int
+  /// Mês 1–12.
+  month          Int
+  closedAt       DateTime  @map("closed_at")
+  closedByUserId String?   @map("closed_by_user_id")
+  note           String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  church   Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  closedBy User?  @relation("FinancialPeriodClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([churchId, year, month])
+  @@index([churchId, year, month])
+  @@map("financial_periods")
+}
+
 /// Perfil fiscal/legal da igreja (identidade para NF, contrato e prefill do Connect).
 model ChurchFiscalProfile {
   id                  String             @id @default(cuid())
@@ -502,7 +557,9 @@ model FinanceEntry {
   amountCents     Int                @map("amount_cents")
   currency        String             @default("brl")
   occurredOn      DateTime           @map("occurred_on") @db.Date
+  /// Rótulo denormalizado (nome da conta ou categoria legada).
   category        String
+  accountId       String?            @map("account_id")
   fundId          String?            @map("fund_id")
   method          FinanceEntryMethod @default(other)
   note            String?
@@ -510,11 +567,13 @@ model FinanceEntry {
   createdAt       DateTime           @default(now()) @map("created_at")
   updatedAt       DateTime           @updatedAt @map("updated_at")
 
-  church    Church      @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  fund      GivingFund? @relation(fields: [fundId], references: [id], onDelete: SetNull)
-  createdBy User?       @relation("FinanceEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  church    Church          @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  account   FinanceAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  fund      GivingFund?     @relation(fields: [fundId], references: [id], onDelete: SetNull)
+  createdBy User?           @relation("FinanceEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([churchId, occurredOn])
+  @@index([accountId])
   @@map("finance_entries")
 }
 

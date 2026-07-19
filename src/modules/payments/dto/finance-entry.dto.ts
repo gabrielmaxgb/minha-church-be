@@ -21,10 +21,17 @@ export class CreateFinanceEntryDto {
   @IsDateString()
   occurredOn!: string;
 
+  /** Preferencial — plano de contas. */
+  @IsOptional()
+  @IsString()
+  accountId?: string;
+
+  /** Legado / fallback se accountId não for enviado. */
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(80)
-  category!: string;
+  category?: string;
 
   @IsOptional()
   @IsString()
@@ -53,6 +60,10 @@ export class UpdateFinanceEntryDto {
   @IsOptional()
   @IsDateString()
   occurredOn?: string;
+
+  @IsOptional()
+  @IsString()
+  accountId?: string | null;
 
   @IsOptional()
   @IsString()

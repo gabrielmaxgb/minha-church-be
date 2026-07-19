@@ -48,6 +48,7 @@ import {
   verifyGivingReceiptToken,
 } from './giving-receipt-token';
 import { StripeConnectService } from './stripe-connect.service';
+import { TreasuryService } from './treasury.service';
 import type {
   ConnectPayoutsOverviewResult,
   ConnectPayoutResult,
@@ -90,6 +91,7 @@ export class PaymentsService {
     private readonly stripeConnect: StripeConnectService,
     private readonly subscriptionPolicy: SubscriptionPolicyService,
     private readonly notificationsService: NotificationsService,
+    private readonly treasury: TreasuryService,
   ) {}
 
   async getFiscalProfile(
@@ -541,6 +543,7 @@ export class PaymentsService {
       this.prisma.financeEntry.findMany({
         where,
         include: {
+          account: { select: { id: true, name: true, kind: true } },
           fund: { select: { id: true, name: true } },
           createdBy: { select: { id: true, name: true } },
         },
@@ -563,7 +566,14 @@ export class PaymentsService {
     userId: string,
     dto: CreateFinanceEntryDto,
   ): Promise<FinanceEntryResult> {
+    await this.treasury.assertPeriodOpenForDate(churchId, dto.occurredOn);
     await this.assertFinanceEntryFund(churchId, dto.fundId);
+
+    const resolved = await this.treasury.resolveAccountForEntry(churchId, {
+      accountId: dto.accountId,
+      category: dto.category,
+      type: dto.type,
+    });
 
     const entry = await this.prisma.financeEntry.create({
       data: {
@@ -571,13 +581,15 @@ export class PaymentsService {
         type: dto.type,
         amountCents: dto.amountCents,
         occurredOn: this.parseFinanceDate(dto.occurredOn),
-        category: dto.category.trim(),
+        category: resolved.category,
+        accountId: resolved.accountId,
         fundId: dto.fundId ?? null,
         method: dto.method ?? FinanceEntryMethod.other,
         note: emptyToNull(dto.note),
         createdByUserId: userId,
       },
       include: {
+        account: { select: { id: true, name: true, kind: true } },
         fund: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
       },
@@ -593,15 +605,43 @@ export class PaymentsService {
   ): Promise<FinanceEntryResult> {
     const existing = await this.prisma.financeEntry.findFirst({
       where: { id: entryId, churchId },
-      select: { id: true },
+      select: {
+        id: true,
+        occurredOn: true,
+        type: true,
+        accountId: true,
+        category: true,
+      },
     });
 
     if (!existing) {
       throw new NotFoundException('Lançamento não encontrado.');
     }
 
+    await this.treasury.assertPeriodOpenForDate(churchId, existing.occurredOn);
+    if (dto.occurredOn !== undefined) {
+      await this.treasury.assertPeriodOpenForDate(churchId, dto.occurredOn);
+    }
+
     if (dto.fundId !== undefined && dto.fundId !== null) {
       await this.assertFinanceEntryFund(churchId, dto.fundId);
+    }
+
+    const nextType = dto.type ?? existing.type;
+    let accountId = existing.accountId;
+    let category = existing.category;
+
+    if (dto.accountId !== undefined || dto.category !== undefined || dto.type !== undefined) {
+      if (dto.accountId === null) {
+        throw new BadRequestException('Selecione uma conta do plano de contas.');
+      }
+      const resolved = await this.treasury.resolveAccountForEntry(churchId, {
+        accountId: dto.accountId ?? existing.accountId ?? undefined,
+        category: dto.category ?? existing.category,
+        type: nextType,
+      });
+      accountId = resolved.accountId;
+      category = resolved.category;
     }
 
     const entry = await this.prisma.financeEntry.update({
@@ -614,14 +654,14 @@ export class PaymentsService {
         ...(dto.occurredOn !== undefined
           ? { occurredOn: this.parseFinanceDate(dto.occurredOn) }
           : {}),
-        ...(dto.category !== undefined
-          ? { category: dto.category.trim() }
-          : {}),
+        accountId,
+        category,
         ...(dto.fundId !== undefined ? { fundId: dto.fundId } : {}),
         ...(dto.method !== undefined ? { method: dto.method } : {}),
         ...(dto.note !== undefined ? { note: emptyToNull(dto.note ?? undefined) } : {}),
       },
       include: {
+        account: { select: { id: true, name: true, kind: true } },
         fund: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
       },
@@ -636,13 +676,14 @@ export class PaymentsService {
   ): Promise<{ ok: true }> {
     const existing = await this.prisma.financeEntry.findFirst({
       where: { id: entryId, churchId },
-      select: { id: true },
+      select: { id: true, occurredOn: true },
     });
 
     if (!existing) {
       throw new NotFoundException('Lançamento não encontrado.');
     }
 
+    await this.treasury.assertPeriodOpenForDate(churchId, existing.occurredOn);
     await this.prisma.financeEntry.delete({ where: { id: entryId } });
     return { ok: true };
   }
@@ -1293,12 +1334,14 @@ export class PaymentsService {
     currency: string;
     occurredOn: Date;
     category: string;
+    accountId?: string | null;
     fundId: string | null;
     method: FinanceEntryMethod;
     note: string | null;
     createdByUserId: string | null;
     createdAt: Date;
     updatedAt: Date;
+    account?: { id: string; name: string; kind: string } | null;
     fund: { id: string; name: string } | null;
     createdBy: { id: string; name: string } | null;
   }): FinanceEntryResult {
@@ -1309,6 +1352,8 @@ export class PaymentsService {
       currency: entry.currency,
       occurredOn: entry.occurredOn.toISOString().slice(0, 10),
       category: entry.category,
+      accountId: entry.accountId ?? entry.account?.id ?? null,
+      accountName: entry.account?.name ?? null,
       fundId: entry.fundId,
       fundName: entry.fund?.name ?? null,
       method: entry.method,

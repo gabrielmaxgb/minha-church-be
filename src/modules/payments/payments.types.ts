@@ -182,6 +182,8 @@ export interface FinanceEntryResult {
   currency: string;
   occurredOn: string;
   category: string;
+  accountId: string | null;
+  accountName: string | null;
   fundId: string | null;
   fundName: string | null;
   method: string;
