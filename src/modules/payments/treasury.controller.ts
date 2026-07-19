@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -84,8 +85,11 @@ export class TreasuryController {
     @Query('month') month?: string,
   ) {
     const now = new Date();
-    const y = year ? Number(year) : now.getUTCFullYear();
-    const m = month ? Number(month) : now.getUTCMonth() + 1;
+    const y = year !== undefined ? Number(year) : now.getUTCFullYear();
+    const m = month !== undefined ? Number(month) : now.getUTCMonth() + 1;
+    if (!Number.isInteger(y) || !Number.isInteger(m)) {
+      throw new BadRequestException('Ano ou mês inválido.');
+    }
     return this.treasury.getPeriodStatus(churchId, y, m);
   }
 
@@ -100,8 +104,18 @@ export class TreasuryController {
     @Param('churchId') churchId: string,
     @Query('year') year?: string,
   ) {
+    const parsedYear =
+      year !== undefined && year !== '' ? Number(year) : undefined;
+    if (
+      parsedYear !== undefined &&
+      (!Number.isInteger(parsedYear) ||
+        parsedYear < 2000 ||
+        parsedYear > 2100)
+    ) {
+      throw new BadRequestException('Ano inválido.');
+    }
     return this.treasury.listClosedPeriods(churchId, {
-      year: year ? Number(year) : undefined,
+      year: parsedYear,
     });
   }
 

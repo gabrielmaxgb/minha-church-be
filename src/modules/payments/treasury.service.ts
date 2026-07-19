@@ -47,14 +47,28 @@ function monthBounds(year: number, month: number): { start: Date; end: Date } {
 
 function parseOccurredDate(value: string | Date): Date {
   if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new BadRequestException('Data inválida.');
+    }
     return value;
   }
   const dateOnly = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+    throw new BadRequestException('Data inválida.');
+  }
   const [y, m, d] = dateOnly.split('-').map(Number);
   if (!y || !m || !d) {
     throw new BadRequestException('Data inválida.');
   }
-  return new Date(Date.UTC(y, m - 1, d));
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (
+    date.getUTCFullYear() !== y ||
+    date.getUTCMonth() + 1 !== m ||
+    date.getUTCDate() !== d
+  ) {
+    throw new BadRequestException('Data inválida.');
+  }
+  return date;
 }
 
 function yearMonthFromDate(date: Date): { year: number; month: number } {
@@ -63,6 +77,19 @@ function yearMonthFromDate(date: Date): { year: number; month: number } {
     month: date.getUTCMonth() + 1,
   };
 }
+
+function escapeTreasuryCsvCell(value: string): string {
+  let safe = value;
+  if (/^[=+\-@\t\r]/.test(safe)) {
+    safe = `'${safe}`;
+  }
+  if (/[",\n\r]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+  return safe;
+}
+
+const MAX_REPORT_SPAN_DAYS = 366 * 3;
 
 function toPeriodResult(period: {
   id: string;
@@ -114,8 +141,18 @@ export class TreasuryService {
   /**
    * Garante o plano padrão + contas de sistema.
    * Idempotente — seguro chamar em listagens e antes de criar lançamento.
+   * `repair` (default false em leituras) evita mutação pesada em todo GET.
    */
-  async ensureDefaultAccounts(churchId: string): Promise<void> {
+  async ensureDefaultAccounts(
+    churchId: string,
+    options?: { repair?: boolean },
+  ): Promise<void> {
+    const repair = options?.repair === true;
+
+    if (repair) {
+      await this.detachManualEntriesFromSystemAccounts(churchId);
+    }
+
     const existing = await this.prisma.financeAccount.findMany({
       where: { churchId },
       select: { id: true, systemKey: true, name: true },
@@ -138,24 +175,23 @@ export class TreasuryService {
       return true;
     });
 
-    if (missing.length === 0) {
-      await this.backfillLegacyCategories(churchId);
-      return;
+    if (missing.length > 0) {
+      await this.prisma.financeAccount.createMany({
+        data: missing.map((seed) => ({
+          churchId,
+          name: seed.name,
+          kind: seed.kind,
+          systemKey: seed.systemKey ?? null,
+          sortOrder: seed.sortOrder,
+          isActive: true,
+        })),
+        skipDuplicates: true,
+      });
     }
 
-    await this.prisma.financeAccount.createMany({
-      data: missing.map((seed) => ({
-        churchId,
-        name: seed.name,
-        kind: seed.kind,
-        systemKey: seed.systemKey ?? null,
-        sortOrder: seed.sortOrder,
-        isActive: true,
-      })),
-      skipDuplicates: true,
-    });
-
-    await this.backfillLegacyCategories(churchId);
+    if (repair) {
+      await this.backfillLegacyCategories(churchId);
+    }
   }
 
   /** Liga lançamentos legados (só category) a contas com o mesmo nome. */
@@ -166,10 +202,9 @@ export class TreasuryService {
     if (orphanCount === 0) return;
 
     const accounts = await this.prisma.financeAccount.findMany({
-      where: { churchId },
+      where: { churchId, systemKey: null },
       select: { id: true, name: true, kind: true },
     });
-    if (accounts.length === 0) return;
 
     const byName = new Map(
       accounts.map((a) => [a.name.trim().toLowerCase(), a]),
@@ -195,6 +230,7 @@ export class TreasuryService {
                 : FinanceAccountKind.expense,
             sortOrder: 500,
             isActive: true,
+            systemKey: null,
           },
         });
         account = created;
@@ -207,11 +243,30 @@ export class TreasuryService {
     }
   }
 
+  /** Corrige backfill antigo que amarrava manuais a contas de sistema. */
+  private async detachManualEntriesFromSystemAccounts(
+    churchId: string,
+  ): Promise<void> {
+    const systemAccounts = await this.prisma.financeAccount.findMany({
+      where: { churchId, systemKey: { not: null } },
+      select: { id: true },
+    });
+    if (systemAccounts.length === 0) return;
+
+    await this.prisma.financeEntry.updateMany({
+      where: {
+        churchId,
+        accountId: { in: systemAccounts.map((a) => a.id) },
+      },
+      data: { accountId: null },
+    });
+  }
+
   async listAccounts(
     churchId: string,
     options?: { kind?: string; includeInactive?: boolean },
   ): Promise<FinanceAccountResult[]> {
-    await this.ensureDefaultAccounts(churchId);
+    await this.ensureDefaultAccounts(churchId, { repair: true });
 
     const kind =
       options?.kind === 'income' || options?.kind === 'expense'
@@ -235,7 +290,7 @@ export class TreasuryService {
     userId: string,
     dto: CreateFinanceAccountDto,
   ): Promise<FinanceAccountResult> {
-    await this.ensureDefaultAccounts(churchId);
+    await this.ensureDefaultAccounts(churchId, { repair: true });
 
     const name = dto.name.trim();
     const duplicate = await this.prisma.financeAccount.findFirst({
@@ -283,6 +338,12 @@ export class TreasuryService {
     if (existing.systemKey && dto.isActive === false) {
       throw new BadRequestException(
         'Contas de sistema não podem ser desativadas — elas agregam doações e ingressos nos relatórios.',
+      );
+    }
+
+    if (existing.systemKey && dto.name !== undefined) {
+      throw new BadRequestException(
+        'Contas de sistema não podem ser renomeadas.',
       );
     }
 
@@ -365,32 +426,36 @@ export class TreasuryService {
   ): Promise<FinancialPeriodResult> {
     this.assertValidYearMonth(dto.year, dto.month);
 
-    const existing = await this.prisma.financialPeriod.findUnique({
-      where: {
-        churchId_year_month: {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriodMonth(tx, churchId, dto.year, dto.month);
+
+      const existing = await tx.financialPeriod.findUnique({
+        where: {
+          churchId_year_month: {
+            churchId,
+            year: dto.year,
+            month: dto.month,
+          },
+        },
+      });
+      if (existing) {
+        throw new ConflictException('Este mês já está fechado.');
+      }
+
+      const period = await tx.financialPeriod.create({
+        data: {
           churchId,
           year: dto.year,
           month: dto.month,
+          closedAt: new Date(),
+          closedByUserId: userId,
+          note: emptyToNull(dto.note),
         },
-      },
-    });
-    if (existing) {
-      throw new ConflictException('Este mês já está fechado.');
-    }
+        include: { closedBy: { select: { id: true, name: true } } },
+      });
 
-    const period = await this.prisma.financialPeriod.create({
-      data: {
-        churchId,
-        year: dto.year,
-        month: dto.month,
-        closedAt: new Date(),
-        closedByUserId: userId,
-        note: emptyToNull(dto.note),
-      },
-      include: { closedBy: { select: { id: true, name: true } } },
+      return toPeriodResult(period);
     });
-
-    return toPeriodResult(period);
   }
 
   async reopenPeriod(
@@ -399,25 +464,68 @@ export class TreasuryService {
   ): Promise<{ ok: true }> {
     this.assertValidYearMonth(dto.year, dto.month);
 
-    const existing = await this.prisma.financialPeriod.findUnique({
-      where: {
-        churchId_year_month: {
-          churchId,
-          year: dto.year,
-          month: dto.month,
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockPeriodMonth(tx, churchId, dto.year, dto.month);
+
+      const existing = await tx.financialPeriod.findUnique({
+        where: {
+          churchId_year_month: {
+            churchId,
+            year: dto.year,
+            month: dto.month,
+          },
         },
+        select: { id: true },
+      });
+      if (!existing) {
+        throw new NotFoundException('Este mês não está fechado.');
+      }
+
+      await tx.financialPeriod.delete({ where: { id: existing.id } });
+      return { ok: true as const };
+    });
+  }
+
+  /**
+   * Lock transacional do mês (fecha/reabre/lança) — evita TOCTOU.
+   * Deve ser chamado dentro de `$transaction`.
+   */
+  async lockPeriodMonth(
+    tx: Prisma.TransactionClient,
+    churchId: string,
+    year: number,
+    month: number,
+  ): Promise<void> {
+    this.assertValidYearMonth(year, month);
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${churchId}),
+        ${(year * 100 + month) | 0}
+      )
+    `;
+  }
+
+  async assertPeriodOpenInTx(
+    tx: Prisma.TransactionClient,
+    churchId: string,
+    year: number,
+    month: number,
+  ): Promise<void> {
+    const period = await tx.financialPeriod.findUnique({
+      where: {
+        churchId_year_month: { churchId, year, month },
       },
       select: { id: true },
     });
-    if (!existing) {
-      throw new NotFoundException('Este mês não está fechado.');
+    if (period) {
+      const label = `${String(month).padStart(2, '0')}/${year}`;
+      throw new ConflictException(
+        `O mês ${label} está fechado. Reabra o período em Finanças para alterar lançamentos.`,
+      );
     }
-
-    await this.prisma.financialPeriod.delete({ where: { id: existing.id } });
-    return { ok: true };
   }
 
-  /** Bloqueia mutações de lançamentos em mês fechado. */
+  /** Bloqueia mutações de lançamentos em mês fechado (fora de tx). */
   async assertPeriodOpenForDate(
     churchId: string,
     occurredOn: string | Date,
@@ -433,22 +541,35 @@ export class TreasuryService {
     }
   }
 
+  yearMonthFromOccurredOn(occurredOn: string | Date): {
+    year: number;
+    month: number;
+    date: Date;
+  } {
+    const date = parseOccurredDate(occurredOn);
+    return { ...yearMonthFromDate(date), date };
+  }
+
   async resolveAccountForEntry(
     churchId: string,
     options: {
       accountId?: string;
       category?: string;
       type: FinanceEntryType;
+      /** Permite manter conta inativa ao editar lançamento existente. */
+      allowInactiveAccountId?: string;
     },
   ): Promise<{ accountId: string; category: string }> {
-    await this.ensureDefaultAccounts(churchId);
+    await this.ensureDefaultAccounts(churchId, { repair: true });
 
     if (options.accountId) {
       const account = await this.prisma.financeAccount.findFirst({
         where: {
           id: options.accountId,
           churchId,
-          isActive: true,
+          ...(options.allowInactiveAccountId === options.accountId
+            ? {}
+            : { isActive: true }),
         },
       });
       if (!account) {
@@ -482,6 +603,20 @@ export class TreasuryService {
       options.type === FinanceEntryType.income
         ? FinanceAccountKind.income
         : FinanceAccountKind.expense;
+
+    const reservedSystemName = await this.prisma.financeAccount.findFirst({
+      where: {
+        churchId,
+        systemKey: { not: null },
+        name: { equals: category, mode: 'insensitive' },
+      },
+      select: { id: true },
+    });
+    if (reservedSystemName) {
+      throw new BadRequestException(
+        'Esse nome é reservado para uma conta de sistema. Escolha outra conta do plano.',
+      );
+    }
 
     let account = await this.prisma.financeAccount.findFirst({
       where: {
@@ -533,6 +668,14 @@ export class TreasuryService {
 
     if (fromDate > toDate) {
       throw new BadRequestException('A data inicial deve ser anterior à final.');
+    }
+
+    const spanDays =
+      Math.floor((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1;
+    if (spanDays > MAX_REPORT_SPAN_DAYS) {
+      throw new BadRequestException(
+        'O período do relatório não pode passar de 3 anos. Reduza o intervalo.',
+      );
     }
 
     const fromIso = fromDate.toISOString().slice(0, 10);
@@ -713,13 +856,8 @@ export class TreasuryService {
     options: { from?: string; to?: string },
   ): Promise<string> {
     const report = await this.getFinancialReport(churchId, options);
-    const escape = (value: string | number) => {
-      const raw = String(value);
-      if (/[",\n]/.test(raw)) {
-        return `"${raw.replace(/"/g, '""')}"`;
-      }
-      return raw;
-    };
+    const escape = (value: string | number) =>
+      escapeTreasuryCsvCell(String(value));
     const formatBrl = (cents: number) =>
       (cents / 100).toFixed(2).replace('.', ',');
 

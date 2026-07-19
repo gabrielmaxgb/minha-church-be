@@ -566,7 +566,6 @@ export class PaymentsService {
     userId: string,
     dto: CreateFinanceEntryDto,
   ): Promise<FinanceEntryResult> {
-    await this.treasury.assertPeriodOpenForDate(churchId, dto.occurredOn);
     await this.assertFinanceEntryFund(churchId, dto.fundId);
 
     const resolved = await this.treasury.resolveAccountForEntry(churchId, {
@@ -575,24 +574,32 @@ export class PaymentsService {
       type: dto.type,
     });
 
-    const entry = await this.prisma.financeEntry.create({
-      data: {
-        churchId,
-        type: dto.type,
-        amountCents: dto.amountCents,
-        occurredOn: this.parseFinanceDate(dto.occurredOn),
-        category: resolved.category,
-        accountId: resolved.accountId,
-        fundId: dto.fundId ?? null,
-        method: dto.method ?? FinanceEntryMethod.other,
-        note: emptyToNull(dto.note),
-        createdByUserId: userId,
-      },
-      include: {
-        account: { select: { id: true, name: true, kind: true } },
-        fund: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, name: true } },
-      },
+    const { year, month, date: occurredOn } =
+      this.treasury.yearMonthFromOccurredOn(dto.occurredOn);
+
+    const entry = await this.prisma.$transaction(async (tx) => {
+      await this.treasury.lockPeriodMonth(tx, churchId, year, month);
+      await this.treasury.assertPeriodOpenInTx(tx, churchId, year, month);
+
+      return tx.financeEntry.create({
+        data: {
+          churchId,
+          type: dto.type,
+          amountCents: dto.amountCents,
+          occurredOn,
+          category: resolved.category,
+          accountId: resolved.accountId,
+          fundId: dto.fundId ?? null,
+          method: dto.method ?? FinanceEntryMethod.other,
+          note: emptyToNull(dto.note),
+          createdByUserId: userId,
+        },
+        include: {
+          account: { select: { id: true, name: true, kind: true } },
+          fund: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, name: true } },
+        },
+      });
     });
 
     return this.toFinanceEntryResult(entry);
@@ -618,11 +625,6 @@ export class PaymentsService {
       throw new NotFoundException('Lançamento não encontrado.');
     }
 
-    await this.treasury.assertPeriodOpenForDate(churchId, existing.occurredOn);
-    if (dto.occurredOn !== undefined) {
-      await this.treasury.assertPeriodOpenForDate(churchId, dto.occurredOn);
-    }
-
     if (dto.fundId !== undefined && dto.fundId !== null) {
       await this.assertFinanceEntryFund(churchId, dto.fundId);
     }
@@ -639,32 +641,59 @@ export class PaymentsService {
         accountId: dto.accountId ?? existing.accountId ?? undefined,
         category: dto.category ?? existing.category,
         type: nextType,
+        allowInactiveAccountId: existing.accountId ?? undefined,
       });
       accountId = resolved.accountId;
       category = resolved.category;
     }
 
-    const entry = await this.prisma.financeEntry.update({
-      where: { id: entryId },
-      data: {
-        ...(dto.type !== undefined ? { type: dto.type } : {}),
-        ...(dto.amountCents !== undefined
-          ? { amountCents: dto.amountCents }
-          : {}),
-        ...(dto.occurredOn !== undefined
-          ? { occurredOn: this.parseFinanceDate(dto.occurredOn) }
-          : {}),
-        accountId,
-        category,
-        ...(dto.fundId !== undefined ? { fundId: dto.fundId } : {}),
-        ...(dto.method !== undefined ? { method: dto.method } : {}),
-        ...(dto.note !== undefined ? { note: emptyToNull(dto.note ?? undefined) } : {}),
-      },
-      include: {
-        account: { select: { id: true, name: true, kind: true } },
-        fund: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, name: true } },
-      },
+    const nextOccurredOn =
+      dto.occurredOn !== undefined
+        ? this.treasury.yearMonthFromOccurredOn(dto.occurredOn).date
+        : existing.occurredOn;
+    const oldYm = this.treasury.yearMonthFromOccurredOn(existing.occurredOn);
+    const newYm = this.treasury.yearMonthFromOccurredOn(nextOccurredOn);
+
+    const entry = await this.prisma.$transaction(async (tx) => {
+      await this.treasury.lockPeriodMonth(tx, churchId, oldYm.year, oldYm.month);
+      await this.treasury.assertPeriodOpenInTx(
+        tx,
+        churchId,
+        oldYm.year,
+        oldYm.month,
+      );
+      if (oldYm.year !== newYm.year || oldYm.month !== newYm.month) {
+        await this.treasury.lockPeriodMonth(tx, churchId, newYm.year, newYm.month);
+        await this.treasury.assertPeriodOpenInTx(
+          tx,
+          churchId,
+          newYm.year,
+          newYm.month,
+        );
+      }
+
+      return tx.financeEntry.update({
+        where: { id: entryId },
+        data: {
+          ...(dto.type !== undefined ? { type: dto.type } : {}),
+          ...(dto.amountCents !== undefined
+            ? { amountCents: dto.amountCents }
+            : {}),
+          ...(dto.occurredOn !== undefined ? { occurredOn: nextOccurredOn } : {}),
+          accountId,
+          category,
+          ...(dto.fundId !== undefined ? { fundId: dto.fundId } : {}),
+          ...(dto.method !== undefined ? { method: dto.method } : {}),
+          ...(dto.note !== undefined
+            ? { note: emptyToNull(dto.note ?? undefined) }
+            : {}),
+        },
+        include: {
+          account: { select: { id: true, name: true, kind: true } },
+          fund: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, name: true } },
+        },
+      });
     });
 
     return this.toFinanceEntryResult(entry);
@@ -683,8 +712,16 @@ export class PaymentsService {
       throw new NotFoundException('Lançamento não encontrado.');
     }
 
-    await this.treasury.assertPeriodOpenForDate(churchId, existing.occurredOn);
-    await this.prisma.financeEntry.delete({ where: { id: entryId } });
+    const { year, month } = this.treasury.yearMonthFromOccurredOn(
+      existing.occurredOn,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.treasury.lockPeriodMonth(tx, churchId, year, month);
+      await this.treasury.assertPeriodOpenInTx(tx, churchId, year, month);
+      await tx.financeEntry.delete({ where: { id: entryId } });
+    });
+
     return { ok: true };
   }
 
@@ -1158,16 +1195,10 @@ export class PaymentsService {
 
     const createdAt: Prisma.DateTimeFilter = {};
     if (options?.from) {
-      const from = new Date(options.from);
-      if (!Number.isNaN(from.getTime())) {
-        createdAt.gte = from;
-      }
+      createdAt.gte = this.parseFinanceDateTimeBound(options.from, 'start');
     }
     if (options?.to) {
-      const to = new Date(options.to);
-      if (!Number.isNaN(to.getTime())) {
-        createdAt.lte = to;
-      }
+      createdAt.lte = this.parseFinanceDateTimeBound(options.to, 'end');
     }
     if (Object.keys(createdAt).length > 0) {
       where.createdAt = createdAt;
@@ -1283,16 +1314,10 @@ export class PaymentsService {
 
     const createdAt: Prisma.DateTimeFilter = {};
     if (options?.from) {
-      const from = new Date(options.from);
-      if (!Number.isNaN(from.getTime())) {
-        createdAt.gte = from;
-      }
+      createdAt.gte = this.parseFinanceDateTimeBound(options.from, 'start');
     }
     if (options?.to) {
-      const to = new Date(options.to);
-      if (!Number.isNaN(to.getTime())) {
-        createdAt.lte = to;
-      }
+      createdAt.lte = this.parseFinanceDateTimeBound(options.to, 'end');
     }
     if (Object.keys(createdAt).length > 0) {
       where.createdAt = createdAt;
@@ -1302,6 +1327,36 @@ export class PaymentsService {
   }
 
   private parseFinanceDate(value: string): Date {
+    const dateOnly = value.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+      const [y, m, d] = dateOnly.split('-').map(Number);
+      const date = new Date(Date.UTC(y, m - 1, d));
+      if (
+        date.getUTCFullYear() !== y ||
+        date.getUTCMonth() + 1 !== m ||
+        date.getUTCDate() !== d
+      ) {
+        throw new BadRequestException('Data inválida.');
+      }
+      return date;
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('Data inválida.');
+    }
+    return date;
+  }
+
+  private parseFinanceDateTimeBound(
+    value: string,
+    edge: 'start' | 'end',
+  ): Date {
+    const dateOnly = value.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+      return edge === 'start'
+        ? new Date(`${dateOnly}T00:00:00.000Z`)
+        : new Date(`${dateOnly}T23:59:59.999Z`);
+    }
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException('Data inválida.');
@@ -3865,10 +3920,15 @@ function mapDonationOutcome(
 }
 
 function escapeCsvCell(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  // Neutraliza CSV formula injection (=, +, -, @, tab/CR) em Excel/LibreOffice.
+  let safe = value;
+  if (/^[=+\-@\t\r]/.test(safe)) {
+    safe = `'${safe}`;
   }
-  return value;
+  if (/[",\n\r]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+  return safe;
 }
 
 const CSV_TIME_ZONE = 'America/Sao_Paulo';

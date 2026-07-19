@@ -4,11 +4,13 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
 import { FinanceEntryMethod, FinanceEntryType } from '@prisma/client';
+import { GIVING_MAX_AMOUNT_CENTS } from './create-giving-checkout.dto';
 
 export class CreateFinanceEntryDto {
   @IsEnum(FinanceEntryType)
@@ -16,6 +18,7 @@ export class CreateFinanceEntryDto {
 
   @IsInt()
   @Min(1)
+  @Max(GIVING_MAX_AMOUNT_CENTS)
   amountCents!: number;
 
   @IsDateString()
@@ -55,6 +58,7 @@ export class UpdateFinanceEntryDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(GIVING_MAX_AMOUNT_CENTS)
   amountCents?: number;
 
   @IsOptional()
