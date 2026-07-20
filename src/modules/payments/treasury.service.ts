@@ -14,6 +14,10 @@ import {
 
 import { PrismaService } from '../../database/prisma.service';
 import {
+  canDeleteFinanceAccount,
+  financeAccountDeleteBlockReason,
+} from './finance-account-delete.policy';
+import {
   CreateFinanceAccountDto,
   UpdateFinanceAccountDto,
 } from './dto/finance-account.dto';
@@ -111,24 +115,36 @@ function toPeriodResult(period: {
   };
 }
 
-function toAccountResult(account: {
-  id: string;
-  name: string;
-  kind: FinanceAccountKind;
-  systemKey: string | null;
-  isActive: boolean;
-  sortOrder: number;
-  createdAt: Date;
-  updatedAt: Date;
-}): FinanceAccountResult {
+function toAccountResult(
+  account: {
+    id: string;
+    name: string;
+    kind: FinanceAccountKind;
+    systemKey: string | null;
+    isActive: boolean;
+    sortOrder: number;
+    createdByUserId?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  entryCount = 0,
+): FinanceAccountResult {
+  const isSystem = Boolean(account.systemKey);
+
   return {
     id: account.id,
     name: account.name,
     kind: account.kind,
     systemKey: account.systemKey,
     isActive: account.isActive,
-    isSystem: Boolean(account.systemKey),
+    isSystem,
     sortOrder: account.sortOrder,
+    entryCount,
+    canDelete: canDeleteFinanceAccount({
+      systemKey: account.systemKey,
+      createdByUserId: account.createdByUserId,
+      entryCount,
+    }),
     createdAt: account.createdAt.toISOString(),
     updatedAt: account.updatedAt.toISOString(),
   };
@@ -279,10 +295,15 @@ export class TreasuryService {
         ...(kind ? { kind } : {}),
         ...(options?.includeInactive ? {} : { isActive: true }),
       },
+      include: {
+        _count: { select: { entries: true } },
+      },
       orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
     });
 
-    return accounts.map(toAccountResult);
+    return accounts.map((account) =>
+      toAccountResult(account, account._count.entries),
+    );
   }
 
   async createAccount(
@@ -320,7 +341,7 @@ export class TreasuryService {
       },
     });
 
-    return toAccountResult(account);
+    return toAccountResult(account, 0);
   }
 
   async updateAccount(
@@ -330,6 +351,7 @@ export class TreasuryService {
   ): Promise<FinanceAccountResult> {
     const existing = await this.prisma.financeAccount.findFirst({
       where: { id: accountId, churchId },
+      include: { _count: { select: { entries: true } } },
     });
     if (!existing) {
       throw new NotFoundException('Conta não encontrada.');
@@ -379,7 +401,53 @@ export class TreasuryService {
       });
     }
 
-    return toAccountResult(account);
+    return toAccountResult(
+      { ...account, createdByUserId: existing.createdByUserId },
+      existing._count.entries,
+    );
+  }
+
+  async deleteAccount(
+    churchId: string,
+    accountId: string,
+  ): Promise<{ ok: true }> {
+    const existing = await this.prisma.financeAccount.findFirst({
+      where: { id: accountId, churchId },
+      include: { _count: { select: { entries: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException('Conta não encontrada.');
+    }
+
+    const block = financeAccountDeleteBlockReason({
+      systemKey: existing.systemKey,
+      createdByUserId: existing.createdByUserId,
+      entryCount: existing._count.entries,
+    });
+
+    if (block === 'system') {
+      throw new BadRequestException(
+        'Contas de sistema não podem ser excluídas.',
+      );
+    }
+
+    if (block === 'default_seed') {
+      throw new BadRequestException(
+        'Categorias padrão do plano de contas não podem ser excluídas — desative-as se a igreja não usa.',
+      );
+    }
+
+    if (block === 'has_entries') {
+      throw new BadRequestException(
+        'Não é possível excluir: esta categoria já tem lançamentos. Desative-a para preservar o histórico.',
+      );
+    }
+
+    await this.prisma.financeAccount.delete({
+      where: { id: accountId },
+    });
+
+    return { ok: true };
   }
 
   async getPeriodStatus(

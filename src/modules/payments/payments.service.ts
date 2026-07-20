@@ -287,11 +287,14 @@ export class PaymentsService {
   ): Promise<MemberGivingFundResult[]> {
     await this.requireActiveMember(churchId, userId);
 
+    // Híbrido: fundos públicos (compartilháveis) também aparecem no app logado.
     const funds = await this.prisma.givingFund.findMany({
       where: {
         churchId,
         isActive: true,
-        audience: GivingFundAudience.members,
+        audience: {
+          in: [GivingFundAudience.members, GivingFundAudience.public],
+        },
       },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       select: {
@@ -1614,6 +1617,7 @@ export class PaymentsService {
     churchSlug: string,
     fundSlug: string,
     dto: CreateGivingCheckoutDto,
+    user: { sub: string; churchId: string } | null = null,
   ): Promise<GivingCheckoutResult> {
     this.stripeConnect.assertConfigured();
 
@@ -1625,8 +1629,28 @@ export class PaymentsService {
     }
 
     const context = await this.resolvePublicGivingContext(churchSlug, fundSlug);
-    const payerName = emptyToNull(dto.payerName);
-    const payerEmail = emptyToNull(dto.payerEmail)?.toLowerCase() ?? null;
+    let payerName = emptyToNull(dto.payerName);
+    let payerEmail = emptyToNull(dto.payerEmail)?.toLowerCase() ?? null;
+    let donorMemberId: string | null = null;
+    const metadataExtra: Record<string, string> = {};
+
+    // Híbrido: sessão na mesma igreja + membro ativo → vincula à ficha
+    // (a menos que o pagador peça anonimato).
+    if (user && !dto.anonymous && user.churchId === context.church.id) {
+      const member = await this.findActiveMemberOptional(
+        context.church.id,
+        user.sub,
+      );
+      if (member) {
+        donorMemberId = member.id;
+        payerName = member.name;
+        payerEmail =
+          emptyToNull(member.email ?? undefined)?.toLowerCase() ??
+          emptyToNull(member.userEmail ?? undefined)?.toLowerCase() ??
+          payerEmail;
+        metadataExtra.minhachurch_member_id = member.id;
+      }
+    }
 
     const checkoutParams = {
       churchId: context.church.id,
@@ -1643,8 +1667,8 @@ export class PaymentsService {
       amountCents: dto.amountCents,
       payerName,
       payerEmail,
-      donorMemberId: null as string | null,
-      metadataExtra: {} as Record<string, string>,
+      donorMemberId,
+      metadataExtra,
     };
 
     if (dto.recurring) {
@@ -3234,7 +3258,15 @@ export class PaymentsService {
     this.assertChurchAcceptsPayments(church.deletedAt);
   }
 
-  private async requireActiveMember(churchId: string, userId: string) {
+  private async findActiveMemberOptional(
+    churchId: string,
+    userId: string,
+  ): Promise<{
+    id: string;
+    name: string;
+    email: string | null;
+    userEmail: string | null;
+  } | null> {
     const member = await this.prisma.member.findFirst({
       where: { churchId, userId, deletedAt: null },
       select: {
@@ -3246,16 +3278,8 @@ export class PaymentsService {
       },
     });
 
-    if (!member) {
-      throw new ForbiddenException(
-        'É necessário ter um cadastro pastoral vinculado para contribuir por aqui.',
-      );
-    }
-
-    if (member.status !== MemberStatus.active) {
-      throw new ForbiddenException(
-        'Somente membros ativos podem contribuir por Dízimos e ofertas.',
-      );
+    if (!member || member.status !== MemberStatus.active) {
+      return null;
     }
 
     return {
@@ -3264,6 +3288,29 @@ export class PaymentsService {
       email: member.email,
       userEmail: member.user?.email ?? null,
     };
+  }
+
+  private async requireActiveMember(churchId: string, userId: string) {
+    const member = await this.findActiveMemberOptional(churchId, userId);
+
+    if (!member) {
+      const exists = await this.prisma.member.findFirst({
+        where: { churchId, userId, deletedAt: null },
+        select: { status: true },
+      });
+
+      if (!exists) {
+        throw new ForbiddenException(
+          'É necessário ter um cadastro pastoral vinculado para contribuir por aqui.',
+        );
+      }
+
+      throw new ForbiddenException(
+        'Somente membros ativos podem contribuir por Dízimos e ofertas.',
+      );
+    }
+
+    return member;
   }
 
   private async resolveMemberGivingContext(
@@ -3335,7 +3382,9 @@ export class PaymentsService {
         id: fundId,
         churchId: church.id,
         isActive: true,
-        audience: GivingFundAudience.members,
+        audience: {
+          in: [GivingFundAudience.members, GivingFundAudience.public],
+        },
       },
       select: {
         id: true,

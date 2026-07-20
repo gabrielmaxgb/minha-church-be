@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
@@ -70,6 +71,16 @@ export class TreasuryController {
     @Body() dto: UpdateFinanceAccountDto,
   ) {
     return this.treasury.updateAccount(churchId, accountId, dto);
+  }
+
+  @Delete('accounts/:accountId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(ChurchPermission.receivables_manage)
+  deleteAccount(
+    @Param('churchId') churchId: string,
+    @Param('accountId') accountId: string,
+  ) {
+    return this.treasury.deleteAccount(churchId, accountId);
   }
 
   @Get('periods/status')

@@ -36,4 +36,12 @@ export class CreateGivingCheckoutDto {
   @IsOptional()
   @IsBoolean()
   recurring?: boolean;
+
+  /**
+   * Se true, não vincula à ficha mesmo com sessão de membro.
+   * Default: false (vincula quando logado na mesma igreja).
+   */
+  @IsOptional()
+  @IsBoolean()
+  anonymous?: boolean;
 }

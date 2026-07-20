@@ -6,6 +6,13 @@ export interface FinanceAccountResult {
   isActive: boolean;
   isSystem: boolean;
   sortOrder: number;
+  /** Lançamentos manuais vinculados — bloqueia exclusão se > 0. */
+  entryCount: number;
+  /**
+   * Exclusão permanente só para categorias criadas pela igreja,
+   * sem lançamentos e fora do plano de sistema.
+   */
+  canDelete: boolean;
   createdAt: string;
   updatedAt: string;
 }

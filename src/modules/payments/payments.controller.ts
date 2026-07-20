@@ -24,6 +24,7 @@ import { ChurchOwnerGuard } from '../../common/guards/church-owner.guard';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
 import { UpsertFiscalProfileDto } from './dto/upsert-fiscal-profile.dto';
 import { CreateGivingCheckoutDto } from './dto/create-giving-checkout.dto';
@@ -507,13 +508,20 @@ export class PaymentsPublicGivingController {
   }
 
   @Post(':churchSlug/:fundSlug/checkout')
+  @UseGuards(OptionalJwtAuthGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   createGivingCheckout(
     @Param('churchSlug') churchSlug: string,
     @Param('fundSlug') fundSlug: string,
     @Body() dto: CreateGivingCheckoutDto,
+    @CurrentUser() user: JwtPayload | null,
   ) {
-    return this.paymentsService.createGivingCheckout(churchSlug, fundSlug, dto);
+    return this.paymentsService.createGivingCheckout(
+      churchSlug,
+      fundSlug,
+      dto,
+      user ?? null,
+    );
   }
 }
 
