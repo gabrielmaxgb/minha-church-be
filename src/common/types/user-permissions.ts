@@ -21,4 +21,5 @@ export interface UserPermissions {
   roles: { manage: boolean };
   memberships: { manage: boolean };
   counseling: { receive: boolean };
+  pastoralCare: { access: boolean };
 }

@@ -266,6 +266,9 @@ export class ChurchPermissionsService {
       counseling: {
         receive: granted.has(ChurchPermission.counseling_receive),
       },
+      pastoralCare: {
+        access: granted.has(ChurchPermission.pastoral_care),
+      },
     };
   }
 
@@ -559,6 +562,7 @@ export class ChurchPermissionsService {
       roles: { manage: false },
       memberships: { manage: false },
       counseling: { receive: false },
+      pastoralCare: { access: false },
     };
   }
 }

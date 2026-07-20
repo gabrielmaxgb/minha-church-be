@@ -24,6 +24,7 @@ import { CareRequestsModule } from './modules/care-requests/care-requests.module
 import { PrayerRequestsModule } from './modules/prayer-requests/prayer-requests.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PrivacyModule } from './common/privacy/privacy.module';
+import { PastoralNotesModule } from './modules/pastoral-notes/pastoral-notes.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { PrivacyModule } from './common/privacy/privacy.module';
     AnnouncementsModule,
     CareRequestsModule,
     PrayerRequestsModule,
+    PastoralNotesModule,
     NotificationsModule,
   ],
   providers: [

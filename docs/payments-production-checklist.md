@@ -29,6 +29,18 @@ Espelhar envs de [`minha-church-be/.env.example`](../.env.example) no serviço R
 4. Copiar o signing secret → `STRIPE_CONNECT_WEBHOOK_SECRET`.
 5. Confirmar que “Issue refunds” / payments features permanecem habilitadas para contas conectadas (`payments-decisions.md` §3).
 
+## 2b. Pix — pós-invite (só depois do Support liberar)
+
+Pré-requisito: case em [`pix-access-request.md`](./pix-access-request.md) aprovado / `pix_payments` presente na plataforma.
+
+1. **Settings → Payment methods** → Pix → **On by default** (Connect Express).
+2. Confirmar na API/Dashboard: plataforma e contas Express com Pix elegível
+   (`pix_payments` active quando aplicável).
+3. Sync Connect no app (owner) → `pixStatus === active` no status da igreja.
+4. Fundo com `allowPix: true` → checkout público/membro mostra Pix.
+5. Smoke E2E: doação one-shot Pix → `succeeded` (QR / copia-e-cola).
+6. Não misturar com Custom Payment Method / PicPay neste passo.
+
 ## 3. Frontend (Vercel ou host)
 
 - `NEXT_PUBLIC_API_URL` → API de produção

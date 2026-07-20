@@ -61,20 +61,24 @@ verdade** (Fase 2) é que tem gate por assinatura.
 
 - O Stripe recusa: *"The pix_payments capability is not requestable for accounts
   in BR."* Isso vale para Express (contas que "usam o Stripe Dashboard").
-- Pix é ligado por outro caminho:
+- **Bloqueio de produto (2026-07-20):** Pix para contas Stripe **no Brasil** é
+  **invite-only**. A plataforma `acct_1OwBZ9AEGAbAVXnL` tem cartão/boleto/transfers
+  ativos e **não** tem `pix_payments` — o toggle "On by default" fica cinza até o
+  Stripe liberar o produto. Ver pedido em [`pix-access-request.md`](./pix-access-request.md).
+- Pix é ligado por outro caminho (depois do invite):
   1. **Default da plataforma** em Settings → Payment methods (Pix "On by
-     default") — hoje esse toggle está **travado/cinza** enquanto o Pix não é
-     formalmente ativado/elegível na conta plataforma; **ou**
+     default"); **ou**
   2. cada igreja liga o Pix no próprio **Express Dashboard** pós-onboarding.
-- Estado atual do dashboard: Pix em **"Off by default"** (NÃO "Blocked"), então
-  as igrejas ainda podem ativar por conta própria.
+- Estado atual do dashboard: Pix em **"Off by default"** / cinza (NÃO "Blocked"
+  como método proibido na UI), mas **sem elegibilidade** até o invite.
 - Código: `createConnectedAccount` pede só `card_payments`, `boleto_payments` e
   `transfers`. `PAYMENTS_ENABLED_METHODS` pode conter `pix` (representa intenção),
   mas o código ignora pix na hora de pedir capability.
 - `mapAccountToState` continua lendo `pix_payments` do account — se a igreja
   ativar, o status reflete corretamente.
-- Pendência Fase 2: destravar "On by default" ativando o Pix formalmente na
-  conta plataforma (provável exigir sair do sandbox / ativação live).
+- **Não** usar Custom Payment Method / PicPay (`cpmt_*`) como substituto do Pix
+  nativo neste momento.
+- Pendência: Support liberar Pix na plataforma → On by default → smoke checkout.
 
 ---
 
