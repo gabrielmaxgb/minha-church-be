@@ -404,6 +404,22 @@ export class StripeConnectService {
     );
   }
 
+  /**
+   * PaymentIntent com charge + balance_transaction expandido — para ler a taxa Stripe.
+   */
+  async retrievePaymentIntentWithBalanceTransaction(
+    paymentIntentId: string,
+    stripeAccountId: string,
+  ): Promise<Stripe.PaymentIntent> {
+    this.assertConfigured();
+
+    return this.stripe.paymentIntents.retrieve(
+      paymentIntentId,
+      { expand: ['latest_charge.balance_transaction'] },
+      { stripeAccount: stripeAccountId },
+    );
+  }
+
   async cancelPaymentIntent(
     paymentIntentId: string,
     stripeAccountId: string,

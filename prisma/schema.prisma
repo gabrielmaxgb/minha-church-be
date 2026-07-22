@@ -533,6 +533,10 @@ model GivingDonation {
   subscriptionId        String?              @map("subscription_id")
   stripePaymentIntentId String?              @unique @map("stripe_payment_intent_id")
   amountCents           Int                  @map("amount_cents")
+  /// Taxa Stripe (balance_transaction.fee). Null = ainda não capturada / legado.
+  processorFeeCents     Int?                 @map("processor_fee_cents")
+  /// Ex.: card, pix, boleto — para estimar taxa quando fee ainda não veio do Stripe.
+  paymentMethodType     String?              @map("payment_method_type")
   currency              String               @default("brl")
   status                GivingDonationStatus @default(pending)
   payerName             String?              @map("payer_name")
@@ -1074,6 +1078,8 @@ model EventTicketPurchase {
   memberId              String?          @map("member_id")
   stripePaymentIntentId String?          @unique @map("stripe_payment_intent_id")
   amountCents           Int              @map("amount_cents")
+  processorFeeCents     Int?             @map("processor_fee_cents")
+  paymentMethodType     String?          @map("payment_method_type")
   currency              String           @default("brl")
   status                EventTicketStatus @default(pending)
   buyerName             String?          @map("buyer_name")

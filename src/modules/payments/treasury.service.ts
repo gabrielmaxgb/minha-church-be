@@ -14,6 +14,11 @@ import {
 
 import { PrismaService } from '../../database/prisma.service';
 import {
+  AUDIT_ACTIONS,
+  AUDIT_TARGET_TYPES,
+} from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/services/audit.service';
+import {
   canDeleteFinanceAccount,
   financeAccountDeleteBlockReason,
 } from './finance-account-delete.policy';
@@ -25,6 +30,7 @@ import {
   CloseFinancialPeriodDto,
   ReopenFinancialPeriodDto,
 } from './dto/financial-period.dto';
+import { sumProcessorFees } from './stripe-processor-fees';
 import {
   DEFAULT_FINANCE_ACCOUNTS,
   FINANCE_SYSTEM_KEYS,
@@ -152,7 +158,10 @@ function toAccountResult(
 
 @Injectable()
 export class TreasuryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * Garante o plano padrão + contas de sistema.
@@ -494,7 +503,7 @@ export class TreasuryService {
   ): Promise<FinancialPeriodResult> {
     this.assertValidYearMonth(dto.year, dto.month);
 
-    return this.prisma.$transaction(async (tx) => {
+    const period = await this.prisma.$transaction(async (tx) => {
       await this.lockPeriodMonth(tx, churchId, dto.year, dto.month);
 
       const existing = await tx.financialPeriod.findUnique({
@@ -510,7 +519,7 @@ export class TreasuryService {
         throw new ConflictException('Este mês já está fechado.');
       }
 
-      const period = await tx.financialPeriod.create({
+      return tx.financialPeriod.create({
         data: {
           churchId,
           year: dto.year,
@@ -521,18 +530,31 @@ export class TreasuryService {
         },
         include: { closedBy: { select: { id: true, name: true } } },
       });
-
-      return toPeriodResult(period);
     });
+
+    const actorName = await this.getActorName(userId);
+    const periodLabel = formatPeriodLabel(dto.month, dto.year);
+    await this.auditService.log({
+      churchId,
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.financialPeriodClosed,
+      targetType: AUDIT_TARGET_TYPES.financialPeriod,
+      targetId: period.id,
+      summary: `${actorName} fechou o período ${periodLabel}`,
+      metadata: { year: dto.year, month: dto.month },
+    });
+
+    return toPeriodResult(period);
   }
 
   async reopenPeriod(
     churchId: string,
+    actorUserId: string,
     dto: ReopenFinancialPeriodDto,
   ): Promise<{ ok: true }> {
     this.assertValidYearMonth(dto.year, dto.month);
 
-    return this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await this.lockPeriodMonth(tx, churchId, dto.year, dto.month);
 
       const existing = await tx.financialPeriod.findUnique({
@@ -550,8 +572,20 @@ export class TreasuryService {
       }
 
       await tx.financialPeriod.delete({ where: { id: existing.id } });
-      return { ok: true as const };
     });
+
+    const actorName = await this.getActorName(actorUserId);
+    const periodLabel = formatPeriodLabel(dto.month, dto.year);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.financialPeriodReopened,
+      targetType: AUDIT_TARGET_TYPES.financialPeriod,
+      summary: `${actorName} reabriu o período ${periodLabel}`,
+      metadata: { year: dto.year, month: dto.month },
+    });
+
+    return { ok: true as const };
   }
 
   /**
@@ -772,7 +806,7 @@ export class TreasuryService {
       },
     };
 
-    const [accounts, entries, donationAgg, ticketAgg, closedPeriods] =
+    const [accounts, entries, donations, tickets, closedPeriods] =
       await Promise.all([
         this.prisma.financeAccount.findMany({
           where: { churchId },
@@ -783,13 +817,21 @@ export class TreasuryService {
           where: entryWhere,
           _sum: { amountCents: true },
         }),
-        this.prisma.givingDonation.aggregate({
+        this.prisma.givingDonation.findMany({
           where: donationWhere,
-          _sum: { amountCents: true },
+          select: {
+            amountCents: true,
+            processorFeeCents: true,
+            paymentMethodType: true,
+          },
         }),
-        this.prisma.eventTicketPurchase.aggregate({
+        this.prisma.eventTicketPurchase.findMany({
           where: ticketWhere,
-          _sum: { amountCents: true },
+          select: {
+            amountCents: true,
+            processorFeeCents: true,
+            paymentMethodType: true,
+          },
         }),
         this.prisma.financialPeriod.findMany({
           where: { churchId },
@@ -797,8 +839,16 @@ export class TreasuryService {
         }),
       ]);
 
-    const onlineDonationCents = donationAgg._sum.amountCents ?? 0;
-    const eventTicketCents = ticketAgg._sum.amountCents ?? 0;
+    const onlineDonationCents = donations.reduce(
+      (sum, row) => sum + row.amountCents,
+      0,
+    );
+    const eventTicketCents = tickets.reduce(
+      (sum, row) => sum + row.amountCents,
+      0,
+    );
+    const feeSummary = sumProcessorFees([...donations, ...tickets]);
+    const onlineGrossCents = onlineDonationCents + eventTicketCents;
 
     const manualByAccount = new Map<string, number>();
     let manualIncomeCents = 0;
@@ -882,8 +932,11 @@ export class TreasuryService {
       });
     }
 
-    const totalIncomeCents =
-      manualIncomeCents + onlineDonationCents + eventTicketCents;
+    const totalIncomeGrossCents =
+      manualIncomeCents + onlineGrossCents;
+    const totalIncomeCents = totalIncomeGrossCents - feeSummary.feeCents;
+    const balanceGrossCents = totalIncomeGrossCents - expenseCents;
+    const balanceCents = balanceGrossCents - feeSummary.feeCents;
 
     const periods = this.periodsTouched(fromDate, toDate).map(
       ({ year, month }) => {
@@ -911,7 +964,11 @@ export class TreasuryService {
         onlineDonationCents,
         eventTicketCents,
         totalIncomeCents,
-        balanceCents: totalIncomeCents - expenseCents,
+        totalIncomeGrossCents,
+        processorFeeCents: feeSummary.feeCents,
+        processorFeesEstimated: feeSummary.estimated,
+        balanceCents,
+        balanceGrossCents,
       },
       incomeLines,
       expenseLines,
@@ -970,7 +1027,38 @@ export class TreasuryService {
 
     rows.push('');
     rows.push(
-      ['Total receitas', '', '', '', '', formatBrl(report.summary.totalIncomeCents)]
+      [
+        'Total receitas (bruto)',
+        '',
+        '',
+        '',
+        '',
+        formatBrl(report.summary.totalIncomeGrossCents),
+      ]
+        .map(escape)
+        .join(','),
+    );
+    rows.push(
+      [
+        'Taxas Stripe',
+        '',
+        '',
+        '',
+        '',
+        formatBrl(report.summary.processorFeeCents),
+      ]
+        .map(escape)
+        .join(','),
+    );
+    rows.push(
+      [
+        'Total receitas (líquido)',
+        '',
+        '',
+        '',
+        '',
+        formatBrl(report.summary.totalIncomeCents),
+      ]
         .map(escape)
         .join(','),
     );
@@ -980,10 +1068,31 @@ export class TreasuryService {
         .join(','),
     );
     rows.push(
-      ['Saldo', '', '', '', '', formatBrl(report.summary.balanceCents)]
+      [
+        'Saldo líquido',
+        '',
+        '',
+        '',
+        '',
+        formatBrl(report.summary.balanceCents),
+      ]
         .map(escape)
         .join(','),
     );
+    if (report.summary.processorFeesEstimated) {
+      rows.push(
+        [
+          'Obs.',
+          'Parte das taxas Stripe foi estimada pela tabela pública (pagamentos sem fee capturado).',
+          '',
+          '',
+          '',
+          '',
+        ]
+          .map(escape)
+          .join(','),
+      );
+    }
 
     return `\uFEFF${header.join(',')}\n${rows.join('\n')}\n`;
   }
@@ -1018,4 +1127,16 @@ export class TreasuryService {
     }
     return result;
   }
+
+  private async getActorName(actorUserId: string): Promise<string> {
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { name: true },
+    });
+    return actor?.name ?? 'Usuário';
+  }
+}
+
+function formatPeriodLabel(month: number, year: number): string {
+  return `${String(month).padStart(2, '0')}/${year}`;
 }

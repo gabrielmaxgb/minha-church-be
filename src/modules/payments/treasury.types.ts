@@ -60,7 +60,14 @@ export interface FinancialReportResult {
     onlineDonationCents: number;
     eventTicketCents: number;
     totalIncomeCents: number;
+    /** Receitas manuais + online bruto (sem descontar taxas). */
+    totalIncomeGrossCents: number;
+    processorFeeCents: number;
+    processorFeesEstimated: boolean;
+    /** Saldo líquido (recomendado para caixa). */
     balanceCents: number;
+    /** Saldo com online no bruto. */
+    balanceGrossCents: number;
   };
   incomeLines: FinancialReportAccountLine[];
   expenseLines: FinancialReportAccountLine[];

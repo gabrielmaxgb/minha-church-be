@@ -210,12 +210,24 @@ export interface ListFinanceEntriesOptions {
 }
 
 export interface FinanceEntriesSummaryResult {
+  /** Lançamentos manuais de receita. */
   incomeCents: number;
   expenseCents: number;
+  /**
+   * Saldo líquido do período:
+   * manuais + (online bruto − taxas Stripe) − saídas.
+   */
   balanceCents: number;
+  /** Saldo se online fosse contado no bruto (sem descontar taxas). */
+  balanceGrossCents: number;
+  /** Contribuições online — valor pago (bruto). */
   onlineDonationCents: number;
-  /** Inscrições pagas de eventos (EventTicketPurchase succeeded) no período. */
+  /** Inscrições pagas — valor pago (bruto). */
   eventTicketCents: number;
+  /** Soma das tarifas Stripe (capturadas ou estimadas). */
+  processorFeeCents: number;
+  /** True se alguma taxa do período foi estimada (legado / fee ainda não capturado). */
+  processorFeesEstimated: boolean;
 }
 
 export interface EventTicketPurchaseResult {

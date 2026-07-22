@@ -47,6 +47,15 @@ import {
   createGivingReceiptToken,
   verifyGivingReceiptToken,
 } from './giving-receipt-token';
+import {
+  AUDIT_ACTIONS,
+  AUDIT_TARGET_TYPES,
+} from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/services/audit.service';
+import {
+  extractFeeFromPaymentIntent,
+  sumProcessorFees,
+} from './stripe-processor-fees';
 import { StripeConnectService } from './stripe-connect.service';
 import { TreasuryService } from './treasury.service';
 import type {
@@ -92,6 +101,7 @@ export class PaymentsService {
     private readonly subscriptionPolicy: SubscriptionPolicyService,
     private readonly notificationsService: NotificationsService,
     private readonly treasury: TreasuryService,
+    private readonly auditService: AuditService,
   ) {}
 
   async getFiscalProfile(
@@ -106,6 +116,7 @@ export class PaymentsService {
 
   async upsertFiscalProfile(
     churchId: string,
+    actorUserId: string,
     dto: UpsertFiscalProfileDto,
   ): Promise<FiscalProfileResult> {
     const church = await this.prisma.church.findUnique({
@@ -181,6 +192,20 @@ export class PaymentsService {
       where: { churchId },
       create: { churchId, ...data },
       update: data,
+    });
+
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.fiscalProfileUpdated,
+      targetType: AUDIT_TARGET_TYPES.fiscalProfile,
+      targetId: profile.id,
+      summary: `${actorName} atualizou o perfil fiscal da igreja`,
+      metadata: {
+        documentType: profile.documentType,
+        legalName: profile.legalName,
+      },
     });
 
     return this.toFiscalProfileResult(profile);
@@ -324,6 +349,7 @@ export class PaymentsService {
 
   async createGivingFund(
     churchId: string,
+    actorUserId: string,
     dto: CreateGivingFundDto,
   ): Promise<GivingFundResult> {
     const church = await this.prisma.church.findUnique({
@@ -382,12 +408,27 @@ export class PaymentsService {
       },
     });
 
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.givingFundCreated,
+      targetType: AUDIT_TARGET_TYPES.givingFund,
+      targetId: fund.id,
+      summary: `${actorName} criou o fundo ${fund.name}`,
+      metadata: {
+        fundName: fund.name,
+        audience: fund.audience,
+      },
+    });
+
     return this.toGivingFundResult(fund);
   }
 
   async updateGivingFund(
     churchId: string,
     fundId: string,
+    actorUserId: string,
     dto: UpdateGivingFundDto,
   ): Promise<GivingFundResult> {
     const existing = await this.prisma.givingFund.findFirst({
@@ -454,6 +495,37 @@ export class PaymentsService {
       data,
       include: {
         _count: { select: { donations: true } },
+      },
+    });
+
+    const actorName = await this.getActorName(actorUserId);
+    let summary = `${actorName} atualizou o fundo ${fund.name}`;
+    if (
+      dto.isActive !== undefined &&
+      dto.isActive !== existing.isActive
+    ) {
+      summary = dto.isActive
+        ? `${actorName} reativou o fundo ${fund.name}`
+        : `${actorName} desativou o fundo ${fund.name}`;
+    } else if (dto.name !== undefined && dto.name.trim() !== existing.name) {
+      summary = `${actorName} renomeou o fundo para ${fund.name}`;
+    }
+
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.givingFundUpdated,
+      targetType: AUDIT_TARGET_TYPES.givingFund,
+      targetId: fund.id,
+      summary,
+      metadata: {
+        fundName: fund.name,
+        ...(dto.isActive !== undefined && dto.isActive !== existing.isActive
+          ? { isActive: { before: existing.isActive, after: fund.isActive } }
+          : {}),
+        ...(dto.name !== undefined && dto.name.trim() !== existing.name
+          ? { name: { before: existing.name, after: fund.name } }
+          : {}),
       },
     });
 
@@ -605,12 +677,30 @@ export class PaymentsService {
       });
     });
 
+    const actorName = await this.getActorName(userId);
+    const typeLabel =
+      entry.type === FinanceEntryType.income ? 'entrada' : 'saída';
+    await this.auditService.log({
+      churchId,
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.financeEntryCreated,
+      targetType: AUDIT_TARGET_TYPES.financeEntry,
+      targetId: entry.id,
+      summary: `${actorName} registrou ${typeLabel} de ${formatAuditBrl(entry.amountCents)}`,
+      metadata: {
+        type: entry.type,
+        amountCents: entry.amountCents,
+        accountName: entry.account?.name ?? null,
+      },
+    });
+
     return this.toFinanceEntryResult(entry);
   }
 
   async updateFinanceEntry(
     churchId: string,
     entryId: string,
+    actorUserId: string,
     dto: UpdateFinanceEntryDto,
   ): Promise<FinanceEntryResult> {
     const existing = await this.prisma.financeEntry.findFirst({
@@ -699,16 +789,38 @@ export class PaymentsService {
       });
     });
 
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.financeEntryUpdated,
+      targetType: AUDIT_TARGET_TYPES.financeEntry,
+      targetId: entry.id,
+      summary: `${actorName} editou lançamento de ${formatAuditBrl(entry.amountCents)}`,
+      metadata: {
+        type: entry.type,
+        amountCents: entry.amountCents,
+        accountName: entry.account?.name ?? null,
+      },
+    });
+
     return this.toFinanceEntryResult(entry);
   }
 
   async deleteFinanceEntry(
     churchId: string,
     entryId: string,
+    actorUserId: string,
   ): Promise<{ ok: true }> {
     const existing = await this.prisma.financeEntry.findFirst({
       where: { id: entryId, churchId },
-      select: { id: true, occurredOn: true },
+      select: {
+        id: true,
+        occurredOn: true,
+        type: true,
+        amountCents: true,
+        account: { select: { name: true } },
+      },
     });
 
     if (!existing) {
@@ -723,6 +835,23 @@ export class PaymentsService {
       await this.treasury.lockPeriodMonth(tx, churchId, year, month);
       await this.treasury.assertPeriodOpenInTx(tx, churchId, year, month);
       await tx.financeEntry.delete({ where: { id: entryId } });
+    });
+
+    const actorName = await this.getActorName(actorUserId);
+    const typeLabel =
+      existing.type === FinanceEntryType.income ? 'entrada' : 'saída';
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.financeEntryDeleted,
+      targetType: AUDIT_TARGET_TYPES.financeEntry,
+      targetId: existing.id,
+      summary: `${actorName} excluiu ${typeLabel} de ${formatAuditBrl(existing.amountCents)}`,
+      metadata: {
+        type: existing.type,
+        amountCents: existing.amountCents,
+        accountName: existing.account?.name ?? null,
+      },
     });
 
     return { ok: true };
@@ -742,7 +871,7 @@ export class PaymentsService {
       options,
     );
 
-    const [incomeAgg, expenseAgg, donationAgg, ticketAgg] = await Promise.all([
+    const [incomeAgg, expenseAgg, donations, tickets] = await Promise.all([
       this.prisma.financeEntry.aggregate({
         where: { ...entryWhere, type: FinanceEntryType.income },
         _sum: { amountCents: true },
@@ -751,28 +880,49 @@ export class PaymentsService {
         where: { ...entryWhere, type: FinanceEntryType.expense },
         _sum: { amountCents: true },
       }),
-      this.prisma.givingDonation.aggregate({
+      this.prisma.givingDonation.findMany({
         where: donationWhere,
-        _sum: { amountCents: true },
+        select: {
+          amountCents: true,
+          processorFeeCents: true,
+          paymentMethodType: true,
+        },
       }),
-      this.prisma.eventTicketPurchase.aggregate({
+      this.prisma.eventTicketPurchase.findMany({
         where: ticketWhere,
-        _sum: { amountCents: true },
+        select: {
+          amountCents: true,
+          processorFeeCents: true,
+          paymentMethodType: true,
+        },
       }),
     ]);
 
     const incomeCents = incomeAgg._sum.amountCents ?? 0;
     const expenseCents = expenseAgg._sum.amountCents ?? 0;
-    const onlineDonationCents = donationAgg._sum.amountCents ?? 0;
-    const eventTicketCents = ticketAgg._sum.amountCents ?? 0;
+    const onlineDonationCents = donations.reduce(
+      (sum, row) => sum + row.amountCents,
+      0,
+    );
+    const eventTicketCents = tickets.reduce(
+      (sum, row) => sum + row.amountCents,
+      0,
+    );
+    const feeSummary = sumProcessorFees([...donations, ...tickets]);
+    const onlineGrossCents = onlineDonationCents + eventTicketCents;
+    const balanceGrossCents =
+      incomeCents + onlineGrossCents - expenseCents;
+    const balanceCents = balanceGrossCents - feeSummary.feeCents;
 
     return {
       incomeCents,
       expenseCents,
-      balanceCents:
-        incomeCents + onlineDonationCents + eventTicketCents - expenseCents,
+      balanceCents,
+      balanceGrossCents,
       onlineDonationCents,
       eventTicketCents,
+      processorFeeCents: feeSummary.feeCents,
+      processorFeesEstimated: feeSummary.estimated,
     };
   }
 
@@ -977,6 +1127,7 @@ export class PaymentsService {
   async refundGivingDonation(
     churchId: string,
     donationId: string,
+    actorUserId: string,
   ): Promise<GivingDonationResult> {
     this.stripeConnect.assertConfigured();
 
@@ -1063,12 +1214,27 @@ export class PaymentsService {
       `giving_donation_refunded:${updated.id}`,
     );
 
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.givingDonationRefunded,
+      targetType: AUDIT_TARGET_TYPES.givingDonation,
+      targetId: updated.id,
+      summary: `${actorName} estornou contribuição de ${formatAuditBrl(updated.amountCents)} (${updated.fund.name})`,
+      metadata: {
+        amountCents: updated.amountCents,
+        fundName: updated.fund.name,
+      },
+    });
+
     return this.toGivingDonationResult(updated);
   }
 
   async refundEventTicketPurchase(
     churchId: string,
     ticketId: string,
+    actorUserId: string,
   ): Promise<EventTicketPurchaseResult> {
     this.stripeConnect.assertConfigured();
 
@@ -1140,6 +1306,20 @@ export class PaymentsService {
       include: {
         event: { select: { id: true, name: true } },
         member: { select: { id: true, name: true } },
+      },
+    });
+
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.eventTicketRefunded,
+      targetType: AUDIT_TARGET_TYPES.eventTicket,
+      targetId: updated.id,
+      summary: `${actorName} estornou inscrição de ${formatAuditBrl(updated.amountCents)} (${updated.event.name})`,
+      metadata: {
+        amountCents: updated.amountCents,
+        eventName: updated.event.name,
       },
     });
 
@@ -1539,11 +1719,16 @@ export class PaymentsService {
 
     if (donation.stripePaymentIntentId && stripeAccountId) {
       try {
-        const paymentIntent = await this.stripeConnect.retrievePaymentIntent(
-          donation.stripePaymentIntentId,
+        const paymentIntent =
+          await this.stripeConnect.retrievePaymentIntentWithBalanceTransaction(
+            donation.stripePaymentIntentId,
+            stripeAccountId,
+          );
+        await this.syncDonationFromPaymentIntent(
+          paymentIntent,
+          undefined,
           stripeAccountId,
         );
-        await this.syncDonationFromPaymentIntent(paymentIntent);
         status = resolveDonationStatusFromPaymentIntent(paymentIntent);
       } catch (error) {
         this.logger.warn(
@@ -1567,6 +1752,7 @@ export class PaymentsService {
   async deleteGivingFund(
     churchId: string,
     fundId: string,
+    actorUserId: string,
   ): Promise<{ ok: true }> {
     const existing = await this.prisma.givingFund.findFirst({
       where: { id: fundId, churchId },
@@ -1586,6 +1772,17 @@ export class PaymentsService {
     }
 
     await this.prisma.givingFund.delete({ where: { id: fundId } });
+
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.givingFundDeleted,
+      targetType: AUDIT_TARGET_TYPES.givingFund,
+      targetId: fundId,
+      summary: `${actorName} excluiu o fundo ${existing.name}`,
+      metadata: { fundName: existing.name },
+    });
 
     return { ok: true };
   }
@@ -2284,7 +2481,10 @@ export class PaymentsService {
     };
   }
 
-  async startConnectOnboarding(churchId: string): Promise<{ url: string }> {
+  async startConnectOnboarding(
+    churchId: string,
+    actorUserId: string,
+  ): Promise<{ url: string }> {
     this.stripeConnect.assertConfigured();
     await this.assertChurchNotClosed(churchId);
 
@@ -2302,6 +2502,7 @@ export class PaymentsService {
     });
 
     let accountId = existing?.stripeAccountId ?? null;
+    const createdNewAccount = !accountId;
 
     // Só exige perfil fiscal completo na 1ª criação da conta conectada —
     // retomar onboarding de conta já criada não depende disso.
@@ -2352,10 +2553,27 @@ export class PaymentsService {
       data: { onboardingStatus: ConnectOnboardingStatus.onboarding },
     });
 
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: createdNewAccount
+        ? AUDIT_ACTIONS.connectOnboardingStarted
+        : AUDIT_ACTIONS.connectOnboardingResumed,
+      targetType: AUDIT_TARGET_TYPES.connectAccount,
+      targetId: accountId,
+      summary: createdNewAccount
+        ? `${actorName} iniciou o cadastro de recebimentos no Stripe`
+        : `${actorName} retomou o cadastro de recebimentos no Stripe`,
+    });
+
     return { url };
   }
 
-  async createAccountLink(churchId: string): Promise<{ url: string }> {
+  async createAccountLink(
+    churchId: string,
+    actorUserId: string,
+  ): Promise<{ url: string }> {
     this.stripeConnect.assertConfigured();
     await this.assertChurchNotClosed(churchId);
 
@@ -2371,6 +2589,16 @@ export class PaymentsService {
     }
 
     const url = await this.buildAccountLink(account.stripeAccountId);
+
+    const actorName = await this.getActorName(actorUserId);
+    await this.auditService.log({
+      churchId,
+      actorUserId,
+      action: AUDIT_ACTIONS.connectOnboardingResumed,
+      targetType: AUDIT_TARGET_TYPES.connectAccount,
+      targetId: account.stripeAccountId,
+      summary: `${actorName} retomou o cadastro de recebimentos no Stripe`,
+    });
 
     return { url };
   }
@@ -2595,17 +2823,21 @@ export class PaymentsService {
       case 'payment_intent.payment_failed':
       case 'payment_intent.canceled': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
+        const connectedAccountId =
+          typeof event.account === 'string' ? event.account : undefined;
         await this.syncDonationFromPaymentIntent(
           paymentIntent,
           event.type === 'payment_intent.payment_failed'
             ? GivingDonationStatus.failed
             : undefined,
+          connectedAccountId,
         );
         await this.syncTicketFromPaymentIntent(
           paymentIntent,
           event.type === 'payment_intent.payment_failed'
             ? EventTicketStatus.failed
             : undefined,
+          connectedAccountId,
         );
         break;
       }
@@ -2739,13 +2971,63 @@ export class PaymentsService {
     );
   }
 
+  /**
+   * Lê taxa real do Stripe (balance_transaction.fee). Se o PI do webhook
+   * não trouxer expand, rebusca com latest_charge.balance_transaction.
+   */
+  private async resolveProcessorFeeFields(
+    paymentIntent: Stripe.PaymentIntent,
+    stripeAccountId?: string,
+  ): Promise<{
+    processorFeeCents?: number;
+    paymentMethodType?: string;
+  }> {
+    let fee = extractFeeFromPaymentIntent(paymentIntent);
+    const needsRefresh =
+      fee.feeCents === null &&
+      Boolean(stripeAccountId) &&
+      (paymentIntent.status === 'succeeded' ||
+        paymentIntent.status === 'processing');
+
+    if (needsRefresh && stripeAccountId) {
+      try {
+        const enriched =
+          await this.stripeConnect.retrievePaymentIntentWithBalanceTransaction(
+            paymentIntent.id,
+            stripeAccountId,
+          );
+        fee = extractFeeFromPaymentIntent(enriched);
+      } catch (error) {
+        this.logger.warn(
+          `Não foi possível ler taxa Stripe do PI ${paymentIntent.id}: ${
+            error instanceof Error ? error.message : 'erro desconhecido'
+          }`,
+        );
+      }
+    }
+
+    return {
+      ...(typeof fee.feeCents === 'number'
+        ? { processorFeeCents: fee.feeCents }
+        : {}),
+      ...(fee.paymentMethodType
+        ? { paymentMethodType: fee.paymentMethodType }
+        : {}),
+    };
+  }
+
   private async syncDonationFromPaymentIntent(
     paymentIntent: Stripe.PaymentIntent,
     statusOverride?: GivingDonationStatus,
+    stripeAccountId?: string,
   ): Promise<void> {
     const donationId = paymentIntent.metadata?.minhachurch_donation_id;
     const status =
       statusOverride ?? resolveDonationStatusFromPaymentIntent(paymentIntent);
+    const feeFields = await this.resolveProcessorFeeFields(
+      paymentIntent,
+      stripeAccountId,
+    );
 
     if (donationId) {
       const updated = await this.prisma.givingDonation.updateMany({
@@ -2753,6 +3035,7 @@ export class PaymentsService {
         data: {
           status,
           stripePaymentIntentId: paymentIntent.id,
+          ...feeFields,
         },
       });
 
@@ -2778,17 +3061,22 @@ export class PaymentsService {
 
     await this.prisma.givingDonation.updateMany({
       where: { stripePaymentIntentId: paymentIntent.id },
-      data: { status },
+      data: { status, ...feeFields },
     });
   }
 
   private async syncTicketFromPaymentIntent(
     paymentIntent: Stripe.PaymentIntent,
     statusOverride?: EventTicketStatus,
+    stripeAccountId?: string,
   ): Promise<void> {
     const ticketId = paymentIntent.metadata?.minhachurch_ticket_id;
     const status =
       statusOverride ?? mapEventTicketStatusFromPaymentIntent(paymentIntent);
+    const feeFields = await this.resolveProcessorFeeFields(
+      paymentIntent,
+      stripeAccountId,
+    );
 
     if (ticketId) {
       await this.prisma.eventTicketPurchase.updateMany({
@@ -2796,6 +3084,7 @@ export class PaymentsService {
         data: {
           status,
           stripePaymentIntentId: paymentIntent.id,
+          ...feeFields,
         },
       });
       return;
@@ -2804,7 +3093,7 @@ export class PaymentsService {
     if (paymentIntent.id) {
       await this.prisma.eventTicketPurchase.updateMany({
         where: { stripePaymentIntentId: paymentIntent.id },
-        data: { status },
+        data: { status, ...feeFields },
       });
     }
   }
@@ -2844,9 +3133,36 @@ export class PaymentsService {
         where: { stripePaymentIntentId: paymentIntentId },
       });
       if (existing) {
+        const account = await this.prisma.churchPaymentAccount.findUnique({
+          where: { churchId: localSub.churchId },
+          select: { stripeAccountId: true },
+        });
+        let feeFields: {
+          processorFeeCents?: number;
+          paymentMethodType?: string;
+        } = {};
+        if (account?.stripeAccountId) {
+          try {
+            const paymentIntent =
+              await this.stripeConnect.retrievePaymentIntentWithBalanceTransaction(
+                paymentIntentId,
+                account.stripeAccountId,
+              );
+            feeFields = await this.resolveProcessorFeeFields(
+              paymentIntent,
+              account.stripeAccountId,
+            );
+          } catch (error) {
+            this.logger.warn(
+              `Falha ao ler taxa da fatura PI ${paymentIntentId}: ${
+                error instanceof Error ? error.message : 'erro desconhecido'
+              }`,
+            );
+          }
+        }
         await this.prisma.givingDonation.update({
           where: { id: existing.id },
-          data: { status: GivingDonationStatus.succeeded },
+          data: { status: GivingDonationStatus.succeeded, ...feeFields },
         });
         return;
       }
@@ -2855,6 +3171,36 @@ export class PaymentsService {
     const billingReason = invoice.billing_reason;
     if (billingReason === 'subscription_create') {
       return;
+    }
+
+    let feeFields: {
+      processorFeeCents?: number;
+      paymentMethodType?: string;
+    } = {};
+    if (paymentIntentId) {
+      const account = await this.prisma.churchPaymentAccount.findUnique({
+        where: { churchId: localSub.churchId },
+        select: { stripeAccountId: true },
+      });
+      if (account?.stripeAccountId) {
+        try {
+          const paymentIntent =
+            await this.stripeConnect.retrievePaymentIntentWithBalanceTransaction(
+              paymentIntentId,
+              account.stripeAccountId,
+            );
+          feeFields = await this.resolveProcessorFeeFields(
+            paymentIntent,
+            account.stripeAccountId,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Falha ao ler taxa da nova doação recorrente PI ${paymentIntentId}: ${
+              error instanceof Error ? error.message : 'erro desconhecido'
+            }`,
+          );
+        }
+      }
     }
 
     await this.prisma.givingDonation.create({
@@ -2869,6 +3215,7 @@ export class PaymentsService {
         status: GivingDonationStatus.succeeded,
         payerName: localSub.payerName,
         payerEmail: localSub.payerEmail,
+        ...feeFields,
       },
     });
   }
@@ -3122,15 +3469,17 @@ export class PaymentsService {
       }
 
       try {
-        const paymentIntent = await this.stripeConnect.retrievePaymentIntent(
-          ticket.stripePaymentIntentId,
-          params.stripeAccountId,
-        );
+        const paymentIntent =
+          await this.stripeConnect.retrievePaymentIntentWithBalanceTransaction(
+            ticket.stripePaymentIntentId,
+            params.stripeAccountId,
+          );
 
         if (paymentIntent.status === 'succeeded') {
           await this.syncTicketFromPaymentIntent(
             paymentIntent,
             EventTicketStatus.succeeded,
+            params.stripeAccountId,
           );
           for (const other of params.tickets) {
             if (other.id === ticket.id) {
@@ -3907,6 +4256,18 @@ export class PaymentsService {
       slug = `${base}-${suffix}`;
     }
   }
+
+  private async getActorName(actorUserId: string): Promise<string> {
+    const actor = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { name: true },
+    });
+    return actor?.name ?? 'Usuário';
+  }
+}
+
+function formatAuditBrl(amountCents: number): string {
+  return `R$ ${(amountCents / 100).toFixed(2).replace('.', ',')}`;
 }
 
 function resolveDonationStatusFromPaymentIntent(

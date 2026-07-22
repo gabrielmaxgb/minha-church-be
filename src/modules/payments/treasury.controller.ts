@@ -146,9 +146,10 @@ export class TreasuryController {
   @RequirePermission(ChurchPermission.receivables_manage)
   reopenPeriod(
     @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: ReopenFinancialPeriodDto,
   ) {
-    return this.treasury.reopenPeriod(churchId, dto);
+    return this.treasury.reopenPeriod(churchId, user.sub, dto);
   }
 
   @Get('report')

@@ -55,9 +55,10 @@ export class PaymentsController {
   @UseGuards(ChurchOwnerGuard)
   upsertFiscalProfile(
     @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: UpsertFiscalProfileDto,
   ) {
-    return this.paymentsService.upsertFiscalProfile(churchId, dto);
+    return this.paymentsService.upsertFiscalProfile(churchId, user.sub, dto);
   }
 
   @Get('connect/status')
@@ -82,14 +83,20 @@ export class PaymentsController {
 
   @Post('connect/account')
   @UseGuards(ChurchOwnerGuard)
-  startConnectOnboarding(@Param('churchId') churchId: string) {
-    return this.paymentsService.startConnectOnboarding(churchId);
+  startConnectOnboarding(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.startConnectOnboarding(churchId, user.sub);
   }
 
   @Post('connect/account-link')
   @UseGuards(ChurchOwnerGuard)
-  createAccountLink(@Param('churchId') churchId: string) {
-    return this.paymentsService.createAccountLink(churchId);
+  createAccountLink(
+    @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.paymentsService.createAccountLink(churchId, user.sub);
   }
 
   @Post('connect/dashboard-link')
@@ -303,8 +310,13 @@ export class PaymentsController {
   refundEventTicketPurchase(
     @Param('churchId') churchId: string,
     @Param('ticketId') ticketId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentsService.refundEventTicketPurchase(churchId, ticketId);
+    return this.paymentsService.refundEventTicketPurchase(
+      churchId,
+      ticketId,
+      user.sub,
+    );
   }
 
   @Get('donations/export')
@@ -338,8 +350,13 @@ export class PaymentsController {
   refundGivingDonation(
     @Param('churchId') churchId: string,
     @Param('donationId') donationId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentsService.refundGivingDonation(churchId, donationId);
+    return this.paymentsService.refundGivingDonation(
+      churchId,
+      donationId,
+      user.sub,
+    );
   }
 
   @Post('funds')
@@ -347,9 +364,10 @@ export class PaymentsController {
   @RequirePermission(ChurchPermission.receivables_manage)
   createGivingFund(
     @Param('churchId') churchId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: CreateGivingFundDto,
   ) {
-    return this.paymentsService.createGivingFund(churchId, dto);
+    return this.paymentsService.createGivingFund(churchId, user.sub, dto);
   }
 
   @Patch('funds/:fundId')
@@ -358,9 +376,15 @@ export class PaymentsController {
   updateGivingFund(
     @Param('churchId') churchId: string,
     @Param('fundId') fundId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateGivingFundDto,
   ) {
-    return this.paymentsService.updateGivingFund(churchId, fundId, dto);
+    return this.paymentsService.updateGivingFund(
+      churchId,
+      fundId,
+      user.sub,
+      dto,
+    );
   }
 
   @Delete('funds/:fundId')
@@ -369,8 +393,9 @@ export class PaymentsController {
   deleteGivingFund(
     @Param('churchId') churchId: string,
     @Param('fundId') fundId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentsService.deleteGivingFund(churchId, fundId);
+    return this.paymentsService.deleteGivingFund(churchId, fundId, user.sub);
   }
 
   @Post('funds/:fundId/checkout')
@@ -467,9 +492,15 @@ export class PaymentsController {
   updateFinanceEntry(
     @Param('churchId') churchId: string,
     @Param('entryId') entryId: string,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateFinanceEntryDto,
   ) {
-    return this.paymentsService.updateFinanceEntry(churchId, entryId, dto);
+    return this.paymentsService.updateFinanceEntry(
+      churchId,
+      entryId,
+      user.sub,
+      dto,
+    );
   }
 
   @Delete('entries/:entryId')
@@ -478,8 +509,13 @@ export class PaymentsController {
   deleteFinanceEntry(
     @Param('churchId') churchId: string,
     @Param('entryId') entryId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.paymentsService.deleteFinanceEntry(churchId, entryId);
+    return this.paymentsService.deleteFinanceEntry(
+      churchId,
+      entryId,
+      user.sub,
+    );
   }
 }
 
