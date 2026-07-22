@@ -29,27 +29,28 @@ export interface BillingTierCatalogEntry {
 export const PRICING_CATALOG = {
   name: 'Minha Church',
   description:
-    'Mesmas funcionalidades em todas as faixas. Você paga conforme o tamanho da sua igreja — não por pacote de recursos.',
+    'As mesmas funcionalidades em todas as faixas. O valor é definido pelo número de membros, não por pacotes de recursos.',
   benefits: [
-    'Membros, ministérios e escalas no mesmo lugar — sem planilha paralela',
-    'Comunicados oficiais da liderança, sem virar grupo de WhatsApp',
-    'Agenda de cultos e eventos com coleta de disponibilidade da equipe',
-    'Permissões por cargo: cada líder vê e faz só o que precisa',
-    'Histórico pastoral e cadastro centralizado, acessível com segurança',
-    'Importação de membros por planilha em poucos minutos',
+    'Membros, ministérios e escalas em um único ambiente',
+    'Comunicados oficiais com histórico, fora do WhatsApp',
+    'Dízimos e ofertas online, caixa e relatório mensal',
+    'Pedidos de oração, aconselhamento e acompanhamento pastoral',
+    'Agenda de cultos e eventos com coleta de disponibilidade',
+    'Permissões por cargo, alinhadas à função de cada líder',
+    'Importação de membros por planilha',
   ],
   valueAnchor: {
     headline:
-      'Menos do que um turno de secretaria — e muito menos caos com planilhas, formulários soltos e grupos de WhatsApp.',
+      'Um custo inferior a um turno de secretaria — com menos dependência de planilhas, formulários soltos e grupos de WhatsApp.',
     example:
-      'Para uma igreja com cerca de 200 membros cadastrados, o investimento fica em torno de R$ 1,45 por membro por mês no plano mensal.',
+      'Em uma igreja com cerca de 200 membros, o valor mensal fica em torno de R$ 1,45 por membro.',
   },
   cta: 'Começar grátis',
   tiers: [
     {
       id: 'ate-100',
       name: 'Pequena Igreja',
-      memberRange: 'Até 100 membros cadastrados',
+      memberRange: 'Até 100 membros',
       memberCountForPricePerMember: 100,
       monthlyPrice: 119,
       yearlyPrice: 1190,
@@ -57,7 +58,7 @@ export const PRICING_CATALOG = {
     {
       id: '101-300',
       name: 'Igreja em Crescimento',
-      memberRange: '101 a 300 membros cadastrados',
+      memberRange: '101 a 300 membros',
       memberCountForPricePerMember: 200,
       monthlyPrice: 289,
       yearlyPrice: 2890,
@@ -66,7 +67,7 @@ export const PRICING_CATALOG = {
     {
       id: '301-700',
       name: 'Igreja Consolidada',
-      memberRange: '301 a 700 membros cadastrados',
+      memberRange: '301 a 700 membros',
       memberCountForPricePerMember: 500,
       monthlyPrice: 489,
       yearlyPrice: 4890,
@@ -74,7 +75,7 @@ export const PRICING_CATALOG = {
     {
       id: '701-plus',
       name: 'Multi-Congregação',
-      memberRange: '701 membros cadastrados ou mais',
+      memberRange: '701 membros ou mais',
       memberCountForPricePerMember: 1000,
       monthlyPrice: 589,
       yearlyPrice: 5890,
