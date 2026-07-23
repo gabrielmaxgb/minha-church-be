@@ -102,12 +102,30 @@ export interface GivingCheckoutResult {
   /** Token de acesso ao recibo público (expira). */
   receiptToken: string;
   subscriptionId?: string | null;
+  /** Token longo para gerenciar/cancelar contribuição mensal (só em mode=subscription). */
+  manageToken?: string | null;
   mode: 'payment' | 'subscription';
   clientSecret: string;
   stripeAccountId: string;
   publishableKey: string;
   amountCents: number;
   currency: 'brl';
+}
+
+export interface PublicGivingSubscriptionResult {
+  id: string;
+  churchName: string;
+  churchSlug: string;
+  fundName: string;
+  fundSlug: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  payerName: string | null;
+  payerEmail: string | null;
+  canceledAt: string | null;
+  createdAt: string;
+  manageToken: string;
 }
 
 export interface GivingSubscriptionResult {
@@ -142,6 +160,8 @@ export interface GivingDonationReceiptResult {
   amountCents: number;
   currency: string;
   fundName: string;
+  subscriptionId?: string | null;
+  manageToken?: string | null;
 }
 
 export interface GivingDonationResult {

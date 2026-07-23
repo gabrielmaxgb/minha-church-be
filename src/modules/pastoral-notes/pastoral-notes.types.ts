@@ -42,5 +42,6 @@ export interface PastoralCareSummaryResult {
   recentNotes: PastoralNoteResult[];
   thresholds: {
     withoutContactDays: number;
+    followUpHorizonDays: number;
   };
 }

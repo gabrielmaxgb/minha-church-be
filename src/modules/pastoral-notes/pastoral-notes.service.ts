@@ -25,6 +25,8 @@ import type {
 } from './pastoral-notes.types';
 
 const WITHOUT_CONTACT_DAYS = 60;
+/** Janela à frente para retornos na lista de acompanhamento. */
+const FOLLOW_UP_HORIZON_DAYS = 7;
 const BODY_MAX = 4000;
 
 function emptyToNull(value?: string | null): string | null {
@@ -50,13 +52,35 @@ function parseDateOnly(value: string, label = 'Data'): Date {
   return date;
 }
 
+/** Chave `YYYY-MM-DD` a partir de coluna `@db.Date` (sempre via UTC). */
 function toDateKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
-function daysBetween(from: Date, to: Date): number {
-  const a = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
-  const b = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
+/** Hoje no fuso da igreja (Brasil). */
+function todayKeySaoPaulo(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + days));
+  return toDateKey(next);
+}
+
+function daysBetweenKeys(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split('-').map(Number);
+  const [ty, tm, td] = toKey.split('-').map(Number);
+  const a = Date.UTC(fy, fm - 1, fd);
+  const b = Date.UTC(ty, tm - 1, td);
   return Math.floor((b - a) / 86_400_000);
 }
 
@@ -325,27 +349,14 @@ export class PastoralNotesService {
   ): Promise<PastoralCareSummaryResult> {
     await this.requirePastoralCare(churchId, userId);
 
-    const today = new Date();
-    const todayUtc = new Date(
-      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
+    const todayKey = todayKeySaoPaulo();
+    const cutoffKey = addDaysToDateKey(todayKey, -WITHOUT_CONTACT_DAYS);
+    const followUpHorizonKey = addDaysToDateKey(
+      todayKey,
+      FOLLOW_UP_HORIZON_DAYS,
     );
-    const cutoff = new Date(todayUtc);
-    cutoff.setUTCDate(cutoff.getUTCDate() - WITHOUT_CONTACT_DAYS);
 
-    const [followUpNotes, recentNotes, members] = await Promise.all([
-      this.prisma.pastoralNote.findMany({
-        where: {
-          churchId,
-          deletedAt: null,
-          followUpOn: { lte: todayUtc },
-          member: { deletedAt: null, status: { in: ['active', 'visitor'] } },
-        },
-        include: {
-          member: { select: { id: true, name: true, status: true } },
-        },
-        orderBy: [{ followUpOn: 'asc' }, { occurredOn: 'desc' }],
-        take: 40,
-      }),
+    const [recentNotes, members] = await Promise.all([
       this.prisma.pastoralNote.findMany({
         where: { churchId, deletedAt: null },
         include: {
@@ -376,33 +387,50 @@ export class PastoralNotesService {
       }),
     ]);
 
-    const followUpsDueMap = new Map<string, PastoralCareSummaryMember>();
-    for (const note of followUpNotes) {
-      if (followUpsDueMap.has(note.memberId)) continue;
-      followUpsDueMap.set(note.memberId, {
-        memberId: note.member.id,
-        memberName: note.member.name,
-        memberStatus: note.member.status,
-        lastNoteOn: toDateKey(note.occurredOn),
-        daysSinceLastNote: daysBetween(note.occurredOn, todayUtc),
-        openFollowUpOn: note.followUpOn ? toDateKey(note.followUpOn) : null,
-      });
-    }
-
+    /** Retornos: só a data de retorno da última anotação de cada pessoa. */
+    const followUpsDue: PastoralCareSummaryMember[] = [];
     const withoutRecentContact: PastoralCareSummaryMember[] = [];
+
     for (const member of members) {
       const last = member.pastoralNotes[0];
       const lastOn = last?.occurredOn ?? null;
-      if (lastOn && lastOn >= cutoff) continue;
-      withoutRecentContact.push({
-        memberId: member.id,
-        memberName: member.name,
-        memberStatus: member.status,
-        lastNoteOn: lastOn ? toDateKey(lastOn) : null,
-        daysSinceLastNote: lastOn ? daysBetween(lastOn, todayUtc) : null,
-        openFollowUpOn: last?.followUpOn ? toDateKey(last.followUpOn) : null,
-      });
+      const followUpOn = last?.followUpOn ?? null;
+      const lastOnKey = lastOn ? toDateKey(lastOn) : null;
+      const followUpKey = followUpOn ? toDateKey(followUpOn) : null;
+
+      if (followUpKey && followUpKey <= followUpHorizonKey) {
+        followUpsDue.push({
+          memberId: member.id,
+          memberName: member.name,
+          memberStatus: member.status,
+          lastNoteOn: lastOnKey,
+          daysSinceLastNote: lastOnKey
+            ? daysBetweenKeys(lastOnKey, todayKey)
+            : null,
+          openFollowUpOn: followUpKey,
+        });
+      }
+
+      if (!lastOnKey || lastOnKey < cutoffKey) {
+        withoutRecentContact.push({
+          memberId: member.id,
+          memberName: member.name,
+          memberStatus: member.status,
+          lastNoteOn: lastOnKey,
+          daysSinceLastNote: lastOnKey
+            ? daysBetweenKeys(lastOnKey, todayKey)
+            : null,
+          openFollowUpOn: followUpKey,
+        });
+      }
     }
+
+    followUpsDue.sort((a, b) => {
+      const aDate = a.openFollowUpOn ?? '';
+      const bDate = b.openFollowUpOn ?? '';
+      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      return a.memberName.localeCompare(b.memberName, 'pt-BR');
+    });
 
     withoutRecentContact.sort((a, b) => {
       if (a.lastNoteOn === null && b.lastNoteOn === null) {
@@ -414,10 +442,13 @@ export class PastoralNotesService {
     });
 
     return {
-      followUpsDue: [...followUpsDueMap.values()].slice(0, 20),
+      followUpsDue: followUpsDue.slice(0, 30),
       withoutRecentContact: withoutRecentContact.slice(0, 30),
       recentNotes: recentNotes.map((note) => this.toResult(note)),
-      thresholds: { withoutContactDays: WITHOUT_CONTACT_DAYS },
+      thresholds: {
+        withoutContactDays: WITHOUT_CONTACT_DAYS,
+        followUpHorizonDays: FOLLOW_UP_HORIZON_DAYS,
+      },
     };
   }
 }

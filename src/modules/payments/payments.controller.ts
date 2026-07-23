@@ -28,6 +28,7 @@ import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.types';
 import { UpsertFiscalProfileDto } from './dto/upsert-fiscal-profile.dto';
 import { CreateGivingCheckoutDto } from './dto/create-giving-checkout.dto';
+import { ContactGivingSubscriptionDto } from './dto/contact-giving-subscription.dto';
 import { CreateMemberGivingCheckoutDto } from './dto/create-member-giving-checkout.dto';
 import {
   CreateGivingFundDto,
@@ -532,6 +533,44 @@ export class PaymentsPublicGivingController {
     @Query('token') token: string | undefined,
   ) {
     return this.paymentsService.getGivingDonationReceipt(donationId, token);
+  }
+
+  @Get('subscriptions/:subscriptionId')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  getPublicGivingSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Query('token') token: string | undefined,
+  ) {
+    return this.paymentsService.getPublicGivingSubscription(
+      subscriptionId,
+      token,
+    );
+  }
+
+  @Post('subscriptions/:subscriptionId/cancel')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  cancelPublicGivingSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Query('token') token: string | undefined,
+  ) {
+    return this.paymentsService.cancelPublicGivingSubscription(
+      subscriptionId,
+      token,
+    );
+  }
+
+  @Post('subscriptions/:subscriptionId/contact')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  contactPublicGivingSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Query('token') token: string | undefined,
+    @Body() dto: ContactGivingSubscriptionDto,
+  ) {
+    return this.paymentsService.contactPublicGivingSubscription(
+      subscriptionId,
+      token,
+      dto,
+    );
   }
 
   @Get(':churchSlug/:fundSlug')

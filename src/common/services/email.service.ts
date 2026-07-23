@@ -33,6 +33,14 @@ import {
   buildCareRequestEmailText,
   type CareRequestEmailContent,
 } from '../templates/care-request-email.template';
+import {
+  buildGivingSubscriptionContactEmailHtml,
+  buildGivingSubscriptionContactEmailText,
+  buildGivingSubscriptionManageEmailHtml,
+  buildGivingSubscriptionManageEmailText,
+  type GivingSubscriptionContactEmailContent,
+  type GivingSubscriptionManageEmailContent,
+} from '../templates/giving-subscription-email.template';
 
 @Injectable()
 export class EmailService {
@@ -196,6 +204,52 @@ export class EmailService {
       subject: `Nova solicitação de ${content.requestTypeLabel.toLowerCase()} — MinhaChurch`,
       html: buildCareRequestEmailHtml(content),
       text: buildCareRequestEmailText(content),
+    });
+  }
+
+  async sendGivingSubscriptionManageEmail(
+    to: string,
+    content: GivingSubscriptionManageEmailContent,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY não configurada — e-mail de contribuição mensal não enviado para ${to}.`,
+      );
+      return;
+    }
+
+    const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      subject: `Sua contribuição mensal — ${content.churchName}`,
+      html: buildGivingSubscriptionManageEmailHtml(content),
+      text: buildGivingSubscriptionManageEmailText(content),
+    });
+  }
+
+  async sendGivingSubscriptionContactEmail(
+    to: string,
+    content: GivingSubscriptionContactEmailContent,
+    replyTo: string,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(
+        `RESEND_API_KEY não configurada — e-mail de contato do doador não enviado para ${to}.`,
+      );
+      return;
+    }
+
+    const fromEmail = this.config.getOrThrow<string>('resend.fromEmail');
+
+    await this.resend.emails.send({
+      from: fromEmail,
+      to,
+      replyTo,
+      subject: `Doador: ${content.reasonLabel} — ${content.churchName}`,
+      html: buildGivingSubscriptionContactEmailHtml(content),
+      text: buildGivingSubscriptionContactEmailText(content),
     });
   }
 

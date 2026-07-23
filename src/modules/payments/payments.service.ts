@@ -52,6 +52,8 @@ import {
   AUDIT_TARGET_TYPES,
 } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/services/audit.service';
+import { EmailService } from '../../common/services/email.service';
+import { resolveUserContactEmail } from '../../common/utils/user-contact-email';
 import {
   extractFeeFromPaymentIntent,
   sumProcessorFees,
@@ -82,7 +84,16 @@ import type {
   MemberGivingFundResult,
   PaymentsSummaryResult,
   PublicGivingFundResult,
+  PublicGivingSubscriptionResult,
 } from './payments.types';
+import {
+  createGivingSubscriptionManageToken,
+  verifyGivingSubscriptionManageToken,
+} from './giving-subscription-manage-token';
+import {
+  ContactGivingSubscriptionDto,
+  type GivingSubscriptionContactReason,
+} from './dto/contact-giving-subscription.dto';
 import { randomUUID } from 'crypto';
 
 const CONNECT_RETURN_PATH =
@@ -102,6 +113,7 @@ export class PaymentsService {
     private readonly notificationsService: NotificationsService,
     private readonly treasury: TreasuryService,
     private readonly auditService: AuditService,
+    private readonly emailService: EmailService,
   ) {}
 
   async getFiscalProfile(
@@ -1739,6 +1751,17 @@ export class PaymentsService {
       }
     }
 
+    // Sem webhook local (ou PI sem metadata), o recibo ainda ativa a mensal
+    // e dispara o e-mail de gestão no 1º succeeded.
+    if (
+      donation.subscriptionId &&
+      status === GivingDonationStatus.succeeded
+    ) {
+      await this.markGivingSubscriptionActiveAndNotify(
+        donation.subscriptionId,
+      );
+    }
+
     return {
       donationId: donation.id,
       status,
@@ -1746,6 +1769,10 @@ export class PaymentsService {
       amountCents: donation.amountCents,
       currency: donation.currency,
       fundName: donation.fund.name,
+      subscriptionId: donation.subscriptionId,
+      manageToken: donation.subscriptionId
+        ? this.issueGivingSubscriptionManageToken(donation.subscriptionId)
+        : null,
     };
   }
 
@@ -1869,6 +1896,11 @@ export class PaymentsService {
     };
 
     if (dto.recurring) {
+      if (!payerEmail) {
+        throw new BadRequestException(
+          'Para contribuir todo mês, informe um e-mail. Enviamos o link para cancelar a cobrança e um canal para falar com a igreja.',
+        );
+      }
       return this.createCheckoutSubscription(checkoutParams);
     }
 
@@ -1920,6 +1952,11 @@ export class PaymentsService {
     };
 
     if (dto.recurring) {
+      if (!payerEmail) {
+        throw new BadRequestException(
+          'Sua ficha precisa de um e-mail para contribuir mensalmente — usamos ele para enviar o link de cancelamento.',
+        );
+      }
       return this.createCheckoutSubscription(checkoutParams);
     }
 
@@ -2164,6 +2201,7 @@ export class PaymentsService {
         donationId: donation.id,
         receiptToken: this.issueGivingReceiptToken(donation.id),
         subscriptionId: localSub.id,
+        manageToken: this.issueGivingSubscriptionManageToken(localSub.id),
         mode: 'subscription',
         clientSecret,
         stripeAccountId: params.stripeAccountId,
@@ -3040,15 +3078,10 @@ export class PaymentsService {
       });
 
       if (updated.count > 0) {
-        const subscriptionId =
-          paymentIntent.metadata?.minhachurch_subscription_id;
-        if (
-          subscriptionId &&
-          status === GivingDonationStatus.succeeded
-        ) {
-          await this.prisma.givingSubscription.updateMany({
-            where: { id: subscriptionId },
-            data: { status: GivingSubscriptionStatus.active },
+        if (status === GivingDonationStatus.succeeded) {
+          await this.notifyGivingSubscriptionFromDonation(donationId, {
+            metadataSubscriptionId:
+              paymentIntent.metadata?.minhachurch_subscription_id,
           });
         }
         return;
@@ -3059,10 +3092,51 @@ export class PaymentsService {
       return;
     }
 
-    await this.prisma.givingDonation.updateMany({
+    const updatedByPi = await this.prisma.givingDonation.updateMany({
       where: { stripePaymentIntentId: paymentIntent.id },
       data: { status, ...feeFields },
     });
+
+    if (
+      updatedByPi.count > 0 &&
+      status === GivingDonationStatus.succeeded
+    ) {
+      const donation = await this.prisma.givingDonation.findFirst({
+        where: { stripePaymentIntentId: paymentIntent.id },
+        select: { id: true, subscriptionId: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (donation) {
+        await this.notifyGivingSubscriptionFromDonation(donation.id, {
+          metadataSubscriptionId:
+            paymentIntent.metadata?.minhachurch_subscription_id ??
+            donation.subscriptionId,
+        });
+      }
+    }
+  }
+
+  /**
+   * Doação mensal paga → ativa assinatura e envia e-mail de gestão.
+   * O PaymentIntent da invoice do Stripe muitas vezes não traz metadata nossa.
+   */
+  private async notifyGivingSubscriptionFromDonation(
+    donationId: string,
+    options?: { metadataSubscriptionId?: string | null },
+  ): Promise<void> {
+    const subscriptionId =
+      options?.metadataSubscriptionId ??
+      (
+        await this.prisma.givingDonation.findUnique({
+          where: { id: donationId },
+          select: { subscriptionId: true },
+        })
+      )?.subscriptionId ??
+      null;
+
+    if (subscriptionId) {
+      await this.markGivingSubscriptionActiveAndNotify(subscriptionId);
+    }
   }
 
   private async syncTicketFromPaymentIntent(
@@ -3120,10 +3194,7 @@ export class PaymentsService {
       return;
     }
 
-    await this.prisma.givingSubscription.update({
-      where: { id: localSub.id },
-      data: { status: GivingSubscriptionStatus.active },
-    });
+    await this.markGivingSubscriptionActiveAndNotify(localSub.id);
 
     const paymentIntentId = extractInvoicePaymentIntentId(invoice);
 
@@ -3228,7 +3299,22 @@ export class PaymentsService {
       ? { id: localId }
       : { stripeSubscriptionId: subscription.id };
 
+    const existing = await this.prisma.givingSubscription.findFirst({
+      where,
+      select: { id: true },
+    });
+
     const status = mapGivingSubscriptionStatus(subscription.status);
+
+    if (status === GivingSubscriptionStatus.active && existing) {
+      await this.markGivingSubscriptionActiveAndNotify(existing.id);
+      await this.prisma.givingSubscription.updateMany({
+        where: { id: existing.id },
+        data: { stripeSubscriptionId: subscription.id },
+      });
+      return;
+    }
+
     await this.prisma.givingSubscription.updateMany({
       where,
       data: {
@@ -3240,6 +3326,40 @@ export class PaymentsService {
         stripeSubscriptionId: subscription.id,
       },
     });
+  }
+
+  /**
+   * Ativa a mensal e envia o e-mail de gestão no 1º momento em que deixa de
+   * ser incomplete/past_due. Idempotente: se já estiver active, não reenvia.
+   */
+  private async markGivingSubscriptionActiveAndNotify(
+    subscriptionId: string,
+  ): Promise<void> {
+    const existing = await this.prisma.givingSubscription.findFirst({
+      where: { id: subscriptionId },
+      select: { id: true, status: true, payerEmail: true },
+    });
+
+    if (!existing) {
+      return;
+    }
+
+    const alreadyActive =
+      existing.status === GivingSubscriptionStatus.active;
+
+    if (!alreadyActive) {
+      await this.prisma.givingSubscription.update({
+        where: { id: existing.id },
+        data: {
+          status: GivingSubscriptionStatus.active,
+          canceledAt: null,
+        },
+      });
+    }
+
+    if (!alreadyActive && existing.payerEmail) {
+      await this.sendGivingSubscriptionManageEmailSafe(existing.id);
+    }
   }
 
   async createEventTicketCheckout(
@@ -4263,6 +4383,301 @@ export class PaymentsService {
       select: { name: true },
     });
     return actor?.name ?? 'Usuário';
+  }
+
+  private issueGivingSubscriptionManageToken(subscriptionId: string): string {
+    const secret = this.configService.getOrThrow<string>('jwt.secret');
+    return createGivingSubscriptionManageToken(subscriptionId, secret);
+  }
+
+  private buildGivingSubscriptionManageUrl(
+    subscriptionId: string,
+    token: string,
+  ): string {
+    const appUrl = this.configService
+      .getOrThrow<string>('appUrl')
+      .replace(/\/$/, '');
+    return `${appUrl}/doar/mensal/${encodeURIComponent(subscriptionId)}?token=${encodeURIComponent(token)}`;
+  }
+
+  private formatGivingAmountLabel(amountCents: number): string {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(amountCents / 100);
+  }
+
+  private contactReasonLabel(reason: GivingSubscriptionContactReason): string {
+    switch (reason) {
+      case 'cancel_help':
+        return 'Pedido de cancelamento / ajuda para cancelar';
+      case 'verify_cancel':
+        return 'Confirmar se o cancelamento deu certo';
+      case 'other':
+      default:
+        return 'Outro assunto';
+    }
+  }
+
+  private subscriptionStatusLabel(status: string): string {
+    switch (status) {
+      case 'active':
+        return 'Ativa';
+      case 'past_due':
+        return 'Pagamento em atraso';
+      case 'canceled':
+        return 'Cancelada';
+      case 'incomplete':
+        return 'Incompleta';
+      default:
+        return status;
+    }
+  }
+
+  private async requirePublicGivingSubscription(
+    subscriptionId: string,
+    token: string | undefined,
+  ) {
+    const secret = this.configService.getOrThrow<string>('jwt.secret');
+    if (!verifyGivingSubscriptionManageToken(subscriptionId, token, secret)) {
+      throw new NotFoundException('Contribuição mensal não encontrada.');
+    }
+
+    const subscription = await this.prisma.givingSubscription.findFirst({
+      where: { id: subscriptionId },
+      include: {
+        fund: { select: { id: true, name: true, slug: true } },
+        church: { select: { id: true, name: true, slug: true } },
+      },
+    });
+
+    if (!subscription) {
+      throw new NotFoundException('Contribuição mensal não encontrada.');
+    }
+
+    return subscription;
+  }
+
+  async getPublicGivingSubscription(
+    subscriptionId: string,
+    token: string | undefined,
+  ): Promise<PublicGivingSubscriptionResult> {
+    const subscription = await this.requirePublicGivingSubscription(
+      subscriptionId,
+      token,
+    );
+    const manageToken = this.issueGivingSubscriptionManageToken(subscription.id);
+
+    return {
+      id: subscription.id,
+      churchName: subscription.church.name,
+      churchSlug: subscription.church.slug,
+      fundName: subscription.fund.name,
+      fundSlug: subscription.fund.slug,
+      amountCents: subscription.amountCents,
+      currency: subscription.currency,
+      status: subscription.status,
+      payerName: subscription.payerName,
+      payerEmail: subscription.payerEmail,
+      canceledAt: subscription.canceledAt?.toISOString() ?? null,
+      createdAt: subscription.createdAt.toISOString(),
+      manageToken,
+    };
+  }
+
+  async cancelPublicGivingSubscription(
+    subscriptionId: string,
+    token: string | undefined,
+  ): Promise<PublicGivingSubscriptionResult> {
+    const subscription = await this.requirePublicGivingSubscription(
+      subscriptionId,
+      token,
+    );
+
+    if (subscription.status !== GivingSubscriptionStatus.canceled) {
+      await this.cancelOpenGivingSubscriptionRecord(
+        subscription,
+        subscription.churchId,
+      );
+    }
+
+    return this.getPublicGivingSubscription(subscriptionId, token);
+  }
+
+  async contactPublicGivingSubscription(
+    subscriptionId: string,
+    token: string | undefined,
+    dto: ContactGivingSubscriptionDto,
+  ): Promise<{ ok: true }> {
+    const subscription = await this.requirePublicGivingSubscription(
+      subscriptionId,
+      token,
+    );
+
+    const replyEmail =
+      emptyToNull(dto.replyEmail)?.toLowerCase() ??
+      emptyToNull(subscription.payerEmail ?? undefined)?.toLowerCase() ??
+      null;
+    if (!replyEmail) {
+      throw new BadRequestException(
+        'Informe um e-mail para a igreja poder responder.',
+      );
+    }
+
+    const ownerTarget = await this.getChurchOwnerNotificationTarget(
+      subscription.churchId,
+    );
+    if (!ownerTarget) {
+      throw new BadRequestException(
+        'Não foi possível encaminhar a mensagem à igreja agora. Tente de novo em instantes.',
+      );
+    }
+
+    const manageToken = this.issueGivingSubscriptionManageToken(subscription.id);
+    const manageUrl = this.buildGivingSubscriptionManageUrl(
+      subscription.id,
+      manageToken,
+    );
+    const donorName =
+      emptyToNull(dto.name) ??
+      emptyToNull(subscription.payerName ?? undefined) ??
+      'Doador';
+
+    try {
+      await this.emailService.sendGivingSubscriptionContactEmail(
+        ownerTarget.email,
+        {
+          ownerName: ownerTarget.ownerName,
+          churchName: subscription.church.name,
+          fundName: subscription.fund.name,
+          amountLabel: this.formatGivingAmountLabel(subscription.amountCents),
+          subscriptionStatusLabel: this.subscriptionStatusLabel(
+            subscription.status,
+          ),
+          donorName,
+          donorEmail: replyEmail,
+          reasonLabel: this.contactReasonLabel(dto.reason),
+          message: dto.message.trim(),
+          manageUrl,
+          financesUrl: `${ownerTarget.appUrl}/app/financas#contribuicoes`,
+          appUrl: ownerTarget.appUrl,
+        },
+        replyEmail,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Falha ao enviar contato de contribuição ${subscription.id}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+      throw new BadRequestException(
+        'Não foi possível enviar a mensagem. Tente novamente.',
+      );
+    }
+
+    return { ok: true };
+  }
+
+  private async sendGivingSubscriptionManageEmailSafe(
+    subscriptionId: string,
+  ): Promise<void> {
+    try {
+      const subscription = await this.prisma.givingSubscription.findFirst({
+        where: { id: subscriptionId },
+        include: {
+          fund: { select: { name: true } },
+          church: { select: { name: true } },
+        },
+      });
+
+      const email = emptyToNull(subscription?.payerEmail ?? undefined)?.toLowerCase();
+      if (!subscription || !email) {
+        return;
+      }
+
+      const manageToken = this.issueGivingSubscriptionManageToken(
+        subscription.id,
+      );
+      const manageUrl = this.buildGivingSubscriptionManageUrl(
+        subscription.id,
+        manageToken,
+      );
+      const appUrl = this.configService.getOrThrow<string>('appUrl');
+
+      await this.emailService.sendGivingSubscriptionManageEmail(email, {
+        donorName: emptyToNull(subscription.payerName ?? undefined) ?? '',
+        churchName: subscription.church.name,
+        fundName: subscription.fund.name,
+        amountLabel: this.formatGivingAmountLabel(subscription.amountCents),
+        manageUrl,
+        appUrl,
+      });
+      this.logger.log(
+        `E-mail de gestão da contribuição mensal enviado para ${email} (${subscriptionId}).`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Falha ao enviar e-mail de gestão da contribuição ${subscriptionId}: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+      );
+    }
+  }
+
+  private async getChurchOwnerNotificationTarget(churchId: string): Promise<{
+    email: string;
+    ownerName: string;
+    churchName: string;
+    appUrl: string;
+  } | null> {
+    const [church, ownerMembership] = await Promise.all([
+      this.prisma.church.findUnique({
+        where: { id: churchId },
+        select: { name: true },
+      }),
+      this.prisma.churchMembership.findFirst({
+        where: { churchId, isOwner: true },
+        include: {
+          user: {
+            select: {
+              name: true,
+              email: true,
+              memberProfiles: {
+                where: { churchId, deletedAt: null },
+                select: { email: true },
+                take: 1,
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    if (!church || !ownerMembership) {
+      return null;
+    }
+
+    const memberProfileEmail =
+      ownerMembership.user.memberProfiles[0]?.email ?? null;
+    const email = resolveUserContactEmail(
+      ownerMembership.user.email,
+      memberProfileEmail,
+    );
+
+    if (!email) {
+      return null;
+    }
+
+    const appUrl = this.configService
+      .getOrThrow<string>('appUrl')
+      .replace(/\/$/, '');
+
+    return {
+      email,
+      ownerName: ownerMembership.user.name,
+      churchName: church.name,
+      appUrl,
+    };
   }
 }
 
