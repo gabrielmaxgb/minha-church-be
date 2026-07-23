@@ -16,6 +16,26 @@ export function normalizeAppUrl(appUrl: string): string {
   return appUrl.replace(/\/$/, '');
 }
 
+/**
+ * Logo do header. Clientes de e-mail (Gmail etc.) não carregam localhost —
+ * em local/staging privada usamos o ícone público de produção.
+ */
+const DEFAULT_EMAIL_LOGO_URL = 'https://www.minhachurch.com/icon.png';
+
+export function resolveEmailLogoUrl(appUrl: string): string {
+  const fromEnv = process.env.EMAIL_LOGO_URL?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  const base = normalizeAppUrl(appUrl);
+  if (/localhost|127\.0\.0\.1/i.test(base)) {
+    return DEFAULT_EMAIL_LOGO_URL;
+  }
+
+  return `${base}/icon.png`;
+}
+
 export interface EmailShellOptions {
   /** Título do <title> e contexto do e-mail. */
   title: string;
@@ -68,7 +88,7 @@ export function buildEmailHeading(text: string): string {
 export function buildEmailShell(options: EmailShellOptions): string {
   const appUrl = normalizeAppUrl(options.appUrl);
   const safeAppUrl = escapeHtml(appUrl);
-  const logoUrl = `${safeAppUrl}/icon.png`;
+  const logoUrl = escapeHtml(resolveEmailLogoUrl(appUrl));
   const displayHost = escapeHtml(appUrl.replace(/^https?:\/\//, ''));
   const eyebrow = escapeHtml(options.eyebrow);
   const title = escapeHtml(options.title);
