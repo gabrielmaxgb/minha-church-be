@@ -27,13 +27,21 @@ import {
   UpdateEventRosterCollectionDto,
   UpsertEventRosterDto,
 } from './dto/event.dto';
+import {
+  CreateEventNoteDto,
+  UpdateEventNoteDto,
+} from './dto/event-note.dto';
 import { UpdateEventAvailabilityDto } from '../ministries/dto/ministry.dto';
+import { EventNotesService } from './event-notes.service';
 import { EventsService } from './events.service';
 
 @Controller('churches/:churchId/events')
 @UseGuards(JwtAuthGuard, ChurchAccessGuard)
 export class EventsController {
-  constructor(private readonly eventsService: EventsService) {}
+  constructor(
+    private readonly eventsService: EventsService,
+    private readonly eventNotesService: EventNotesService,
+  ) {}
 
   @Get()
   @UseGuards(PermissionsGuard)
@@ -187,6 +195,73 @@ export class EventsController {
       user.sub,
       dto,
     );
+  }
+
+  @Get(':eventId/notes')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  listNotes(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.eventNotesService.list(churchId, eventId, user.sub);
+  }
+
+  @Post(':eventId/notes')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  createNote(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateEventNoteDto,
+  ) {
+    return this.eventNotesService.create(churchId, eventId, user.sub, dto);
+  }
+
+  @Patch(':eventId/notes/:noteId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  updateNote(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @Param('noteId') noteId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventNoteDto,
+  ) {
+    return this.eventNotesService.update(
+      churchId,
+      eventId,
+      noteId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Delete(':eventId/notes/:noteId')
+  @HttpCode(204)
+  @UseGuards(PermissionsGuard)
+  @RequirePermission(
+    ChurchPermission.activities_access,
+    ChurchPermission.events_create_church_wide,
+  )
+  async removeNote(
+    @Param('churchId') churchId: string,
+    @Param('eventId') eventId: string,
+    @Param('noteId') noteId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.eventNotesService.remove(churchId, eventId, noteId, user.sub);
   }
 
   @Patch(':eventId')

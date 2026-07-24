@@ -1348,19 +1348,25 @@ export class EventsService {
     await this.assertCanManageEvent(userId, churchId, existing);
 
     const resolvedScope = this.resolveScope(existing, scope);
-    const targets = await this.findScopeTargets(
-      churchId,
-      existing,
-      resolvedScope,
-    );
     const deletedAt = new Date();
 
+    // updateMany direto no escopo — evita carregar todas as ocorrências da série.
+    const where: Prisma.MinistryEventWhereInput = {
+      churchId,
+      deletedAt: null,
+    };
+
+    if (!existing.recurrenceSeriesId || resolvedScope === 'this') {
+      where.id = existing.id;
+    } else {
+      where.recurrenceSeriesId = existing.recurrenceSeriesId;
+      if (resolvedScope === 'this_and_following') {
+        where.startsAt = { gte: existing.startsAt };
+      }
+    }
+
     await this.prisma.ministryEvent.updateMany({
-      where: {
-        id: { in: targets.map((target) => target.id) },
-        churchId,
-        deletedAt: null,
-      },
+      where,
       data: { deletedAt },
     });
   }

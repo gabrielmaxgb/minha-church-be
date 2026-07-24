@@ -104,6 +104,11 @@ enum EventRecurrenceFrequency {
   yearly
 }
 
+enum EventNoteVisibility {
+  public
+  private
+}
+
 model User {
   id                   String    @id @default(cuid())
   email                String    @unique
@@ -139,6 +144,7 @@ model User {
   financeAccountsCreated           FinanceAccount[] @relation("FinanceAccountCreatedBy")
   financialPeriodsClosed           FinancialPeriod[] @relation("FinancialPeriodClosedBy")
   pastoralNotesAuthored            PastoralNote[] @relation("PastoralNoteAuthor")
+  eventNotesAuthored               EventNote[]    @relation("EventNoteAuthor")
   notifications                    Notification[]     @relation("NotificationRecipient")
   notificationReads                NotificationRead[]
   pushSubscriptions                PushSubscription[]
@@ -183,6 +189,7 @@ model Church {
   careRequests          CareRequest[]
   prayerRequests        PrayerRequest[]
   pastoralNotes         PastoralNote[]
+  eventNotes            EventNote[]
 
   billingTierUpgradeAcknowledgments BillingTierUpgradeAcknowledgment[]
   billingTierUpgradeRequests        BillingTierUpgradeRequest[]
@@ -599,6 +606,7 @@ model ChurchRole {
   church      Church                 @relation(fields: [churchId], references: [id], onDelete: Cascade)
   permissions ChurchRolePermission[]
   assignments ChurchMembershipRole[]
+  eventNoteRoles EventNoteRole[]
 
   @@unique([churchId, name])
   @@unique([churchId, systemKey])
@@ -1010,11 +1018,46 @@ model MinistryEvent {
   rosterSlots      EventRosterSlot[]
   rosterAssignments EventRosterAssignment[]
   ticketPurchases  EventTicketPurchase[]
+  notes            EventNote[]
 
   @@index([churchId, ministryId, startsAt])
   @@index([churchId, startsAt])
   @@index([recurrenceSeriesId])
   @@map("ministry_events")
+}
+
+/// Notas do evento: públicas (quem vê o evento) ou privadas (cargos escolhidos).
+model EventNote {
+  id           String              @id @default(cuid())
+  churchId     String              @map("church_id")
+  eventId      String              @map("event_id")
+  authorUserId String              @map("author_user_id")
+  body         String
+  visibility   EventNoteVisibility @default(public)
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  deletedAt    DateTime?           @map("deleted_at")
+
+  church  Church          @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  event   MinistryEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  author  User            @relation("EventNoteAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  roles   EventNoteRole[]
+
+  @@index([churchId, eventId, deletedAt, createdAt])
+  @@index([authorUserId])
+  @@map("event_notes")
+}
+
+model EventNoteRole {
+  noteId String @map("note_id")
+  roleId String @map("role_id")
+
+  note EventNote  @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  role ChurchRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, roleId])
+  @@index([roleId])
+  @@map("event_note_roles")
 }
 
 model EventAvailability {
