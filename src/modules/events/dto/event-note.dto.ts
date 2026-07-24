@@ -12,7 +12,7 @@ import { EventNoteVisibility } from '@prisma/client';
 
 export class CreateEventNoteDto {
   @IsString()
-  @MaxLength(8000)
+  @MaxLength(20000)
   body!: string;
 
   @IsEnum(EventNoteVisibility)
@@ -30,7 +30,7 @@ export class CreateEventNoteDto {
 export class UpdateEventNoteDto {
   @IsOptional()
   @IsString()
-  @MaxLength(8000)
+  @MaxLength(20000)
   body?: string;
 
   @IsOptional()

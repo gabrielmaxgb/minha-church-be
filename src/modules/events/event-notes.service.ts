@@ -16,6 +16,9 @@ import {
   buildEventViewContext,
   canUserViewEventWithContext,
 } from './event-visibility';
+import {
+  sanitizeEventNoteHtml,
+} from './event-note-html';
 import type {
   CreateEventNoteDto,
   UpdateEventNoteDto,
@@ -133,7 +136,7 @@ export class EventNotesService {
         churchId,
         eventId,
         authorUserId: userId,
-        body: dto.body.trim(),
+        body: sanitizeEventNoteHtml(dto.body),
         visibility: dto.visibility,
         roles:
           roleIds.length > 0
@@ -199,7 +202,9 @@ export class EventNotesService {
       return tx.eventNote.update({
         where: { id: existing.id },
         data: {
-          ...(dto.body !== undefined ? { body: dto.body.trim() } : {}),
+          ...(dto.body !== undefined
+            ? { body: sanitizeEventNoteHtml(dto.body) }
+            : {}),
           ...(dto.visibility !== undefined
             ? { visibility: dto.visibility }
             : {}),
